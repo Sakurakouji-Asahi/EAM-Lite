@@ -515,8 +515,9 @@ def test_submit_action_stops_at_pending_finance_without_formal_code_or_button(
     assert asset.current_issued_code_id is None
     detail = client.get(reverse("assets:asset-detail", args=[asset.pk]))
     html = detail.content.decode()
-    assert "Sprint 3 不提供财务确认、正式发号或贴标按钮" in html
+    assert "当前等待 finance 明确会计认定" in html
     assert "确认并生成正式编号" not in html
+    assert reverse("finance:finance-confirm", args=[asset.pk]) not in html
     assert SequenceCounter.objects.count() == 0
     assert IssuedCode.objects.count() == 0
     assert AssetCodeHistory.objects.count() == 0
@@ -564,7 +565,7 @@ def test_system_admin_has_only_requested_scheme_action_not_edit_action(client):
     assert client.get(reverse("assets:asset-edit", args=[asset.pk])).status_code == 403
 
 
-def test_finance_can_see_pending_asset_but_sprint3_has_no_formalization_route(client):
+def test_finance_can_see_pending_asset_and_sprint4_formalization_route(client):
     actor, company, department, employee, category, _site, _area, location = make_context()
     finance = make_user("finance", "finance")
     asset = make_asset(
@@ -585,12 +586,8 @@ def test_finance_can_see_pending_asset_but_sprint3_has_no_formalization_route(cl
     assert detail.status_code == 200
     assert "待财务确认" in html
     assert "财务信息" in html
-    assert "财务确认和财务资料将在 Sprint 4 启用" in html
-    assert "确认并生成正式编号" not in html
-    assert not any(
-        "confirm" in pattern.name.lower() or "issue" in pattern.name.lower()
-        for pattern in __import__("apps.assets.urls", fromlist=["urlpatterns"]).urlpatterns
-    )
+    assert "进入财务确认" in html
+    assert reverse("finance:finance-confirm", args=[asset.pk]) in html
 
 
 def test_action_gets_render_explicit_confirmation_forms(client, tmp_path):

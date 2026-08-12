@@ -214,6 +214,7 @@ def test_last_login_capable_admin_and_finance_are_protected():
 def test_system_setting_registry_and_sprint_boundary():
     owner = make_company()
     admin = make_user("admin", "system_admin")
+    finance = make_user("finance-settings", "finance")
 
     setting = set_system_setting(
         actor=admin,
@@ -226,10 +227,19 @@ def test_system_setting_registry_and_sprint_boundary():
         set_system_setting(
             actor=admin, company=owner, key="secret_key", value="do-not-store"
         )
-    with pytest.raises(PermissionDenied, match="Sprint 4"):
+    # Since Sprint 4 the key is live, but it remains a finance-owned business
+    # setting: system_admin cannot write it on finance's behalf.
+    with pytest.raises(PermissionDenied):
         set_system_setting(
             actor=admin,
             company=owner,
             key="fixed_asset_warning_amount",
             value="5000.00",
         )
+    warning = set_system_setting(
+        actor=finance,
+        company=owner,
+        key="fixed_asset_warning_amount",
+        value="5000.00",
+    )
+    assert warning.value == "5000.00"

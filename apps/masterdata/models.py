@@ -490,6 +490,41 @@ class Location(NormalizedCodeModel, TimeStampedModel):
         return self.name
 
 
+class FixedAssetCategory(NormalizedCodeModel, TimeStampedModel):
+    company = models.ForeignKey(
+        Company,
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="fixed_asset_categories",
+    )
+    name = models.CharField("固定资产类别名称", max_length=200)
+    useful_life_months_default = models.PositiveIntegerField("默认使用年限（月）")
+    note = models.TextField("备注", blank=True)
+    is_active = models.BooleanField("启用", default=True)
+
+    class Meta:
+        verbose_name = "固定资产会计类别"
+        verbose_name_plural = "固定资产会计类别"
+        ordering = ("company_id", "normalized_code")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "normalized_code"),
+                name="uq_fixed_asset_category_company_code",
+            ),
+            models.CheckConstraint(
+                condition=~Q(normalized_code=""),
+                name="ck_fixed_asset_category_code_nonempty",
+            ),
+            models.CheckConstraint(
+                condition=Q(useful_life_months_default__gt=0),
+                name="ck_fixed_asset_category_life_positive",
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
 class AssetCategory(NormalizedCodeModel, TimeStampedModel):
     class CategoryType(models.TextChoices):
         EQUIPMENT = "equipment", "设备"
@@ -528,6 +563,14 @@ class AssetCategory(NormalizedCodeModel, TimeStampedModel):
         blank=True,
         on_delete=models.SET_NULL,
         related_name="default_for_categories",
+    )
+    default_depreciation_policy = models.ForeignKey(
+        "finance.DepreciationPolicy",
+        verbose_name="默认折旧政策",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="default_for_asset_categories",
     )
     is_active = models.BooleanField("启用", default=True)
 
@@ -584,6 +627,22 @@ class AssetCategory(NormalizedCodeModel, TimeStampedModel):
             ):
                 raise ValidationError(
                     {"default_coding_scheme": "默认编码方案必须为当前生效版本。"}
+                )
+        policy = self.default_depreciation_policy
+        if policy is not None:
+            today = timezone.localdate()
+            if policy.company_id != self.company_id:
+                raise ValidationError(
+                    {"default_depreciation_policy": "默认折旧政策必须属于同一公司。"}
+                )
+            if (
+                policy.status != "active"
+                or policy.effective_from is None
+                or policy.effective_from > today
+                or (policy.effective_to is not None and policy.effective_to < today)
+            ):
+                raise ValidationError(
+                    {"default_depreciation_policy": "默认折旧政策必须为当前生效版本。"}
                 )
 
     def save(self, *args, **kwargs):

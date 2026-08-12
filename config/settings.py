@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     "apps.masterdata.apps.MasterDataConfig",
     "apps.coding.apps.CodingConfig",
     "apps.assets.apps.AssetsConfig",
+    "apps.finance.apps.FinanceConfig",
     "apps.imports.apps.ImportsConfig",
     "apps.core.apps.CoreConfig",
 ]
@@ -66,6 +67,7 @@ TEMPLATES = [
                 "django.contrib.messages.context_processors.messages",
                 "apps.masterdata.context_processors.masterdata_navigation",
                 "apps.assets.context_processors.asset_navigation",
+                "apps.finance.context_processors.finance_navigation",
             ],
         },
     },

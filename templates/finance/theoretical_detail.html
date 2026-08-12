@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}理论历史折旧参考 - EAM-Lite{% endblock %}
+{% block content %}
+  <nav aria-label="面包屑"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="{% url 'finance:asset-finance-detail' asset.pk %}">{{ asset }}</a></li><li class="breadcrumb-item active">理论历史试算</li></ol></nav>
+  <h1 class="h3 mb-3">理论历史折旧参考</h1>
+  <div class="alert alert-warning">该结果只作财务参考，永不覆盖期初实际累计折旧或已确认分录。</div>
+  <dl class="row"><dt class="col-sm-3">截至日期</dt><dd class="col-sm-9">{{ run.as_of_date }}</dd><dt class="col-sm-3">状态</dt><dd class="col-sm-9">{{ run.get_status_display }}</dd><dt class="col-sm-3">请求时间</dt><dd class="col-sm-9">{{ run.requested_at|date:"Y-m-d H:i" }}</dd></dl>
+  <div class="table-responsive shadow-sm"><table class="table table-sm mb-0"><thead><tr><th>期间</th><th>理论折旧</th><th>理论累计</th><th>理论净值</th></tr></thead><tbody>{% for line in lines %}<tr><td>{{ line.period_start }} 至 {{ line.period_end }}</td><td>{{ line.theoretical_amount }}</td><td>{{ line.theoretical_accumulated }}</td><td>{{ line.theoretical_book_value }}</td></tr>{% empty %}<tr><td colspan="4" class="text-center text-secondary">截至该日期没有理论期间。</td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}

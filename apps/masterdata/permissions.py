@@ -234,5 +234,5 @@ def is_login_capable(user) -> bool:
 
 
 def can_access_setup(user) -> bool:
-    # Only the roles that coordinate or write Sprint 1 setup steps may enter.
-    return has_any_role(user, {"system_admin", "hr", "equipment"})
+    # Only roles that coordinate or write an approved initialization step enter.
+    return has_any_role(user, {"system_admin", "hr", "equipment", "finance"})

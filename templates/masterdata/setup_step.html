@@ -32,6 +32,20 @@
         <form method="post" class="mb-3">{% csrf_token %}<button class="btn btn-outline-primary" type="submit">重新校验并保存步骤 8 状态</button></form>
       {% endif %}
     {% endif %}
+    {% if step.number == 7 and can_view_step %}
+      <div class="alert alert-info">财务规则完成条件：存在当前生效且唯一的公司默认折旧政策，并由 <code>finance</code> 显式保存固定资产提示金额。默认残值、起算规则和计提期间均来自该版本化政策。</div>
+      {% if has_writer_role %}<form method="post" class="mb-3">{% csrf_token %}<button class="btn btn-outline-primary" type="submit">重新校验并保存步骤 7 状态</button></form>{% endif %}
+    {% endif %}
+    {% if step.number == 9 and can_view_step %}
+      <dl class="row">
+        {% for item in steps %}{% if item.number != 9 %}<dt class="col-sm-7">步骤 {{ item.number }}：{{ item.name }}</dt><dd class="col-sm-5">{% if item.complete %}<span class="badge text-bg-success">通过</span>{% else %}<span class="badge text-bg-warning">未通过</span> <a href="{% url 'masterdata:setup-step' item.number %}">修复</a>{% endif %}</dd>{% endif %}{% endfor %}
+      </dl>
+      {% if setting.initialization_completed %}
+        <div class="alert alert-success">初始化已由 {{ setting.completed_by|default:"已删除账号" }} 于 {{ setting.completed_at|date:"Y-m-d H:i" }} 完成。</div>
+      {% else %}
+        <form method="post" class="mb-3">{% csrf_token %}<div class="alert alert-warning">完成动作会重新查询九项真实条件并在同一事务写完成标记与审计；任一未通过都不会部分完成。</div><button class="btn btn-success" type="submit">重新校验九项并完成初始化</button></form>
+      {% endif %}
+    {% endif %}
     {% if can_view_step %}<a class="btn btn-primary" href="{% url step.url %}">{% if has_writer_role %}进入维护页面{% else %}查看当前资料{% endif %}</a>{% endif %}
     <a class="btn btn-outline-secondary" href="{% url 'masterdata:setup' %}">返回向导</a>
   </div></div>

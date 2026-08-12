@@ -848,15 +848,22 @@ def test_system_setting_registry_types_sprint_boundary_and_audits_are_exact():
             key="attachment_max_size_bytes",
             value="2048",
         )
-    for actor in (admin, finance):
-        with pytest.raises(PermissionDenied, match="Sprint 4"):
-            set_system_setting(
-                actor=actor,
-                company=company,
-                key="fixed_asset_warning_amount",
-                value="5000.00",
-                value_type="decimal",
-            )
+    with pytest.raises(PermissionDenied):
+        set_system_setting(
+            actor=admin,
+            company=company,
+            key="fixed_asset_warning_amount",
+            value="5000.00",
+            value_type="decimal",
+        )
+    warning = set_system_setting(
+        actor=finance,
+        company=company,
+        key="fixed_asset_warning_amount",
+        value="5000.00",
+        value_type="decimal",
+    )
+    assert warning.value == "5000.00"
     for forbidden_key in (
         "secret_key",
         "currency",
@@ -920,13 +927,13 @@ def test_system_setting_registry_types_sprint_boundary_and_audits_are_exact():
             description="错误类型",
         )
 
-    assert SystemSetting.objects.filter(company=company).count() == 2
+    assert SystemSetting.objects.filter(company=company).count() == 3
     audits = AuditLog.objects.filter(
         company=company,
         object_type="SystemSetting",
         action="create",
     )
-    assert audits.count() == 2
+    assert audits.count() == 3
     serialized_audits = json.dumps(
         [audit.new_data_json for audit in audits], ensure_ascii=False
     )

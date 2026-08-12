@@ -3,10 +3,10 @@
 EAM-Lite 是公司局域网内使用的轻量级企业资产管理系统。本仓库根目录就是包含
 AGENTS.md、docs/、tasks/ 和 manage.py 的当前目录，不存在第二层项目仓库。
 
-当前代码完成到 Sprint 3：除身份、登录、审计、基础资料和导入外，已提供可版本化的
-资产编码配置与无消耗预览，以及受初始化完成门槛保护的资产主档草稿、动态字段、私有
-附件、权限化台账和“草稿 → 待财务确认”流程。财务确认、正式发号、折旧、二维码、
-盘点等后续业务尚未启用。
+当前代码完成到 Sprint 4：除身份、登录、审计、基础资料、导入、资产编码和资产主档外，
+已提供财务明确认定、永久正式编号原子签发、安全二维码身份、六种折旧方法、版本化折旧
+政策与 Profile、实际折旧分录、计提批次、冲销、调整、理论试算，以及初始化步骤 7/9。
+二维码打印/贴标、资产初始化导入、生命周期、盘点、保养和报表仍按后续 Sprint 接入。
 
 ## 版本与依赖
 
@@ -144,6 +144,13 @@ staging 表；`audit.0002_auditlog_company` 为业务审计增加 nullable `Comp
 经理有效性、导入证据和技术设置约束。该触发器迁移按数据库 vendor 执行，SQLite 仅供
 显式快速开发，不能作为 Sprint 验收数据库。
 
+Sprint 4 的 `masterdata.0006–0008` 增加固定资产会计类别、实物分类默认折旧政策和
+`SequenceCounter` 永久/单调约束；`finance.0001–0006` 建立财务、政策、Profile、计划、
+事件、工作量、批次、实际分录、调整、理论试算和正式化幂等结果，并安装 PostgreSQL
+跨公司、确认历史不可变和来源一致性门禁；`assets.0003–0004` 增加随机二维码身份，并
+把唯一受控正式化迁移扩展为 `pending_finance → pending_label`。所有迁移保留 Sprint 3
+数据；SQLite 不能验证发号锁、延迟约束或并发。
+
 ## Sprint 1 基础资料与初始化
 
 登录后从侧栏进入“初始化向导”，或直接访问 `/setup/`。本 Sprint 实现：
@@ -155,8 +162,9 @@ staging 表；`audit.0002_auditlog_company` 为业务审计增加 nullable `Comp
 5. 位置；
 8. 用户、固定角色及部门数据范围。
 
-步骤完成状态由真实数据和权限条件重新计算，不以访问页面为准；因为步骤 6、7、9 尚未
-实现，`initialization_completed` 在 Sprint 1 始终保持 false。`system_admin` 协调公司、
+步骤完成状态由真实数据和权限条件重新计算，不以访问页面为准；步骤 6、7、9 已分别在
+Sprint 2 与 Sprint 4 接通，只有九项真实条件全部满足时 `system_admin` 才能原子完成
+初始化。`system_admin` 协调公司、
 部门、权限和技术关联，`hr` 维护人员任职资料，`equipment` 可维护位置和实物分类。
 授权范围本身不授予业务角色；部门经理仍必须具有 `department_manager` 固定角色。
 
@@ -362,10 +370,9 @@ system_admin 可在“基础资料 → 编码规则”建立草稿、维护片�
 生效期为上海业务日闭区间，结束日当天仍有效。启用方案必须有且只有一个 sequence，
 `sequence_start` 是未来首次签发值；预览只在内存中从该值或计数器只读快照模拟，绝不创建、
 锁定或更新 `SequenceCounter` / `IssuedCode`。`format_string` 与 `custom_field` 不在页面、URL、
-命令或 Service 中提供。初始化向导步骤 6 只有当前生效且唯一的公司默认方案存在时才通过，
-步骤 7、9 和 `initialization_completed` 仍保持未完成。
-
-正式资产发号尚未启用，将在 Sprint 4 财务确认事务中接通。
+命令或 Service 中提供。初始化向导步骤 6 只有当前生效且唯一的公司默认方案存在时才通过。
+无消耗预览仍绝不写计数器或正式编号；正式发号只由 Sprint 4 的资产财务确认事务调用，
+编码配置页面、命令和独立 API 都没有发号入口。
 
 ## Sprint 3 资产主档
 
@@ -386,11 +393,48 @@ AttachmentLink，文件证据和摘要继续保留。
 `--execute` 才删除，并要求可登录 system_admin、记录审计且重复执行安全。带 Attachment 元数据
 或业务 Link 的资产附件不会被该路径误删；作废附件也继续保留。
 
-正式编号和财务确认尚未启用。Sprint 3 不写 `SequenceCounter`、`IssuedCode` 或
-`AssetCodeHistory`，也没有财务确认、正式发号、贴标或后续状态入口。
+Sprint 3 的提交动作本身仍不写 `SequenceCounter`、`IssuedCode` 或 `AssetCodeHistory`；
+只有 finance 随后的 Sprint 4 正式化事务会签发永久编号和二维码身份。
 
-## Sprint 3 之后仍未实现
+## Sprint 4 财务确认与折旧
 
-资产 Excel 导入、财务确认、正式发号、折旧、二维码、盘点、保养、离职清退、处置、报表、
-T+、生产部署或备份任务尚未实现；初始化向导步骤 7、9 也尚未实现。后续功能只能在对应
-Sprint 范围内接入。
+finance 从“财务与折旧”进入待确认工作台。财务可先保存基础草稿或执行纯试算；只有点击
+“确认并生成正式编号”且确认永久占号后，系统才在同一 PostgreSQL 事务中完成：
+
+1. 锁定 `pending_finance` 资产并重验责任、叶级位置、实物类别和财务字段；
+2. 明确认定 `fixed_asset` 或 `controlled_non_fixed`，保存原值和阈值快照；
+3. 固定资产解析“单项政策 → 实物分类默认 → 公司默认”，固化不可变 Profile；
+4. 按 requested 编码版本 → 实物分类默认 → 公司默认解析并锁定编码方案；
+5. 以 `INSERT ... ON CONFLICT` 建立计数器首行，再行锁递增并创建永久 `IssuedCode`；
+6. 写资产编号历史，使用密码学安全随机源创建不含资产详情的 QR identity；
+7. 状态进入 `pending_label` / `ready_to_print`，写三类审计但不记录 QR Token；
+8. 保存绑定资产、参数摘要和结果的不可变幂等行。
+
+任何一步失败都会连同 Finance/Profile/Schedule、计数器、IssuedCode、编号历史、QR 和审计
+一起回滚；相同幂等键只有同资产同参数才返回既有结果。历史正式编号永久占用，不能删除、
+倒退或复用。二维码打印、换标、现场贴标以及 `in_use` 状态留到 Sprint 6。
+
+折旧默认全部来自版本化 `DepreciationPolicy`，SystemSetting 只保存 finance 可写的
+`fixed_asset_warning_amount`；5,000 CNY 是可配置提示，不自动认定固定资产。政策支持
+`straight_line`、`units_of_production`、`double_declining_balance`、
+`sum_of_years_digits`、`manual`、`no_depreciation`，金额全程使用 Decimal，实际入账按
+`ROUND_HALF_UP` 到 2 位并由最后一期直接消除尾差。Profile 已确认后不得原地覆盖；参数
+变化建立新生效版本，旧 Schedule/Entry 保留。
+
+工作量法要求先按期间录入同单位工作量；手工折旧在生成批次时通过结构化 JSON 提供资产
+UUID、十进制字符串金额和原因，明确 0 也必须有原因。普通月度/年度折旧、工作量和手工法
+都通过“生成试算 → 检查明细 → 原子确认”批次入账；错误明细阻断整批。已确认实际分录只
+追加，错误通过精确反向批次或价值调整冲销处理，原行不删除。实际累计折旧只等于所有已
+确认原始及反向 `DepreciationEntry.amount` 的代数和；计划和理论试算不会进入账面。
+
+初始化步骤 7 只有当前生效且唯一的公司默认折旧政策与 finance 明确保存的提示金额同时
+通过同一验证器才完成；`system_admin` 只能查看/协调，不能代填财务值。步骤 9 会重新查询
+公司、部门、人员、实物分类、具体位置、编码方案、财务规则、应用用户和部门范围九项真实
+条件，全部通过后才原子写 `initialization_completed`、完成者、时间和审计。失败时不产生
+部分完成，页面按每项提供修复链接。
+
+## Sprint 4 之后仍未实现
+
+资产初始化 Excel 导入、二维码打印/贴标、调拨借用、处置、盘点、保养、离职清退、综合
+报表、T+ 对账导出、生产部署和真实备份任务尚未实现。后续功能只能在对应 Sprint 范围内
+接入；EAM-Lite 不读取或写入 T+ 数据库。

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}初始化向导 - EAM-Lite{% endblock %}
 {% block content %}
-  <div class="mb-4"><h1 class="h3 mb-1">初始化向导</h1><p class="text-secondary mb-0">当前提供步骤 1–6 和步骤 8；步骤 7、9 尚未实现，因此整体初始化不会完成。</p></div>
+  <div class="mb-4"><h1 class="h3 mb-1">初始化向导</h1><p class="text-secondary mb-0">九个步骤均按当前真实数据计算；只有步骤 9 的显式最终校验会设置整体完成标记。</p></div>
   {% if not company %}
     <div class="alert alert-warning"><strong>尚未配置公司。</strong> 请先创建 V1 唯一活动公司。</div>
     <a class="btn btn-primary" href="{% url 'masterdata:company-create' %}">开始配置公司</a>
@@ -9,6 +9,10 @@
     <div class="list-group shadow-sm">
       {% for item in steps %}<a class="list-group-item list-group-item-action d-flex align-items-center justify-content-between" href="{% url 'masterdata:setup-step' item.number %}"><span><strong>步骤 {{ item.number }}：{{ item.name }}</strong><br><small class="text-secondary">维护角色：{{ item.writer }}</small></span>{% if item.complete %}<span class="badge text-bg-success">已满足</span>{% else %}<span class="badge text-bg-warning">待完成</span>{% endif %}</a>{% endfor %}
     </div>
-    <div class="alert alert-secondary mt-4 mb-0">步骤 7“折旧规则与财务参数”和步骤 9“校验并完成”将在后续 Sprint 实现。当前 <code>initialization_completed</code> 必须保持 False。</div>
+    {% if setting.initialization_completed %}
+      <div class="alert alert-success mt-4 mb-0">初始化已完成：{{ setting.completed_at|date:"Y-m-d H:i" }}。后续配置变更仍须通过对应受控页面并写审计。</div>
+    {% else %}
+      <div class="alert alert-secondary mt-4 mb-0">完成所有真实条件后，由 <code>system_admin</code> 在步骤 9 执行最终校验；页面访问本身不会置为完成。</div>
+    {% endif %}
   {% endif %}
 {% endblock %}

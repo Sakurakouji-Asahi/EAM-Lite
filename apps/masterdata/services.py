@@ -826,8 +826,6 @@ def set_system_setting(
     if key not in SYSTEM_SETTING_REGISTRY:
         raise ValidationError("未知的系统设置 key。")
     entry = SYSTEM_SETTING_REGISTRY[key]
-    if entry.get("available_from_sprint", 1) > 1:
-        raise PermissionDenied("固定资产提示阈值将在 Sprint 4 由 finance 开放。")
     require_roles(actor, {entry["writer"]}, "您没有修改此系统设置的权限。")
     if value_type is not None and value_type != entry["value_type"]:
         raise ValidationError("value_type 与固定 registry 不一致。")
@@ -1103,6 +1101,41 @@ def compute_initialization_progress(company) -> dict[str, bool]:
             pass
         else:
             coding_configured = True
+    finance_configured = False
+    try:
+        from apps.finance.models import DepreciationPolicy
+
+        finance_defaults = list(
+            DepreciationPolicy.objects.filter(
+                company=company,
+                status="active",
+                is_default=True,
+                effective_from__lte=today,
+            ).filter(Q(effective_to__isnull=True) | Q(effective_to__gte=today))
+        )
+        explicit_warning = (
+            company.system_settings.filter(
+                key="fixed_asset_warning_amount", value_type="decimal"
+            ).first()
+        )
+        if len(finance_defaults) == 1 and explicit_warning is not None:
+            policy = finance_defaults[0]
+            try:
+                _serialize_setting(
+                    "fixed_asset_warning_amount", explicit_warning.value
+                )
+                # Reuse the same validator used by finance configuration
+                # mutations, avoiding a second interpretation of the matrix.
+                from apps.finance.services import _validate_policy
+
+                _validate_policy(policy)
+            except ValidationError:
+                pass
+            else:
+                finance_configured = True
+    except (LookupError, ImportError):
+        # Keeps historical migrations/checks usable before finance exists.
+        finance_configured = False
     return {
         "company_configured": bool(
             company.is_active
@@ -1128,6 +1161,7 @@ def compute_initialization_progress(company) -> dict[str, bool]:
             company=company, location_type="position", is_active=True
         ).exists(),
         "coding_scheme_configured": coding_configured,
+        "finance_rules_configured": finance_configured,
         "users_configured": has_admin and has_finance,
         "permissions_configured": manager_scopes_ok,
     }
@@ -1143,14 +1177,26 @@ def refresh_initialization_progress(*, company, actor, request=None):
     )
     fields = tuple(values)
     old = _snapshot(setting, (*fields, "initialization_completed"))
+    if setting.initialization_completed:
+        # A completed setup marker is durable.  Revalidation may reveal that a
+        # later Sprint introduced a new prerequisite, but writing a false flag
+        # beside ``initialization_completed=True`` would both violate the
+        # database invariant and silently rewrite the historical completion.
+        # Report the live missing conditions and leave the completed snapshot
+        # untouched; the UI still renders ``values`` from a fresh computation.
+        missing = [field for field, value in values.items() if not value]
+        if missing:
+            raise ValidationError(
+                {"initialization": "当前真实配置仍有未满足项：" + "、".join(missing)}
+            )
+        return setting
     changed = created
     for field, value in values.items():
         if getattr(setting, field) != value:
             setattr(setting, field, value)
             changed = True
-    # Sprint 2 is never permitted to complete the nine-step wizard.
-    if setting.initialization_completed:
-        raise ValidationError("Sprint 2 不得设置整体初始化完成。")
+    # Completion is a separate explicit system_admin action. Configuration
+    # refreshes never silently complete or unset the durable completion marker.
     if changed:
         setting.save(update_fields=[*fields])
         _audit(
@@ -1162,4 +1208,62 @@ def refresh_initialization_progress(*, company, actor, request=None):
             new_data=_snapshot(setting, (*fields, "initialization_completed")),
             request=request,
         )
+    return setting
+
+
+@transaction.atomic
+def complete_initialization(*, actor, company, request=None):
+    """Re-query all nine real conditions and atomically complete setup."""
+
+    from apps.masterdata.models import Company, InitializationSetting
+
+    require_roles(actor, {"system_admin"}, "只有 system_admin 可以完成初始化。")
+    selected = current_company(include_inactive=True)
+    if selected is None or getattr(company, "pk", None) != selected.pk:
+        raise PermissionDenied("目标公司不是当前 V1 公司。")
+    company = Company.objects.select_for_update().get(pk=company.pk)
+    setting, _ = InitializationSetting.objects.select_for_update().get_or_create(
+        company=company
+    )
+    values = compute_initialization_progress(company)
+    missing = [key for key, value in values.items() if not value]
+    old = _snapshot(
+        setting,
+        (*values, "initialization_completed", "completed_by", "completed_at"),
+    )
+    if missing:
+        # A failed final check has no partial write.  The setup page renders
+        # repair links from the freshly queried ``values`` above, while the
+        # durable completion marker (if it already exists) is never rolled
+        # back by an ordinary re-check.
+        raise ValidationError(
+            {"initialization": "仍有未满足项：" + "、".join(missing)}
+        )
+    if setting.initialization_completed:
+        return setting
+    for field, value in values.items():
+        setattr(setting, field, value)
+    setting.initialization_completed = True
+    setting.completed_by = actor
+    setting.completed_at = timezone.now()
+    setting.save(
+        update_fields=[
+            *values,
+            "initialization_completed",
+            "completed_by",
+            "completed_at",
+        ]
+    )
+    _audit(
+        company=company,
+        actor=actor,
+        action="initialization_complete",
+        instance=setting,
+        old_data=old,
+        new_data=_snapshot(
+            setting,
+            (*values, "initialization_completed", "completed_by", "completed_at"),
+        ),
+        request=request,
+    )
     return setting

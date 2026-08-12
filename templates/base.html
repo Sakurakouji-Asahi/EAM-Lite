@@ -39,6 +39,13 @@
               <a class="nav-link px-0" href="{% url 'assets:asset-list' %}">资产总账</a>
               {% if asset_nav.can_create %}<a class="nav-link px-0" href="{% url 'assets:asset-create' %}">新增资产</a>{% endif %}
             {% endif %}
+            {% if finance_nav.can_view %}
+              <div class="text-secondary small mt-3 mb-1">财务与折旧</div>
+              <a class="nav-link px-0" href="{% url 'finance:pending-list' %}">待财务确认</a>
+              <a class="nav-link px-0" href="{% url 'finance:policy-list' %}">折旧政策</a>
+              <a class="nav-link px-0" href="{% url 'finance:fixed-category-list' %}">固定资产类别</a>
+              <a class="nav-link px-0" href="{% url 'finance:batch-list' %}">折旧批次</a>
+            {% endif %}
             {% if can_access_setup %}<a class="nav-link px-0" href="{% url 'masterdata:setup' %}">初始化向导</a>{% endif %}
             {% if masterdata_nav.company or masterdata_nav.department or masterdata_nav.employee or masterdata_nav.location or masterdata_nav.asset_category or masterdata_nav.coding_scheme %}
               <div class="text-secondary small mt-3 mb-1">基础资料</div>

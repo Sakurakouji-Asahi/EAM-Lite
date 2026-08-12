@@ -182,7 +182,9 @@ def test_setup_step_six_is_readable_by_view_role_but_refresh_requires_admin(clie
     client.force_login(viewer)
 
     response = client.get(reverse("masterdata:setup-step", args=[6]))
-    assert response.status_code == 403  # finance is not a setup-coordinator role
+    # Sprint 4 finance users can enter the setup shell for their own step 7,
+    # and may inspect step 6, but cannot refresh the system_admin-owned step.
+    assert response.status_code == 200
     assert client.post(reverse("masterdata:setup-step", args=[6])).status_code == 403
 
     client.force_login(admin)

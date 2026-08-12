@@ -2,6 +2,7 @@ import uuid
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.core.validators import MinLengthValidator
 from django.db import models
 from django.db.models import Q
 from django.utils import timezone
@@ -331,8 +332,9 @@ class Asset(models.Model):
         if self.asset_status not in {
             self.AssetStatus.DRAFT,
             self.AssetStatus.PENDING_FINANCE,
+            self.AssetStatus.PENDING_LABEL,
         }:
-            errors["asset_status"] = "Sprint 3 仅允许草稿或待财务确认状态。"
+            errors["asset_status"] = "Sprint 4 仅允许资产进入待贴标状态。"
         if self.asset_code == "":
             errors["asset_code"] = "未发号资产必须保存 NULL，不能使用空字符串。"
         if self.category_id:
@@ -765,6 +767,180 @@ class AssetCodeHistory(models.Model):
 
     def __str__(self):
         return f"{self.asset} - {self.get_event_type_display()}"
+
+
+class AssetQrIdentity(models.Model):
+    class Status(models.TextChoices):
+        ACTIVE = "active", "有效"
+        REVOKED = "revoked", "已撤销"
+
+    class LabelStatus(models.TextChoices):
+        NOT_GENERATED = "not_generated", "未生成"
+        READY_TO_PRINT = "ready_to_print", "待打印"
+        PRINTED = "printed", "已打印"
+        ATTACHED = "attached", "已贴标"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(
+        Company,
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="asset_qr_identities",
+    )
+    asset = models.ForeignKey(
+        Asset,
+        verbose_name="资产",
+        on_delete=models.PROTECT,
+        related_name="qr_identities",
+    )
+    public_token = models.CharField(
+        "公开随机标识",
+        max_length=128,
+        unique=True,
+        validators=[MinLengthValidator(22)],
+    )
+    status = models.CharField(
+        "状态", max_length=16, choices=Status.choices, default=Status.ACTIVE
+    )
+    label_status = models.CharField(
+        "标签状态",
+        max_length=16,
+        choices=LabelStatus.choices,
+        default=LabelStatus.READY_TO_PRINT,
+    )
+    issued_at = models.DateTimeField("签发时间", default=timezone.now)
+    issued_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="签发人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="issued_asset_qr_identities",
+    )
+    revoked_at = models.DateTimeField("撤销时间", null=True, blank=True)
+    revoked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="撤销人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="revoked_asset_qr_identities",
+    )
+    revoke_reason = models.TextField("撤销原因", blank=True)
+    attached_at = models.DateTimeField("贴标时间", null=True, blank=True)
+    attached_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="贴标确认人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="attached_asset_qr_identities",
+    )
+    version = models.PositiveIntegerField("版本", default=1)
+
+    class Meta:
+        verbose_name = "资产二维码身份"
+        verbose_name_plural = "资产二维码身份"
+        ordering = ("asset_id", "version")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("asset", "version"), name="uq_asset_qr_identity_version"
+            ),
+            models.UniqueConstraint(
+                fields=("asset",),
+                condition=Q(status="active"),
+                name="uq_asset_qr_identity_active",
+            ),
+            models.CheckConstraint(
+                condition=Q(version__gte=1), name="ck_asset_qr_version_positive"
+            ),
+            models.CheckConstraint(
+                condition=Q(public_token__regex=r"^.{22,128}$"),
+                name="ck_asset_qr_token_length",
+            ),
+            models.CheckConstraint(
+                condition=Q(status__in=("active", "revoked")),
+                name="ck_asset_qr_status_valid",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    label_status__in=(
+                        "not_generated",
+                        "ready_to_print",
+                        "printed",
+                        "attached",
+                    )
+                ),
+                name="ck_asset_qr_label_status_valid",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        status="active",
+                        revoked_at__isnull=True,
+                        revoked_by__isnull=True,
+                        revoke_reason="",
+                    )
+                    | Q(
+                        status="revoked",
+                        revoked_at__isnull=False,
+                    )
+                    & ~Q(revoke_reason="")
+                ),
+                name="ck_asset_qr_status_fields",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        label_status__in=("not_generated", "ready_to_print", "printed"),
+                        attached_at__isnull=True,
+                        attached_by__isnull=True,
+                    )
+                    | Q(label_status="attached", attached_at__isnull=False)
+                ),
+                name="ck_asset_qr_label_fields",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            previous = type(self).objects.filter(pk=self.pk).values(
+                "company_id", "asset_id", "public_token", "status",
+                "label_status", "issued_at", "issued_by_id", "revoked_at",
+                "revoked_by_id", "revoke_reason", "attached_at",
+                "attached_by_id", "version",
+            ).first()
+            current = {
+                "company_id": self.company_id,
+                "asset_id": self.asset_id,
+                "public_token": self.public_token,
+                "status": self.status,
+                "label_status": self.label_status,
+                "issued_at": self.issued_at,
+                "issued_by_id": self.issued_by_id,
+                "revoked_at": self.revoked_at,
+                "revoked_by_id": self.revoked_by_id,
+                "revoke_reason": self.revoke_reason,
+                "attached_at": self.attached_at,
+                "attached_by_id": self.attached_by_id,
+                "version": self.version,
+            }
+            if previous is not None and previous != current:
+                raise ValidationError(
+                    "二维码身份只能由后续受控打印、贴标或换标 Service 修改。"
+                )
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("二维码身份历史不可删除。")
+
+    def clean(self):
+        super().clean()
+        if self.asset_id and self.asset.company_id != self.company_id:
+            raise ValidationError({"asset": "二维码身份与资产必须属于同一公司。"})
+
+    def __str__(self):
+        return f"{self.asset} / QR v{self.version}"
 
 
 class AttachmentLinkQuerySet(models.QuerySet):

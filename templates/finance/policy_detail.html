@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}{{ policy }} - EAM-Lite{% endblock %}
+{% block content %}
+  <h1 class="h3 mb-3">{{ policy.name }} v{{ policy.version }}</h1><div class="card shadow-sm"><div class="card-body"><dl class="row"><dt class="col-sm-4">稳定键</dt><dd class="col-sm-8">{{ policy.policy_key }}</dd><dt class="col-sm-4">方法</dt><dd class="col-sm-8">{{ policy.get_method_display }}</dd><dt class="col-sm-4">计提期间</dt><dd class="col-sm-8">{{ policy.get_posting_period_display }}</dd><dt class="col-sm-4">起算/停止</dt><dd class="col-sm-8">{{ policy.get_start_rule_display }} / {{ policy.get_stop_rule_display }}</dd><dt class="col-sm-4">默认寿命</dt><dd class="col-sm-8">{{ policy.default_useful_life_months }} 月</dd><dt class="col-sm-4">有效期</dt><dd class="col-sm-8">{{ policy.effective_from|default:"未启用" }} 至 {{ policy.effective_to|default:"长期" }}</dd><dt class="col-sm-4">状态</dt><dd class="col-sm-8">{{ policy.get_status_display }}{% if policy.is_default %} / 公司默认{% endif %}</dd></dl>
+    {% if can_manage %}
+      <div class="alert alert-warning">以下动作会改变版本或默认解析结果；必须填写原因并二次确认。</div>
+      {% if action_form.errors %}<div class="alert alert-danger">{{ action_form.errors }}</div>{% endif %}
+      {% if policy.status == 'draft' %}<a class="btn btn-primary mb-3" href="{% url 'finance:policy-edit' policy.pk %}">编辑草稿</a>{% endif %}
+      {% if policy.status == 'draft' or policy.status == 'active' and not policy.is_default %}<form method="post" class="border rounded p-3" action="{% if policy.status == 'draft' %}{% url 'finance:policy-action' policy.pk 'activate' %}{% else %}{% url 'finance:policy-action' policy.pk 'default' %}{% endif %}">
+        {% csrf_token %}
+        <div class="mb-3"><label class="form-label" for="{{ action_form.reason.id_for_label }}">{{ action_form.reason.label }}</label>{{ action_form.reason }}</div>
+        <div class="form-check mb-2">{{ action_form.confirm }} <label class="form-check-label" for="{{ action_form.confirm.id_for_label }}">{{ action_form.confirm.label }}</label></div>
+        {% if policy.status == 'draft' %}<div class="form-check mb-3">{{ action_form.make_default }} <label class="form-check-label" for="{{ action_form.make_default.id_for_label }}">{{ action_form.make_default.label }}</label></div><button class="btn btn-success">确认启用</button>{% else %}<button class="btn btn-success">确认设为公司默认</button>{% endif %}
+      </form>{% endif %}
+      {% if policy.status == 'active' %}<form method="post" class="border border-danger rounded p-3 mt-3" action="{% url 'finance:policy-action' policy.pk 'retire' %}">{% csrf_token %}<div class="mb-3"><label class="form-label" for="id_retire_reason">退役原因</label><textarea class="form-control" id="id_retire_reason" name="reason" required></textarea></div><div class="form-check mb-3"><input class="form-check-input" id="id_retire_confirm" type="checkbox" name="confirm" required><label class="form-check-label" for="id_retire_confirm">我已核对影响摘要并确认退役。</label></div><button class="btn btn-outline-danger">确认退役</button></form>{% endif %}
+      {% if policy.status != 'draft' %}<form method="post" class="border rounded p-3 mt-3" action="{% url 'finance:policy-action' policy.pk 'clone' %}">{% csrf_token %}<div class="mb-3"><label class="form-label" for="id_clone_reason">克隆原因</label><textarea class="form-control" id="id_clone_reason" name="reason" required></textarea></div><div class="form-check mb-3"><input class="form-check-input" id="id_clone_confirm" type="checkbox" name="confirm" required><label class="form-check-label" for="id_clone_confirm">我确认建立新草稿版本。</label></div><button class="btn btn-outline-primary">确认克隆新版本</button></form>{% endif %}
+    {% endif %}
+  </div></div>
+{% endblock %}

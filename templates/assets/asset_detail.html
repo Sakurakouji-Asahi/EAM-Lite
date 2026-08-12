@@ -14,12 +14,14 @@
       {% if can_submit %}<a class="btn btn-success" href="{% url 'assets:asset-submit' asset.pk %}">提交财务确认</a>{% endif %}
       {% if can_withdraw %}<a class="btn btn-outline-warning" href="{% url 'assets:asset-withdraw' asset.pk %}">撤回/退回</a>{% endif %}
       {% if can_set_scheme %}<a class="btn btn-outline-primary" href="{% url 'assets:asset-requested-scheme' asset.pk %}">指定编码方案</a>{% endif %}
+      {% if can_financial and asset.asset_status == "pending_finance" %}<a class="btn btn-danger" href="{% url 'finance:finance-confirm' asset.pk %}">财务确认</a>{% endif %}
+      {% if can_financial and asset.asset_status != "draft" and asset.asset_status != "pending_finance" %}<a class="btn btn-outline-primary" href="{% url 'finance:asset-finance-detail' asset.pk %}">财务与折旧</a>{% endif %}
       {% if can_delete %}<a class="btn btn-outline-danger" href="{% url 'assets:asset-delete' asset.pk %}">删除草稿</a>{% endif %}
     </div>
   </div>
 
   {% if asset.asset_status == "pending_finance" %}
-    <div class="alert alert-warning" role="status">当前仅等待财务后续处理。Sprint 3 不提供财务确认、正式发号或贴标按钮。</div>
+    <div class="alert alert-warning" role="status">当前等待 finance 明确会计认定。财务确认会在单一事务中生成永久正式编号和安全二维码身份，并进入待贴标；打印和贴标仍留到 Sprint 6。</div>
   {% endif %}
 
   <div class="row g-3">
@@ -32,7 +34,7 @@
             <dt class="col-sm-4 text-secondary">资产名称</dt><dd class="col-sm-8">{{ asset.asset_name }}</dd>
             <dt class="col-sm-4 text-secondary">实物分类</dt><dd class="col-sm-8">{{ category_path }}</dd>
             <dt class="col-sm-4 text-secondary">资产状态</dt><dd class="col-sm-8">{{ asset.get_asset_status_display }}</dd>
-            <dt class="col-sm-4 text-secondary">标签状态</dt><dd class="col-sm-8">尚未生成（后续 Sprint）</dd>
+            <dt class="col-sm-4 text-secondary">标签状态</dt><dd class="col-sm-8">{% with qr=asset.qr_identities.first %}{% if qr %}{{ qr.get_label_status_display }}{% else %}尚未生成{% endif %}{% endwith %}</dd>
           </dl>
         </div>
       </section>
@@ -91,14 +93,14 @@
       {% if can_financial %}
         <section class="card shadow-sm mb-3" aria-labelledby="finance-title">
           <div class="card-header"><h2 class="h5 mb-0" id="finance-title">财务信息</h2></div>
-          <div class="card-body"><p class="text-secondary mb-0">财务确认和财务资料将在 Sprint 4 启用；当前没有财务真源数据。</p></div>
+          <div class="card-body">{% if asset.asset_status == 'pending_finance' %}<p class="mb-2">财务资料尚未确认。</p><a class="btn btn-sm btn-primary" href="{% url 'finance:finance-confirm' asset.pk %}">进入财务确认</a>{% elif asset.asset_status != 'draft' %}<p class="mb-2">财务真源和实际折旧来自独立受控记录。</p><a class="btn btn-sm btn-outline-primary" href="{% url 'finance:asset-finance-detail' asset.pk %}">查看财务与折旧</a>{% endif %}</div>
         </section>
       {% endif %}
 
       <section class="card shadow-sm" aria-labelledby="future-tabs-title">
         <div class="card-header"><h2 class="h5 mb-0" id="future-tabs-title">后续业务记录</h2></div>
         <div class="card-body">
-          <p class="text-secondary mb-0">折旧、变动、盘点、保养、处置、二维码与标签功能属于后续 Sprint，当前不生成伪数据。</p>
+          <p class="text-secondary mb-0">折旧已由财务真源与追加式分录管理；变动、盘点、保养、处置以及二维码打印与贴标属于后续 Sprint，当前不生成伪数据。</p>
         </div>
       </section>
     </div>

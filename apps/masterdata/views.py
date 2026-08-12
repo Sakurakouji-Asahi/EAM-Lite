@@ -58,6 +58,7 @@ from apps.masterdata.permissions import (
 from apps.masterdata.services import (
     assign_department_scope,
     compute_initialization_progress,
+    complete_initialization,
     create_asset_category,
     create_company,
     create_department,
@@ -1347,10 +1348,22 @@ SETUP_STEPS = {
         "url": "masterdata:coding-scheme-list",
         "writer": "system_admin",
     },
+    7: {
+        "name": "折旧规则与财务参数",
+        "flag": "finance_rules_configured",
+        "url": "finance:policy-list",
+        "writer": "finance",
+    },
     8: {
         "name": "用户、角色及部门数据范围",
         "flag": "users_configured",
         "url": "masterdata:user-permissions-list",
+        "writer": "system_admin",
+    },
+    9: {
+        "name": "校验并完成",
+        "flag": "initialization_completed",
+        "url": "masterdata:setup",
         "writer": "system_admin",
     },
 }
@@ -1389,7 +1402,11 @@ def _setup_context(company):
     ]
     steps = []
     for number, definition in SETUP_STEPS.items():
-        complete = progress[definition["flag"]]
+        complete = (
+            bool(setting and setting.initialization_completed)
+            if number == 9
+            else progress[definition["flag"]]
+        )
         if number == 8:
             complete = progress["users_configured"] and progress["permissions_configured"]
         steps.append({"number": number, **definition, "complete": complete})
@@ -1434,15 +1451,39 @@ def setup_step(request, step):
     if company is None:
         return redirect("masterdata:setup")
     if request.method == "POST":
-        if step not in {6, 8}:
+        if step not in {6, 7, 8, 9}:
             return HttpResponseNotAllowed(["GET"])
-        require_manage_masterdata(
-            request.user, "coding_scheme" if step == 6 else "user_permissions"
-        )
-        refresh_initialization_progress(
-            company=company, actor=request.user, request=request
-        )
-        messages.success(request, f"步骤 {step} 已按当前真实数据重新校验并保存。")
+        try:
+            if step == 6:
+                require_manage_masterdata(request.user, "coding_scheme")
+                refresh_initialization_progress(
+                    company=company, actor=request.user, request=request
+                )
+            elif step == 7:
+                from apps.finance.permissions import require_manage_finance
+
+                require_manage_finance(request.user)
+                refresh_initialization_progress(
+                    company=company, actor=request.user, request=request
+                )
+            elif step == 8:
+                require_manage_masterdata(request.user, "user_permissions")
+                refresh_initialization_progress(
+                    company=company, actor=request.user, request=request
+                )
+            else:
+                complete_initialization(
+                    actor=request.user, company=company, request=request
+                )
+        except ValidationError as exc:
+            messages.error(request, "; ".join(exc.messages))
+        else:
+            messages.success(
+                request,
+                "九项真实条件已重新校验，初始化已原子完成。"
+                if step == 9
+                else f"步骤 {step} 已按当前真实数据重新校验并保存。",
+            )
         return redirect("masterdata:setup-step", step=step)
     context = _setup_context(company)
     definition = next(item for item in context["steps"] if item["number"] == step)
@@ -1458,7 +1499,9 @@ def setup_step(request, step):
                 4: can_view_masterdata(request.user, "asset_category"),
                 5: can_view_masterdata(request.user, "location"),
                 6: can_view_masterdata(request.user, "coding_scheme"),
+                7: bool(role_names_for(request.user).intersection({"finance", "system_admin"})),
                 8: can_view_masterdata(request.user, "user_permissions"),
+                9: "system_admin" in role_names_for(request.user),
             }[step],
             "bootstrap_hint": step in {3, 8},
             "show_bootstrap_guidance": (

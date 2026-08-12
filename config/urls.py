@@ -18,5 +18,6 @@ urlpatterns = [
     path("setup/<int:step>/", setup_step, name="setup-step"),
     path("master-data/", include("apps.masterdata.urls")),
     path("assets/", include("apps.assets.urls")),
+    path("finance/", include("apps.finance.urls")),
     path("imports/", include("apps.imports.urls")),
 ]

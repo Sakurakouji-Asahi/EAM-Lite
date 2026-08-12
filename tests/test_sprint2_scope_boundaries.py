@@ -101,12 +101,9 @@ def test_sprint2_services_export_no_issue_or_allocate_primitive():
     assert forbidden == []
 
 
-def test_sprint3_source_has_no_sprint4_or_later_domain_model():
+def test_sprint4_source_has_no_sprint5_or_later_domain_model():
     forbidden_model_names = {
-        "assetfinance",
-        "assetqridentity",
         "assetmovement",
-        "depreciationpolicy",
         "inventorytask",
         "maintenanceplan",
     }
