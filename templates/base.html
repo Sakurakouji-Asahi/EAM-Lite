@@ -1,0 +1,49 @@
+{% load static %}
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}EAM-Lite{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'vendor/bootstrap/5.3.8/css/bootstrap.min.css' %}">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
+  <script src="{% static 'vendor/htmx/2.0.10/htmx.min.js' %}" defer></script>
+  <script src="{% static 'vendor/bootstrap/5.3.8/js/bootstrap.bundle.min.js' %}" defer></script>
+</head>
+<body class="bg-body-tertiary">
+  <header class="navbar navbar-dark bg-primary px-3 shadow-sm">
+    <span class="navbar-brand mb-0 h1">EAM-Lite</span>
+    {% if request.user.is_authenticated %}
+      <div class="d-flex align-items-center gap-3 text-white">
+        <span>当前用户：{{ request.user.display_name|default:request.user.username }}</span>
+        <form method="post" action="{% url 'logout' %}" class="m-0">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-sm btn-outline-light">退出</button>
+        </form>
+      </div>
+    {% endif %}
+  </header>
+
+  {% if request.user.is_authenticated %}
+    <div class="container-fluid">
+      <div class="row min-vh-content">
+        <aside class="col-12 col-md-3 col-lg-2 border-end bg-white p-3">
+          <div class="text-secondary small mb-2">功能菜单</div>
+          <nav aria-label="主菜单">
+            <span class="nav-link active px-0" aria-current="page">首页</span>
+            <span class="nav-link disabled px-0">业务模块将在后续 Sprint 提供</span>
+          </nav>
+        </aside>
+        <main class="col-12 col-md-9 col-lg-10 p-4">
+          {% block content %}{% endblock %}
+        </main>
+      </div>
+    </div>
+  {% else %}
+    <main class="container py-5">
+      {% block anonymous_content %}{% endblock %}
+    </main>
+  {% endif %}
+</body>
+</html>

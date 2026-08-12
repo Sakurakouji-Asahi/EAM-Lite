@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}登录 | EAM-Lite{% endblock %}
+
+{% block anonymous_content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-sm-9 col-md-6 col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-body p-4">
+        <h1 class="h4 mb-4 text-center">登录 EAM-Lite</h1>
+        {% if form.non_field_errors %}
+          <div class="alert alert-danger" role="alert">
+            用户名或密码错误，请重新输入。
+          </div>
+        {% endif %}
+        <form method="post" novalidate>
+          {% csrf_token %}
+          {% if next %}
+            <input type="hidden" name="next" value="{{ next }}">
+          {% endif %}
+          <div class="mb-3">
+            <label for="{{ form.username.id_for_label }}" class="form-label">用户名</label>
+            {{ form.username }}
+            {% for error in form.username.errors %}
+              <div class="invalid-feedback d-block">{{ error }}</div>
+            {% endfor %}
+          </div>
+          <div class="mb-3">
+            <label for="{{ form.password.id_for_label }}" class="form-label">密码</label>
+            {{ form.password }}
+            {% for error in form.password.errors %}
+              <div class="invalid-feedback d-block">{{ error }}</div>
+            {% endfor %}
+          </div>
+          <button type="submit" class="btn btn-primary w-100">登录</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
