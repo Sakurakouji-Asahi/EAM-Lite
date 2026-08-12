@@ -35,12 +35,13 @@
           <nav aria-label="主菜单">
             <a class="nav-link px-0" href="{% url 'home' %}">首页</a>
             {% if can_access_setup %}<a class="nav-link px-0" href="{% url 'masterdata:setup' %}">初始化向导</a>{% endif %}
-            {% if masterdata_nav.company or masterdata_nav.department or masterdata_nav.employee or masterdata_nav.location or masterdata_nav.asset_category %}
+            {% if masterdata_nav.company or masterdata_nav.department or masterdata_nav.employee or masterdata_nav.location or masterdata_nav.asset_category or masterdata_nav.coding_scheme %}
               <div class="text-secondary small mt-3 mb-1">基础资料</div>
               {% if masterdata_nav.company %}<a class="nav-link px-0" href="{% url 'masterdata:company-list' %}">公司</a>{% endif %}
               {% if masterdata_nav.department %}<a class="nav-link px-0" href="{% url 'masterdata:department-list' %}">部门</a>{% endif %}
               {% if masterdata_nav.employee %}<a class="nav-link px-0" href="{% url 'masterdata:employee-list' %}">人员</a>{% endif %}
               {% if masterdata_nav.asset_category %}<a class="nav-link px-0" href="{% url 'masterdata:category-list' %}">实物分类</a>{% endif %}
+              {% if masterdata_nav.coding_scheme %}<a class="nav-link px-0" href="{% url 'masterdata:coding-scheme-list' %}">编码规则</a>{% endif %}
               {% if masterdata_nav.location %}<a class="nav-link px-0" href="{% url 'masterdata:location-list' %}">位置</a>{% endif %}
             {% endif %}
             {% if masterdata_nav.system_setting or masterdata_nav.user_permissions %}

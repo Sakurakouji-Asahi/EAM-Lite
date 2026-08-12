@@ -521,6 +521,14 @@ class AssetCategory(NormalizedCodeModel, TimeStampedModel):
     is_maintenance_required_default = models.BooleanField(
         "默认需要保养", default=False
     )
+    default_coding_scheme = models.ForeignKey(
+        "AssetCodingScheme",
+        verbose_name="默认编码方案",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="default_for_categories",
+    )
     is_active = models.BooleanField("启用", default=True)
 
     class Meta:
@@ -561,6 +569,22 @@ class AssetCategory(NormalizedCodeModel, TimeStampedModel):
     def clean(self):
         super().clean()
         _validate_tree_node(self, level_field="category_level")
+        scheme = self.default_coding_scheme
+        if scheme is not None:
+            today = timezone.localdate()
+            if scheme.company_id != self.company_id:
+                raise ValidationError(
+                    {"default_coding_scheme": "默认编码方案必须属于同一公司。"}
+                )
+            if (
+                scheme.status != AssetCodingScheme.Status.ACTIVE
+                or scheme.effective_from is None
+                or scheme.effective_from > today
+                or (scheme.effective_to is not None and scheme.effective_to < today)
+            ):
+                raise ValidationError(
+                    {"default_coding_scheme": "默认编码方案必须为当前生效版本。"}
+                )
 
     def save(self, *args, **kwargs):
         if self.parent_id:
@@ -574,6 +598,445 @@ class AssetCategory(NormalizedCodeModel, TimeStampedModel):
 
     def __str__(self):
         return self.name
+
+
+class AssetCodingScheme(TimeStampedModel):
+    class Status(models.TextChoices):
+        DRAFT = "draft", "草稿"
+        ACTIVE = "active", "有效版本"
+        RETIRED = "retired", "历史版本"
+
+    class ResetMode(models.TextChoices):
+        NEVER = "never", "永不重置"
+        YEARLY = "yearly", "按年重置"
+        MONTHLY = "monthly", "按月重置"
+        CATEGORY_YEARLY = "category_yearly", "按分类和年重置"
+        CATEGORY_MONTHLY = "category_monthly", "按分类和月重置"
+
+    class CategoryScopeLevel(models.TextChoices):
+        MAJOR = "major", "大类"
+        MINOR = "minor", "小类"
+        LEAF = "leaf", "叶级分类"
+
+    company = models.ForeignKey(
+        Company,
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="asset_coding_schemes",
+    )
+    name = models.CharField("方案名称", max_length=200)
+    scheme_key = models.CharField("方案稳定键", max_length=100)
+    version = models.PositiveIntegerField("版本")
+    description = models.TextField("说明", blank=True)
+    status = models.CharField(
+        "状态", max_length=16, choices=Status.choices, default=Status.DRAFT
+    )
+    is_default = models.BooleanField("公司默认方案", default=False)
+    reset_mode = models.CharField(
+        "重置模式", max_length=32, choices=ResetMode.choices
+    )
+    sequence_start = models.BigIntegerField("流水起始值", default=1)
+    category_scope_level = models.CharField(
+        "分类作用域层级",
+        max_length=16,
+        choices=CategoryScopeLevel.choices,
+        null=True,
+        blank=True,
+    )
+    effective_from = models.DateField("生效开始日", null=True, blank=True)
+    effective_to = models.DateField("生效结束日", null=True, blank=True)
+    previous_version = models.ForeignKey(
+        "self",
+        verbose_name="上一版本",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="next_versions",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="创建人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_asset_coding_schemes",
+    )
+
+    class Meta:
+        verbose_name = "资产编码方案"
+        verbose_name_plural = "资产编码方案"
+        ordering = ("company_id", "scheme_key", "-version")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "scheme_key", "version"),
+                name="uq_coding_scheme_company_key_version",
+            ),
+            models.UniqueConstraint(
+                fields=("company",),
+                condition=Q(status="active", is_default=True),
+                name="uq_coding_scheme_active_default",
+            ),
+            models.CheckConstraint(
+                condition=Q(version__gte=1), name="ck_coding_scheme_version_positive"
+            ),
+            models.CheckConstraint(
+                condition=Q(sequence_start__gte=0),
+                name="ck_coding_scheme_sequence_start",
+            ),
+            models.CheckConstraint(
+                condition=Q(status__in=("draft", "active", "retired")),
+                name="ck_coding_scheme_status_valid",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    reset_mode__in=(
+                        "never",
+                        "yearly",
+                        "monthly",
+                        "category_yearly",
+                        "category_monthly",
+                    )
+                ),
+                name="ck_coding_scheme_reset_valid",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        reset_mode__in=("category_yearly", "category_monthly"),
+                        category_scope_level__in=("major", "minor", "leaf"),
+                    )
+                    | Q(
+                        reset_mode__in=("never", "yearly", "monthly"),
+                        category_scope_level__isnull=True,
+                    )
+                ),
+                name="ck_coding_scheme_category_scope",
+            ),
+            models.CheckConstraint(
+                condition=Q(effective_to__isnull=True)
+                | Q(effective_from__isnull=False, effective_to__gte=models.F("effective_from")),
+                name="ck_coding_scheme_effective_dates",
+            ),
+            models.CheckConstraint(
+                condition=~Q(status="active") | Q(effective_from__isnull=False),
+                name="ck_coding_scheme_active_from",
+            ),
+            models.CheckConstraint(
+                condition=Q(is_default=False) | Q(status="active"),
+                name="ck_coding_scheme_default_active",
+            ),
+            models.CheckConstraint(
+                condition=~Q(id=models.F("previous_version_id")),
+                name="ck_coding_scheme_not_self_previous",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.previous_version_id:
+            previous = self.previous_version
+            if previous.company_id != self.company_id:
+                raise ValidationError({"previous_version": "上一版本必须属于同一公司。"})
+            if previous.scheme_key != self.scheme_key:
+                raise ValidationError({"previous_version": "上一版本必须使用相同方案稳定键。"})
+            if previous.version >= self.version:
+                raise ValidationError({"previous_version": "上一版本号必须小于当前版本。"})
+
+    def __str__(self):
+        return f"{self.name} v{self.version}"
+
+
+class AssetCodingSegment(models.Model):
+    class SegmentType(models.TextChoices):
+        FIXED_TEXT = "fixed_text", "固定文本"
+        COMPANY_CODE = "company_code", "公司编码"
+        MAJOR_CATEGORY_CODE = "major_category_code", "大类编码"
+        MINOR_CATEGORY_CODE = "minor_category_code", "小类编码"
+        CATEGORY_CODE = "category_code", "分类编码"
+        DEPARTMENT_CODE = "department_code", "部门编码"
+        YEAR = "year", "年"
+        YEAR_MONTH = "year_month", "年月"
+        FULL_DATE = "full_date", "完整日期"
+        SEQUENCE = "sequence", "顺序号"
+        CUSTOM_TEXT = "custom_text", "自定义固定文本"
+        SEPARATOR = "separator", "分隔符"
+
+    coding_scheme = models.ForeignKey(
+        AssetCodingScheme,
+        verbose_name="编码方案",
+        on_delete=models.CASCADE,
+        related_name="segments",
+    )
+    sequence_order = models.PositiveIntegerField("片段顺序")
+    segment_type = models.CharField(
+        "片段类型", max_length=32, choices=SegmentType.choices
+    )
+    fixed_value = models.CharField("固定值", max_length=64, null=True, blank=True)
+    format_string = models.CharField(
+        "格式字符串", max_length=64, null=True, blank=True, editable=False
+    )
+    sequence_length = models.PositiveSmallIntegerField(
+        "流水位数", null=True, blank=True
+    )
+    zero_pad = models.BooleanField("左侧补零", null=True, blank=True)
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "资产编码片段"
+        verbose_name_plural = "资产编码片段"
+        ordering = ("coding_scheme_id", "sequence_order")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("coding_scheme", "sequence_order"),
+                name="uq_coding_segment_scheme_order",
+            ),
+            models.UniqueConstraint(
+                fields=("coding_scheme",),
+                condition=Q(segment_type="sequence"),
+                name="uq_coding_segment_one_sequence",
+            ),
+            models.CheckConstraint(
+                condition=Q(sequence_order__gte=1),
+                name="ck_coding_segment_order_positive",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    segment_type__in=(
+                        "fixed_text",
+                        "company_code",
+                        "major_category_code",
+                        "minor_category_code",
+                        "category_code",
+                        "department_code",
+                        "year",
+                        "year_month",
+                        "full_date",
+                        "sequence",
+                        "custom_text",
+                        "separator",
+                    )
+                ),
+                name="ck_coding_segment_type_valid",
+            ),
+            models.CheckConstraint(
+                condition=Q(format_string__isnull=True),
+                name="ck_coding_segment_format_null",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        segment_type__in=("fixed_text", "custom_text"),
+                        fixed_value__isnull=False,
+                        fixed_value__regex=r"^[^\s\x00-\x1F\x7F-\x9F{}](?:[^\x00-\x1F\x7F-\x9F{}]*[^\s\x00-\x1F\x7F-\x9F{}])?$",
+                        sequence_length__isnull=True,
+                        zero_pad__isnull=True,
+                    )
+                    | Q(
+                        segment_type="separator",
+                        fixed_value__in=("-", "_", ".", "/"),
+                        sequence_length__isnull=True,
+                        zero_pad__isnull=True,
+                    )
+                    | Q(
+                        segment_type="sequence",
+                        fixed_value__isnull=True,
+                        sequence_length__isnull=False,
+                        sequence_length__gte=1,
+                        sequence_length__lte=12,
+                        zero_pad__isnull=False,
+                    )
+                    | Q(
+                        segment_type__in=(
+                            "company_code",
+                            "major_category_code",
+                            "minor_category_code",
+                            "category_code",
+                            "department_code",
+                            "year",
+                            "year_month",
+                            "full_date",
+                        ),
+                        fixed_value__isnull=True,
+                        sequence_length__isnull=True,
+                        zero_pad__isnull=True,
+                    )
+                ),
+                name="ck_coding_segment_field_matrix",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.format_string is not None:
+            raise ValidationError({"format_string": "V1 不允许配置格式字符串。"})
+        fixed_types = {self.SegmentType.FIXED_TEXT, self.SegmentType.CUSTOM_TEXT}
+        source_types = {
+            self.SegmentType.COMPANY_CODE,
+            self.SegmentType.MAJOR_CATEGORY_CODE,
+            self.SegmentType.MINOR_CATEGORY_CODE,
+            self.SegmentType.CATEGORY_CODE,
+            self.SegmentType.DEPARTMENT_CODE,
+            self.SegmentType.YEAR,
+            self.SegmentType.YEAR_MONTH,
+            self.SegmentType.FULL_DATE,
+        }
+        if self.segment_type in fixed_types:
+            value = self.fixed_value
+            if not value:
+                raise ValidationError({"fixed_value": "固定文本不能为空。"})
+            if value != value.strip():
+                raise ValidationError({"fixed_value": "固定文本不能包含首尾空白。"})
+            if any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in value):
+                raise ValidationError({"fixed_value": "固定文本不能包含控制字符。"})
+            if "{" in value or "}" in value:
+                raise ValidationError({"fixed_value": "固定文本不能包含花括号。"})
+            if self.sequence_length is not None or self.zero_pad is not None:
+                raise ValidationError("固定文本片段包含了多余字段。")
+        elif self.segment_type == self.SegmentType.SEPARATOR:
+            if self.fixed_value not in {"-", "_", ".", "/"}:
+                raise ValidationError({"fixed_value": "分隔符只能是 -、_、. 或 /。"})
+            if self.sequence_length is not None or self.zero_pad is not None:
+                raise ValidationError("分隔符片段包含了多余字段。")
+        elif self.segment_type == self.SegmentType.SEQUENCE:
+            if self.fixed_value is not None:
+                raise ValidationError({"fixed_value": "顺序号片段不能配置固定值。"})
+            if self.sequence_length is None or not 1 <= self.sequence_length <= 12:
+                raise ValidationError({"sequence_length": "流水位数必须为 1–12。"})
+            if self.zero_pad is None:
+                raise ValidationError({"zero_pad": "顺序号片段必须明确是否补零。"})
+        elif self.segment_type in source_types:
+            if (
+                self.fixed_value is not None
+                or self.sequence_length is not None
+                or self.zero_pad is not None
+            ):
+                raise ValidationError("来源片段包含了多余字段。")
+        else:
+            raise ValidationError({"segment_type": "不支持的片段类型。"})
+
+    def __str__(self):
+        return f"{self.coding_scheme} #{self.sequence_order}"
+
+
+class SequenceCounter(TimeStampedModel):
+    company = models.ForeignKey(
+        Company,
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="sequence_counters",
+    )
+    coding_scheme = models.ForeignKey(
+        AssetCodingScheme,
+        verbose_name="编码方案",
+        on_delete=models.PROTECT,
+        related_name="sequence_counters",
+    )
+    scope_key = models.CharField("作用域键", max_length=512)
+    current_value = models.BigIntegerField("当前值")
+
+    class Meta:
+        verbose_name = "编码流水计数器"
+        verbose_name_plural = "编码流水计数器"
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "coding_scheme", "scope_key"),
+                name="uq_sequence_counter_scope",
+            ),
+            models.CheckConstraint(
+                condition=Q(current_value__gte=-1), name="ck_sequence_counter_minimum"
+            ),
+        ]
+
+
+class IssuedCode(models.Model):
+    class Status(models.TextChoices):
+        ACTIVE = "active", "当前有效"
+        REPLACED = "replaced", "已替换"
+        VOIDED = "voided", "已作废"
+
+    company = models.ForeignKey(
+        Company,
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="issued_codes",
+    )
+    coding_scheme = models.ForeignKey(
+        AssetCodingScheme,
+        verbose_name="编码方案",
+        on_delete=models.PROTECT,
+        related_name="issued_codes",
+    )
+    scope_key = models.CharField("作用域键", max_length=512)
+    sequence_value = models.BigIntegerField("流水值")
+    display_code = models.CharField("显示编号", max_length=64)
+    normalized_code = models.CharField("规范化编号", max_length=64)
+    effective_date = models.DateField("编号生效日期")
+    effective_date_reason = models.TextField("历史回填原因", blank=True)
+    status = models.CharField(
+        "状态", max_length=16, choices=Status.choices, default=Status.ACTIVE
+    )
+    idempotency_key = models.CharField("幂等键", max_length=255)
+    issued_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="签发人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="issued_asset_codes",
+    )
+    issued_at = models.DateTimeField("签发时间", default=timezone.now)
+    replaced_or_voided_reason = models.TextField("替换或作废原因", blank=True)
+    replaced_or_voided_at = models.DateTimeField(
+        "替换或作废时间", null=True, blank=True
+    )
+
+    class Meta:
+        verbose_name = "已发资产编号"
+        verbose_name_plural = "已发资产编号"
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "normalized_code"),
+                name="uq_issued_code_company_normalized",
+            ),
+            models.UniqueConstraint(
+                fields=("company", "coding_scheme", "scope_key", "sequence_value"),
+                name="uq_issued_code_scope_sequence",
+            ),
+            models.UniqueConstraint(
+                fields=("company", "idempotency_key"),
+                name="uq_issued_code_company_idem",
+            ),
+            models.CheckConstraint(
+                condition=Q(sequence_value__gte=0),
+                name="ck_issued_code_sequence_nonnegative",
+            ),
+            models.CheckConstraint(
+                condition=Q(status__in=("active", "replaced", "voided")),
+                name="ck_issued_code_status_valid",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        status="active",
+                        replaced_or_voided_reason="",
+                        replaced_or_voided_at__isnull=True,
+                    )
+                    | Q(
+                        status__in=("replaced", "voided"),
+                        replaced_or_voided_reason__gt="",
+                        replaced_or_voided_at__isnull=False,
+                    )
+                ),
+                name="ck_issued_code_status_fields",
+            ),
+            models.CheckConstraint(
+                condition=~Q(display_code="") & ~Q(normalized_code="") & ~Q(idempotency_key=""),
+                name="ck_issued_code_values_nonempty",
+            ),
+        ]
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("已发编号永久占号，不允许删除。")
 
 
 class SystemSetting(models.Model):

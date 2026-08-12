@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}编码方案 {{ scheme }} - EAM-Lite{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between gap-2 mb-3"><div><h1 class="h3 mb-1">{{ scheme }}</h1><span class="badge text-bg-secondary">{{ scheme.get_status_display }}</span>{% if scheme.is_default %} <span class="badge text-bg-success">公司默认</span>{% endif %}</div><a class="btn btn-outline-secondary" href="{% url 'masterdata:coding-scheme-list' %}">返回</a></div>
+<div class="alert alert-warning"><strong>仅预览，不占正式序号。</strong> 正式资产发号尚未启用。</div>
+<div class="card shadow-sm mb-3"><div class="card-body"><dl class="row mb-0"><dt class="col-sm-3">稳定键 / 版本</dt><dd class="col-sm-9"><code>{{ scheme.scheme_key }}</code> / v{{ scheme.version }}</dd><dt class="col-sm-3">重置模式</dt><dd class="col-sm-9">{{ scheme.get_reset_mode_display }}</dd><dt class="col-sm-3">流水起始值</dt><dd class="col-sm-9">{{ scheme.sequence_start }}</dd><dt class="col-sm-3">生效期</dt><dd class="col-sm-9">{{ scheme.effective_from|default:"未设置" }} 至 {{ scheme.effective_to|default:"长期" }}</dd></dl></div></div>
+<div class="card shadow-sm mb-3"><div class="card-header"><strong>片段</strong></div><ul class="list-group list-group-flush">{% for item in segments %}<li class="list-group-item">#{{ item.sequence_order }} {{ item.get_segment_type_display }} {% if item.fixed_value %}<code>{{ item.fixed_value }}</code>{% endif %}{% if item.sequence_length %}（{{ item.sequence_length }} 位，{% if item.zero_pad %}补零{% else %}不补零{% endif %}）{% endif %}</li>{% endfor %}</ul></div>
+<div class="card shadow-sm mb-3"><div class="card-header d-flex justify-content-between"><strong>预览</strong><a href="?examples=10">生成 10 个示例</a></div><div class="card-body">{% if preview_error %}<div class="alert alert-danger mb-0">{{ preview_error }}</div>{% else %}<ol class="mb-0">{% for code in examples %}<li><code>{{ code }}</code></li>{% endfor %}</ol>{% endif %}</div></div>
+{% if can_manage %}<div class="d-flex flex-wrap gap-2">
+  {% if scheme.status == 'draft' %}<a class="btn btn-primary" href="{% url 'masterdata:coding-scheme-edit' scheme.pk %}">编辑草稿</a><form method="post" action="{% url 'masterdata:coding-scheme-activate' scheme.pk %}">{% csrf_token %}<button class="btn btn-success">启用</button></form>{% else %}<form method="post" action="{% url 'masterdata:coding-scheme-clone' scheme.pk %}">{% csrf_token %}<button class="btn btn-primary">复制为新版本</button></form>{% endif %}
+  {% if scheme.status == 'active' and not scheme.is_default %}<form method="post" action="{% url 'masterdata:coding-scheme-set-default' scheme.pk %}">{% csrf_token %}<button class="btn btn-outline-success">设为公司默认</button></form>{% endif %}
+  {% if scheme.status == 'active' %}<form method="post" action="{% url 'masterdata:coding-scheme-retire' scheme.pk %}">{% csrf_token %}<button class="btn btn-outline-danger">退役</button></form>{% endif %}
+</div>{% endif %}
+{% endblock %}

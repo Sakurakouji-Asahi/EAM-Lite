@@ -32,6 +32,13 @@
 
 数据库唯一约束为 `(company_id, scheme_key, version)`。同公司同一 `scheme_key` 的版本必须形成单向链，禁止循环。
 
+V1 的生效期使用 `DateField` 和上海业务日，区间为闭区间
+`[effective_from, effective_to]`：结束日当天仍有效。草稿可暂不填写开始、结束日；
+启用时 `effective_from` 必填，`effective_to` 可为空表示长期有效。允许保存尚未到期或已经过期的
+活动版本，但它们不属于“当前生效”方案，不能成为当前公司/分类默认方案，也不能满足初始化向导步骤 6。
+数据库在同一公司只允许一个 `status=active AND is_default=true` 的方案；Service 另按上海业务日
+验证该行当前生效。同一稳定键的两个活动闭区间端点相同也视为重叠。
+
 ### 2.2 生命周期
 
 1. `draft` 版本可以修改并校验，但不能发正式编号。
@@ -70,7 +77,26 @@
 | `custom_text` | 方案中直接配置的自定义常量 |
 | `separator` | 明确配置的分隔符 |
 
-`custom_field` 不属于 V1 可用片段。V1 没有经过批准的自定义字段来源模型、字段白名单或取值时点，因此配置页面、导入模板和 API 均不得显示/接受 `custom_field`。数据库枚举或代码可以为未来迁移预留该名称，但 V1 规则校验必须明确拒绝，不能把任意模型属性、JSON 路径或动态 `getattr` 当作替代来源。未来启用必须先修订本规范并定义稳定来源、公司范围、缺值行为和历史版本语义。
+### 3.1 V1 片段字段矩阵
+
+V1 的 `AssetCodingSegment` 必须严格使用下表。模型、数据库 CHECK、Form、Service、配置页面和自动测试不得采用不同口径：
+
+| 片段类型 | `fixed_value` | `format_string` | `sequence_length` | `zero_pad` |
+|---|---|---|---|---|
+| `fixed_text`、`custom_text` | 必填 | NULL | NULL | NULL |
+| `separator` | 必填，且只能是单个 `-`、`_`、`.` 或 `/` | NULL | NULL | NULL |
+| `sequence` | NULL | NULL | 必填，范围 1–12 | 必填布尔值，`true`/`false` 均允许 |
+| 其余来源片段和日期片段 | NULL | NULL | NULL | NULL |
+
+补充约束：
+
+- `format_string` 是保留字段，V1 对任何片段都必须为 NULL，不在 UI 或 API 中暴露或接受。
+- `fixed_text`、`custom_text` 必须是非空常量；禁止首尾空白、控制字符以及 `{`、`}`，不得把模板表达式或动态取值器藏入常量。
+- `separator` 必须精确为白名单中的一个字符，禁止多字符分隔符。
+- 日期片段输出固定为 `year=YYYY`、`year_month=YYYYMM`、`full_date=YYYYMMDD`，不支持自定义格式。
+- `custom_field` 不属于 V1 可用片段，不能出现在数据库枚举、Form、UI 或 API 的可选值中。
+
+`custom_field` 不属于 V1 可用片段。V1 没有经过批准的自定义字段来源模型、字段白名单或取值时点，因此数据库枚举、代码 choices、配置页面、导入模板和 API 均不得显示或接受 `custom_field`，不能把任意模型属性、JSON 路径或动态 `getattr` 当作替代来源。未来启用必须先修订本规范并定义稳定来源、公司范围、缺值行为和历史版本语义，再以迁移扩展枚举。
 
 资产大类/小类按分类树路径解析，不能用名称猜测：
 
@@ -89,7 +115,7 @@
 - `sequence_start` 是该作用域首次正式发出的数字，而不是计数器初值。例如起始值 1，首次发号就是 1。
 - 新计数器保存的初始 `current_value = sequence_start - 1`；正式发号时先加 1，再格式化。
 - `sequence_start` 必须为 0 或正整数。
-- `sequence_length` 为正整数，V1 建议 1–12。
+- `sequence_length` 必须为 1–12 的整数。
 - `zero_pad=true` 时使用 ASCII `0` 左侧补齐；`sequence_length=5`、数值 23 输出 `00023`。
 - `zero_pad=false` 时直接输出十进制数值，`sequence_length` 只作为允许最大位数的校验上限，不填空格。
 - 数字位数超过 `sequence_length` 时必须报“流水号已溢出”并回滚，禁止截断、扩位或回到起始值。

@@ -142,13 +142,28 @@ V1 的部署只允许一个活动公司，但业务表仍显式保存 `company_i
 - `status in (draft, active, retired)`；`reset_mode` 和分类层级取值以编码规范为准。
 - 存在 `IssuedCode` 后禁止 UPDATE 影响规则的字段，禁止 DELETE。
 
+`effective_from/effective_to` 均为上海业务日 `DateField`，采用闭区间；草稿两者可空，active
+必须有 `effective_from` 且允许未来生效、过期或无结束日。同公司 `status=active AND
+is_default=true` 至多一行，当前可用性再由 Service 按上海业务日判断；闭区间端点相同算重叠。
+
 ### 3.2 `AssetCodingSegment`
 
 字段：`id, coding_scheme_id, sequence_order, segment_type, fixed_value, format_string, sequence_length, zero_pad, created_at`。
 
 外键：`coding_scheme -> AssetCodingScheme CASCADE`（仅未使用 draft 可删除）。
 
-约束：`UNIQUE(coding_scheme_id, sequence_order)`；`sequence_order>=1`；每方案恰有一个 `sequence` 片段由延迟触发器/启用 Service 校验；sequence_length 为 1–12；不同片段所需字段使用 CHECK 约束互斥。方案使用后片段不可增删改。
+约束：`UNIQUE(coding_scheme_id, sequence_order)`；`sequence_order>=1`；每方案恰有一个 `sequence` 片段由延迟触发器/启用 Service 校验；方案使用后片段不可增删改。
+
+字段组合必须由数据库 CHECK 和 Service 同时按以下矩阵执行：
+
+| 片段类型 | `fixed_value` | `format_string` | `sequence_length` | `zero_pad` |
+|---|---|---|---|---|
+| `fixed_text`、`custom_text` | 必填 | NULL | NULL | NULL |
+| `separator` | 必填，且精确为单个 `-`、`_`、`.` 或 `/` | NULL | NULL | NULL |
+| `sequence` | NULL | NULL | 必填，范围 1–12 | 必填布尔值，`true`/`false` 均合法 |
+| 其余来源片段和日期片段 | NULL | NULL | NULL | NULL |
+
+`format_string` 在 V1 对全部片段强制为 NULL，且不得由 Form、UI 或 API 暴露或接受。`fixed_text/custom_text` 不得为空，不得含首尾空白、控制字符或花括号。日期输出固定为 `YYYY`、`YYYYMM`、`YYYYMMDD`，不能配置自定义格式。`custom_field` 不得进入 V1 数据库枚举、Form、UI 或 API。最终渲染编号不得超过 64 字符；超过时方案不得启用。
 
 ### 3.3 `SequenceCounter`
 

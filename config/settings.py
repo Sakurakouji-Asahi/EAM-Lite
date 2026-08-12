@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     "apps.accounts.apps.AccountsConfig",
     "apps.audit.apps.AuditConfig",
     "apps.masterdata.apps.MasterDataConfig",
+    "apps.coding.apps.CodingConfig",
     "apps.imports.apps.ImportsConfig",
     "apps.core.apps.CoreConfig",
 ]

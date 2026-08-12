@@ -351,8 +351,23 @@ Sprint 0 尚无 Company。Audit Service 只接受固定白名单内的预初始�
 Company，通用入口也拒绝 NULL company。Sprint 1 已通过跟踪迁移增加
 `company -> Company` 的 nullable `PROTECT` 外键；所有业务事件必须使用真实 Company。
 
-## Sprint 1 明确未实现
+## Sprint 2 编码规则
 
-未创建 Asset 主档、AttachmentLink、正式资产导入、编码与正式编号、财务确认、折旧、
-二维码、盘点、保养、离职清退、处置、报表、T+、生产部署或备份任务；初始化向导步骤
-6、7、9 也未实现。后续功能只能在对应 Sprint 获得明确授权后开始。
+system_admin 可在“基础资料 → 编码规则”建立草稿、维护片段、预览 1 或 10 个示例、启用、
+设置公司唯一默认版本、退役和克隆新版本。finance 与 management 只读。编码格式、固定日期
+输出、五种 reset 模式和规范 `scope_key` 均由 `apps.coding.domain` 集中实现；物理分类只能
+选择同公司且当前生效的活动方案。
+
+生效期为上海业务日闭区间，结束日当天仍有效。启用方案必须有且只有一个 sequence，
+`sequence_start` 是未来首次签发值；预览只在内存中从该值或计数器只读快照模拟，绝不创建、
+锁定或更新 `SequenceCounter` / `IssuedCode`。`format_string` 与 `custom_field` 不在页面、URL、
+命令或 Service 中提供。初始化向导步骤 6 只有当前生效且唯一的公司默认方案存在时才通过，
+步骤 7、9 和 `initialization_completed` 仍保持未完成。
+
+正式资产发号尚未启用，将在 Sprint 4 财务确认事务中接通。
+
+## Sprint 2 之后仍未实现
+
+未创建 Asset 主档、AttachmentLink、正式资产导入、财务确认、正式发号、折旧、二维码、
+盘点、保养、离职清退、处置、报表、T+、生产部署或备份任务；初始化向导步骤 7、9 也未实现。
+后续功能只能在对应 Sprint 获得明确授权后开始。

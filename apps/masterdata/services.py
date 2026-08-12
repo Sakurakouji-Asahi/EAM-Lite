@@ -16,6 +16,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, connection, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.accounts.roles import ROLE_NAMES, ensure_fixed_roles
@@ -589,6 +590,8 @@ def _create_tree_master(
     *, actor, company, model, resource, level_field, data, request=None
 ):
     require_manage_masterdata(actor, resource)
+    if resource == "asset_category" and "default_coding_scheme" in data:
+        require_manage_masterdata(actor, "coding_scheme")
     _require_current_company(company)
     _lock_tree_write(model, company.pk)
     instance = _apply(
@@ -601,6 +604,7 @@ def _create_tree_master(
             "location_type",
             "category_type",
             "is_maintenance_required_default",
+            "default_coding_scheme",
             "is_active",
         },
     )
@@ -613,7 +617,7 @@ def _create_tree_master(
     fields = ["code", "name", "parent", level_field, "is_active"]
     fields.extend(
         field
-        for field in ("location_type", "category_type", "is_maintenance_required_default")
+        for field in ("location_type", "category_type", "is_maintenance_required_default", "default_coding_scheme")
         if hasattr(instance, field)
     )
     _audit(
@@ -662,6 +666,8 @@ def _update_tree_master(
     *, actor, instance, model, resource, level_field, data, request=None
 ):
     require_manage_masterdata(actor, resource)
+    if resource == "asset_category" and "default_coding_scheme" in data:
+        require_manage_masterdata(actor, "coding_scheme")
     _require_current_company(instance.company)
     _lock_tree_write(model, instance.company_id)
     instance = model.objects.select_for_update().get(pk=instance.pk)
@@ -670,7 +676,7 @@ def _update_tree_master(
     fields = ["code", "name", "parent", "is_active"]
     fields.extend(
         field
-        for field in ("location_type", "category_type", "is_maintenance_required_default")
+        for field in ("location_type", "category_type", "is_maintenance_required_default", "default_coding_scheme")
         if hasattr(instance, field)
     )
     old = _snapshot(instance, [*fields, level_field])
@@ -1048,6 +1054,7 @@ def compute_initialization_progress(company) -> dict[str, bool]:
     _require_current_company(company, include_inactive=True)
     from apps.masterdata.models import (
         AssetCategory,
+        AssetCodingScheme,
         Department,
         Employee,
         Location,
@@ -1075,6 +1082,27 @@ def compute_initialization_progress(company) -> dict[str, bool]:
         ).exists()
         for manager in managers
     )
+    today = timezone.localdate()
+    coding_defaults = list(
+        AssetCodingScheme.objects.filter(
+            company=company,
+            status="active",
+            is_default=True,
+            effective_from__lte=today,
+        )
+        .filter(Q(effective_to__isnull=True) | Q(effective_to__gte=today))
+        .prefetch_related("segments")
+    )
+    coding_configured = False
+    if len(coding_defaults) == 1:
+        from apps.coding.domain import validate_scheme_structure
+
+        try:
+            validate_scheme_structure(coding_defaults[0])
+        except ValidationError:
+            pass
+        else:
+            coding_configured = True
     return {
         "company_configured": bool(
             company.is_active
@@ -1099,6 +1127,7 @@ def compute_initialization_progress(company) -> dict[str, bool]:
         "locations_configured": Location.objects.filter(
             company=company, location_type="position", is_active=True
         ).exists(),
+        "coding_scheme_configured": coding_configured,
         "users_configured": has_admin and has_finance,
         "permissions_configured": manager_scopes_ok,
     }
@@ -1119,9 +1148,9 @@ def refresh_initialization_progress(*, company, actor, request=None):
         if getattr(setting, field) != value:
             setattr(setting, field, value)
             changed = True
-    # Sprint 1 is never permitted to complete the nine-step wizard.
+    # Sprint 2 is never permitted to complete the nine-step wizard.
     if setting.initialization_completed:
-        raise ValidationError("Sprint 1 不得设置整体初始化完成。")
+        raise ValidationError("Sprint 2 不得设置整体初始化完成。")
     if changed:
         setting.save(update_fields=[*fields])
         _audit(

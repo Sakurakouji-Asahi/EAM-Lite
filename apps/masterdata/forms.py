@@ -3,17 +3,21 @@
 from django import forms
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.db.models import Q
+from django.utils import timezone
 
 from apps.accounts.roles import ROLE_NAMES
 from apps.masterdata.models import (
     AssetCategory,
+    AssetCodingScheme,
+    AssetCodingSegment,
     Company,
     Department,
     Employee,
     Location,
     UserDepartmentScope,
 )
-from apps.masterdata.permissions import require_manage_masterdata
+from apps.masterdata.permissions import can_manage_masterdata, require_manage_masterdata
 from apps.masterdata.services import SAFE_ATTACHMENT_EXTENSIONS
 
 
@@ -256,6 +260,7 @@ class AssetCategoryForm(AuthorizedModelForm):
             "parent",
             "category_type",
             "is_maintenance_required_default",
+            "default_coding_scheme",
         )
         labels = {
             "code": "分类编码",
@@ -263,6 +268,7 @@ class AssetCategoryForm(AuthorizedModelForm):
             "parent": "上级分类",
             "category_type": "实物类型",
             "is_maintenance_required_default": "默认需要保养",
+            "default_coding_scheme": "默认编码方案版本",
         }
         help_texts = {
             "category_type": "这里只表达实物管理分类，不表示是否为固定资产。",
@@ -270,6 +276,10 @@ class AssetCategoryForm(AuthorizedModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        if not can_manage_masterdata(self.actor, "coding_scheme"):
+            # equipment may maintain the physical category, but selecting a
+            # coding version is a separate system_admin-only control.
+            self.fields.pop("default_coding_scheme", None)
         self.fields["parent"].queryset = AssetCategory.objects.filter(
             company=self.company, is_active=True
         ).order_by("category_level", "normalized_code")
@@ -277,12 +287,140 @@ class AssetCategoryForm(AuthorizedModelForm):
             self.fields["parent"].queryset = self.fields["parent"].queryset.exclude(
                 pk=self.instance.pk
             )
+        if "default_coding_scheme" in self.fields:
+            today = timezone.localdate()
+            self.fields["default_coding_scheme"].queryset = AssetCodingScheme.objects.filter(
+                company=self.company,
+                status=AssetCodingScheme.Status.ACTIVE,
+                effective_from__lte=today,
+            ).filter(
+                Q(effective_to__isnull=True) | Q(effective_to__gte=today)
+            ).order_by("scheme_key", "-version")
 
     def clean_parent(self):
         parent = self.cleaned_data.get("parent")
         if parent and parent.company_id != self.company.pk:
             raise ValidationError("上级分类不属于当前公司。")
         return parent
+
+    def clean_default_coding_scheme(self):
+        scheme = self.cleaned_data.get("default_coding_scheme")
+        if scheme is not None and scheme.company_id != self.company.pk:
+            raise ValidationError("默认编码方案不属于当前公司。")
+        return scheme
+
+
+class AssetCodingSchemeForm(forms.ModelForm):
+    class Meta:
+        model = AssetCodingScheme
+        fields = (
+            "scheme_key",
+            "name",
+            "description",
+            "reset_mode",
+            "sequence_start",
+            "category_scope_level",
+            "effective_from",
+            "effective_to",
+        )
+        labels = {
+            "scheme_key": "方案稳定键",
+            "name": "方案名称",
+            "description": "说明",
+            "reset_mode": "流水重置模式",
+            "sequence_start": "首个可签发流水值",
+            "category_scope_level": "分类作用域层级",
+            "effective_from": "生效开始日",
+            "effective_to": "生效结束日",
+        }
+        widgets = {
+            "description": forms.Textarea(attrs={"rows": 3}),
+            "effective_from": forms.DateInput(attrs={"type": "date"}),
+            "effective_to": forms.DateInput(attrs={"type": "date"}),
+        }
+        help_texts = {
+            "scheme_key": "同一方案的各版本使用相同稳定键。",
+            "sequence_start": "这是首个预览/未来签发值，不是计数器初值。",
+            "effective_to": "结束日当天仍有效；留空表示无结束日。",
+        }
+
+    def __init__(self, *args, actor=None, company=None, **kwargs):
+        if actor is None:
+            raise PermissionDenied("表单必须绑定当前操作用户。")
+        require_manage_masterdata(actor, "coding_scheme")
+        self.actor = actor
+        self.company = company
+        super().__init__(*args, **kwargs)
+        _bootstrap_widgets(self)
+
+    def clean_scheme_key(self):
+        value = self.cleaned_data["scheme_key"]
+        if value != value.strip() or not value.strip():
+            raise ValidationError("方案稳定键不能为空或包含首尾空白。")
+        return value
+
+
+class AssetCodingSegmentForm(forms.ModelForm):
+    class Meta:
+        model = AssetCodingSegment
+        fields = (
+            "sequence_order",
+            "segment_type",
+            "fixed_value",
+            "sequence_length",
+            "zero_pad",
+        )
+        labels = {
+            "sequence_order": "顺序",
+            "segment_type": "片段类型",
+            "fixed_value": "固定值",
+            "sequence_length": "流水位数",
+            "zero_pad": "左侧补零",
+        }
+        help_texts = {
+            "fixed_value": "固定文本/自定义固定文本必填；分隔符仅允许 - _ . /。",
+            "sequence_length": "仅顺序号填写，必须为 1–12。",
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["zero_pad"].required = False
+        _bootstrap_widgets(self)
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get("DELETE"):
+            return cleaned
+        from apps.coding.domain import validate_segment_fields
+
+        # An unchecked checkbox is submitted as False.  The approved field
+        # matrix requires NULL for all non-sequence segment types, while a
+        # sequence deliberately accepts both explicit True and explicit False.
+        if cleaned.get("segment_type") != AssetCodingSegment.SegmentType.SEQUENCE:
+            cleaned["zero_pad"] = None
+
+        try:
+            validate_segment_fields(
+                segment_type=cleaned.get("segment_type"),
+                fixed_value=cleaned.get("fixed_value"),
+                format_string=None,
+                sequence_length=cleaned.get("sequence_length"),
+                zero_pad=cleaned.get("zero_pad"),
+            )
+        except ValidationError as exc:
+            raise exc
+        return cleaned
+
+
+AssetCodingSegmentFormSet = forms.inlineformset_factory(
+    AssetCodingScheme,
+    AssetCodingSegment,
+    form=AssetCodingSegmentForm,
+    extra=1,
+    can_delete=True,
+    min_num=1,
+    validate_min=True,
+)
 
 
 class SystemSettingForm(forms.Form):

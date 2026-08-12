@@ -37,6 +37,7 @@ MASTERDATA_VIEW_ROLES = {
     "asset_category": frozenset(
         {"system_admin", "finance", "equipment", "management"}
     ),
+    "coding_scheme": frozenset({"system_admin", "finance", "management"}),
     "system_setting": frozenset(
         {"system_admin", "finance", "equipment", "management"}
     ),
@@ -50,6 +51,7 @@ MASTERDATA_MANAGE_ROLES = {
     "employee_user": frozenset({"system_admin"}),
     "location": frozenset({"system_admin", "equipment"}),
     "asset_category": frozenset({"system_admin", "equipment"}),
+    "coding_scheme": frozenset({"system_admin"}),
     "system_setting": frozenset({"system_admin"}),
     "user_permissions": frozenset({"system_admin"}),
 }

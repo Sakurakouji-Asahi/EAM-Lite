@@ -14,9 +14,12 @@ from django.db.models import Q
 from django.http import Http404, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.masterdata.forms import (
     AssetCategoryForm,
+    AssetCodingSchemeForm,
+    AssetCodingSegmentFormSet,
     CompanyForm,
     ConfirmStatusForm,
     DepartmentForm,
@@ -30,6 +33,8 @@ from apps.masterdata.forms import (
 )
 from apps.masterdata.models import (
     AssetCategory,
+    AssetCodingScheme,
+    AssetCodingSegment,
     Company,
     Department,
     Employee,
@@ -70,6 +75,16 @@ from apps.masterdata.services import (
     update_department,
     update_employee,
     update_location,
+)
+from apps.coding.domain import preview_codes
+from apps.coding.services import (
+    activate_scheme,
+    clone_scheme,
+    create_scheme,
+    replace_segments,
+    retire_scheme,
+    set_default_scheme,
+    update_draft_scheme,
 )
 
 
@@ -492,6 +507,193 @@ def category_list(request):
     )
 
 
+def _segment_payload(formset):
+    payload = []
+    for item in formset.forms:
+        if not item.cleaned_data or item.cleaned_data.get("DELETE"):
+            continue
+        segment_type = item.cleaned_data["segment_type"]
+        payload.append({
+            "sequence_order": item.cleaned_data["sequence_order"],
+            "segment_type": segment_type,
+            "fixed_value": item.cleaned_data.get("fixed_value") or None,
+            "format_string": None,
+            "sequence_length": item.cleaned_data.get("sequence_length"),
+            "zero_pad": (
+                item.cleaned_data.get("zero_pad")
+                if segment_type == AssetCodingSegment.SegmentType.SEQUENCE
+                else None
+            ),
+        })
+    return payload
+
+
+@login_required
+def coding_scheme_list(request):
+    require_view_masterdata(request.user, "coding_scheme")
+    company = _company_or_404()
+    schemes = AssetCodingScheme.objects.filter(company=company).prefetch_related(
+        "segments"
+    )
+    return render(
+        request,
+        "masterdata/coding_scheme_list.html",
+        {
+            "schemes": schemes.order_by("scheme_key", "-version"),
+            "can_manage": can_manage_masterdata(request.user, "coding_scheme"),
+        },
+    )
+
+
+def _coding_form_context(*, request, scheme=None):
+    company = _company_or_404()
+    form = AssetCodingSchemeForm(
+        request.POST or None,
+        instance=scheme,
+        actor=request.user,
+        company=company,
+    )
+    formset = AssetCodingSegmentFormSet(
+        request.POST or None,
+        instance=scheme or AssetCodingScheme(company=company),
+        prefix="segments",
+    )
+    return company, form, formset
+
+
+@login_required
+def coding_scheme_create(request):
+    require_manage_masterdata(request.user, "coding_scheme")
+    company, form, formset = _coding_form_context(request=request)
+    if request.method == "POST" and form.is_valid() and formset.is_valid():
+        try:
+            scheme = create_scheme(
+                actor=request.user,
+                company=company,
+                data=form.cleaned_data,
+                segments=_segment_payload(formset),
+                request=request,
+            )
+        except ValidationError as exc:
+            _service_error(form, exc)
+        else:
+            messages.success(request, "编码方案草稿已创建；预览不会占用正式序号。")
+            return redirect("masterdata:coding-scheme-detail", pk=scheme.pk)
+    return render(
+        request,
+        "masterdata/coding_scheme_form.html",
+        {"form": form, "formset": formset, "title": "新增编码方案草稿"},
+    )
+
+
+@login_required
+def coding_scheme_edit(request, pk):
+    require_manage_masterdata(request.user, "coding_scheme")
+    company = _company_or_404()
+    scheme = _company_object_or_404(AssetCodingScheme, pk, company)
+    if scheme.status != AssetCodingScheme.Status.DRAFT:
+        raise PermissionDenied("有效或历史版本不能原地编辑；请复制为新版本。")
+    company, form, formset = _coding_form_context(request=request, scheme=scheme)
+    if request.method == "POST" and form.is_valid() and formset.is_valid():
+        try:
+            with transaction.atomic():
+                scheme = update_draft_scheme(
+                    actor=request.user,
+                    scheme=scheme,
+                    data=form.cleaned_data,
+                    request=request,
+                )
+                replace_segments(
+                    actor=request.user,
+                    scheme=scheme,
+                    segments=_segment_payload(formset),
+                    request=request,
+                )
+        except ValidationError as exc:
+            _service_error(form, exc)
+        else:
+            messages.success(request, "编码方案草稿和片段已更新。")
+            return redirect("masterdata:coding-scheme-detail", pk=scheme.pk)
+    return render(
+        request,
+        "masterdata/coding_scheme_form.html",
+        {"form": form, "formset": formset, "title": f"编辑 {scheme}"},
+    )
+
+
+def _preview_context(request, scheme):
+    company = scheme.company
+    category = AssetCategory.objects.filter(
+        company=company, is_active=True
+    ).order_by("category_level", "pk").last()
+    department = Department.objects.filter(company=company, is_active=True).first()
+    effective_date = scheme.effective_from or timezone.localdate()
+    return {
+        "company": company,
+        "category": category,
+        "department": department,
+        "effective_date": effective_date,
+    }
+
+
+@login_required
+def coding_scheme_detail(request, pk):
+    require_view_masterdata(request.user, "coding_scheme")
+    company = _company_or_404()
+    scheme = get_object_or_404(
+        AssetCodingScheme.objects.prefetch_related("segments"), pk=pk, company=company
+    )
+    example_count = 10 if request.GET.get("examples") == "10" else 1
+    examples, preview_error = [], None
+    try:
+        examples = preview_codes(
+            scheme, _preview_context(request, scheme), count=example_count
+        )
+    except ValidationError as exc:
+        preview_error = "; ".join(exc.messages)
+    return render(
+        request,
+        "masterdata/coding_scheme_detail.html",
+        {
+            "scheme": scheme,
+            "segments": scheme.segments.order_by("sequence_order"),
+            "examples": examples,
+            "preview_error": preview_error,
+            "can_manage": can_manage_masterdata(request.user, "coding_scheme"),
+        },
+    )
+
+
+@login_required
+def coding_scheme_action(request, pk, action):
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    require_manage_masterdata(request.user, "coding_scheme")
+    company = _company_or_404()
+    scheme = _company_object_or_404(AssetCodingScheme, pk, company)
+    try:
+        if action == "activate":
+            activate_scheme(actor=request.user, scheme=scheme, request=request)
+            message = "编码方案已启用。"
+        elif action == "retire":
+            retire_scheme(actor=request.user, scheme=scheme, request=request)
+            message = "编码方案已退役并保留历史。"
+        elif action == "default":
+            set_default_scheme(actor=request.user, scheme=scheme, request=request)
+            message = "公司唯一默认编码方案已切换。"
+        elif action == "clone":
+            clone = clone_scheme(actor=request.user, scheme=scheme, request=request)
+            messages.success(request, "已复制为新草稿版本。")
+            return redirect("masterdata:coding-scheme-edit", pk=clone.pk)
+        else:
+            raise Http404("未知编码方案动作")
+    except ValidationError as exc:
+        messages.error(request, "; ".join(exc.messages))
+    else:
+        messages.success(request, message)
+    return redirect("masterdata:coding-scheme-detail", pk=scheme.pk)
+
+
 def _company_object_or_404(model, pk, company):
     return get_object_or_404(model, pk=pk, company=company)
 
@@ -568,6 +770,7 @@ def category_detail(request, pk):
             "parent",
             "category_level",
             "category_type",
+            "default_coding_scheme",
             "is_maintenance_required_default",
             "is_active",
         ),
@@ -1138,6 +1341,12 @@ SETUP_STEPS = {
         "url": "masterdata:location-list",
         "writer": "system_admin / equipment",
     },
+    6: {
+        "name": "编码规则",
+        "flag": "coding_scheme_configured",
+        "url": "masterdata:coding-scheme-list",
+        "writer": "system_admin",
+    },
     8: {
         "name": "用户、角色及部门数据范围",
         "flag": "users_configured",
@@ -1220,20 +1429,21 @@ def setup_step(request, step):
     if not can_access_setup(request.user):
         raise PermissionDenied("普通用户不得进入初始化向导。")
     if step not in SETUP_STEPS:
-        # Steps 6, 7 and 9 are deliberately not implemented in Sprint 1.
-        raise Http404("该初始化步骤不在 Sprint 1 范围内")
+        raise Http404("该初始化步骤尚未实现")
     company = current_company(include_inactive=True)
     if company is None:
         return redirect("masterdata:setup")
     if request.method == "POST":
-        if step != 8:
+        if step not in {6, 8}:
             return HttpResponseNotAllowed(["GET"])
-        require_manage_masterdata(request.user, "user_permissions")
+        require_manage_masterdata(
+            request.user, "coding_scheme" if step == 6 else "user_permissions"
+        )
         refresh_initialization_progress(
             company=company, actor=request.user, request=request
         )
-        messages.success(request, "步骤 8 已按当前账号、固定角色和活动部门范围重新校验并保存。")
-        return redirect("masterdata:setup-step", step=8)
+        messages.success(request, f"步骤 {step} 已按当前真实数据重新校验并保存。")
+        return redirect("masterdata:setup-step", step=step)
     context = _setup_context(company)
     definition = next(item for item in context["steps"] if item["number"] == step)
     writer_roles = {part.strip() for part in definition["writer"].split("/")}
@@ -1247,6 +1457,7 @@ def setup_step(request, step):
                 3: can_view_masterdata(request.user, "employee"),
                 4: can_view_masterdata(request.user, "asset_category"),
                 5: can_view_masterdata(request.user, "location"),
+                6: can_view_masterdata(request.user, "coding_scheme"),
                 8: can_view_masterdata(request.user, "user_permissions"),
             }[step],
             "bootstrap_hint": step in {3, 8},

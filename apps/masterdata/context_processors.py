@@ -29,6 +29,7 @@ def masterdata_navigation(request):
                 "employee",
                 "location",
                 "asset_category",
+                "coding_scheme",
                 "system_setting",
                 "user_permissions",
             )
@@ -41,6 +42,7 @@ def masterdata_navigation(request):
                 "employee",
                 "location",
                 "asset_category",
+                "coding_scheme",
                 "system_setting",
                 "user_permissions",
             )

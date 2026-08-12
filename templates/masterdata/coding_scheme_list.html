@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}编码规则 - EAM-Lite{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div><h1 class="h3 mb-1">编码规则</h1><p class="text-secondary mb-0">版本化配置；预览不占用正式序号。</p></div>
+  {% if can_manage %}<a class="btn btn-primary" href="{% url 'masterdata:coding-scheme-create' %}">新增方案草稿</a>{% endif %}
+</div>
+<div class="table-responsive card shadow-sm"><table class="table table-hover align-middle mb-0">
+  <thead><tr><th>稳定键 / 版本</th><th>名称</th><th>状态</th><th>默认</th><th>重置</th><th>生效期</th><th>操作</th></tr></thead>
+  <tbody>{% for scheme in schemes %}<tr>
+    <td><code>{{ scheme.scheme_key }}</code> / v{{ scheme.version }}</td><td>{{ scheme.name }}</td>
+    <td>{{ scheme.get_status_display }}</td><td>{% if scheme.is_default %}<span class="badge text-bg-success">公司默认</span>{% else %}—{% endif %}</td>
+    <td>{{ scheme.get_reset_mode_display }}</td><td>{{ scheme.effective_from|default:"—" }} 至 {{ scheme.effective_to|default:"长期" }}</td>
+    <td><a href="{% url 'masterdata:coding-scheme-detail' scheme.pk %}">查看与预览</a></td>
+  </tr>{% empty %}<tr><td colspan="7" class="text-center text-secondary py-4">尚无编码方案。</td></tr>{% endfor %}</tbody>
+</table></div>
+{% endblock %}
