@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}{{ asset.asset_code|default:asset.draft_number }} - 资产详情{% endblock %}
+{% block content %}
+  <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-3">
+    <div>
+      <div class="text-secondary">{{ asset.asset_code|default:asset.draft_number }}</div>
+      <h1 class="h3 mb-2">{{ asset.asset_name }}</h1>
+      <span class="badge text-bg-{% if asset.asset_status == 'draft' %}secondary{% elif asset.asset_status == 'pending_finance' %}warning{% else %}info{% endif %}">{{ asset.get_asset_status_display }}</span>
+      <span class="badge text-bg-light">{{ asset.category.name }}</span>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-secondary" href="{% url 'assets:asset-list' %}">返回总账</a>
+      {% if can_edit %}<a class="btn btn-primary" href="{% url 'assets:asset-edit' asset.pk %}">编辑草稿</a>{% endif %}
+      {% if can_submit %}<a class="btn btn-success" href="{% url 'assets:asset-submit' asset.pk %}">提交财务确认</a>{% endif %}
+      {% if can_withdraw %}<a class="btn btn-outline-warning" href="{% url 'assets:asset-withdraw' asset.pk %}">撤回/退回</a>{% endif %}
+      {% if can_set_scheme %}<a class="btn btn-outline-primary" href="{% url 'assets:asset-requested-scheme' asset.pk %}">指定编码方案</a>{% endif %}
+      {% if can_delete %}<a class="btn btn-outline-danger" href="{% url 'assets:asset-delete' asset.pk %}">删除草稿</a>{% endif %}
+    </div>
+  </div>
+
+  {% if asset.asset_status == "pending_finance" %}
+    <div class="alert alert-warning" role="status">当前仅等待财务后续处理。Sprint 3 不提供财务确认、正式发号或贴标按钮。</div>
+  {% endif %}
+
+  <div class="row g-3">
+    <div class="col-12 col-xl-8">
+      <section class="card shadow-sm mb-3" aria-labelledby="p0-title">
+        <div class="card-header"><h2 class="h5 mb-0" id="p0-title">识别摘要</h2></div>
+        <div class="card-body">
+          <dl class="row mb-0">
+            <dt class="col-sm-4 text-secondary">编号</dt><dd class="col-sm-8">{{ asset.asset_code|default:asset.draft_number }}</dd>
+            <dt class="col-sm-4 text-secondary">资产名称</dt><dd class="col-sm-8">{{ asset.asset_name }}</dd>
+            <dt class="col-sm-4 text-secondary">实物分类</dt><dd class="col-sm-8">{{ category_path }}</dd>
+            <dt class="col-sm-4 text-secondary">资产状态</dt><dd class="col-sm-8">{{ asset.get_asset_status_display }}</dd>
+            <dt class="col-sm-4 text-secondary">标签状态</dt><dd class="col-sm-8">尚未生成（后续 Sprint）</dd>
+          </dl>
+        </div>
+      </section>
+
+      {% if can_p1 %}
+        <section class="card shadow-sm mb-3" aria-labelledby="p1-title">
+          <div class="card-header"><h2 class="h5 mb-0" id="p1-title">实物资料</h2></div>
+          <div class="card-body">
+            <dl class="row mb-0">
+              <dt class="col-sm-4 text-secondary">品牌 / 型号</dt><dd class="col-sm-8">{{ asset.brand|default:"—" }} / {{ asset.model|default:"—" }}</dd>
+              <dt class="col-sm-4 text-secondary">厂家</dt><dd class="col-sm-8">{{ asset.manufacturer|default:"—" }}</dd>
+              <dt class="col-sm-4 text-secondary">序列号</dt><dd class="col-sm-8">{{ asset.serial_number|default:"—" }}</dd>
+              <dt class="col-sm-4 text-secondary">出厂编号</dt><dd class="col-sm-8">{{ asset.factory_number|default:"—" }}</dd>
+              <dt class="col-sm-4 text-secondary">历史参考编号</dt><dd class="col-sm-8">{{ asset.historical_code|default:"—" }}</dd>
+              <dt class="col-sm-4 text-secondary">数量 / 单位</dt><dd class="col-sm-8">1 / {{ asset.unit|default:"—" }}</dd>
+              <dt class="col-sm-4 text-secondary">部门</dt><dd class="col-sm-8">{{ asset.department.name|default:"—" }}</dd>
+              <dt class="col-sm-4 text-secondary">责任人</dt><dd class="col-sm-8">{{ asset.responsible_employee.name|default:"—" }}</dd>
+              <dt class="col-sm-4 text-secondary">当前位置</dt><dd class="col-sm-8">{{ location_path }}</dd>
+              <dt class="col-sm-4 text-secondary">购置日期</dt><dd class="col-sm-8">{{ asset.acquisition_date|date:"Y-m-d"|default:"—" }}</dd>
+              <dt class="col-sm-4 text-secondary">达到可使用状态日期</dt><dd class="col-sm-8">{{ asset.commissioning_date|date:"Y-m-d"|default:"—" }}</dd>
+              <dt class="col-sm-4 text-secondary">需要保养</dt><dd class="col-sm-8">{{ asset.is_maintenance_required|yesno:"是,否" }}</dd>
+              <dt class="col-sm-4 text-secondary">指定编码方案</dt><dd class="col-sm-8">{% if asset.requested_coding_scheme %}{{ asset.requested_coding_scheme.name }} v{{ asset.requested_coding_scheme.version }}{% else %}未指定；正式化时按分类默认、公司默认解析{% endif %}</dd>
+              <dt class="col-sm-4 text-secondary">说明</dt><dd class="col-sm-8">{{ asset.description|default:"—"|linebreaksbr }}</dd>
+              <dt class="col-sm-4 text-secondary">备注</dt><dd class="col-sm-8">{{ asset.notes|default:"—"|linebreaksbr }}</dd>
+            </dl>
+          </div>
+        </section>
+
+        <section class="card shadow-sm mb-3" aria-labelledby="custom-values-title">
+          <div class="card-header"><h2 class="h5 mb-0" id="custom-values-title">分类扩展资料</h2></div>
+          <div class="card-body">
+            {% if custom_values %}
+              <dl class="row mb-0">
+                {% for item in custom_values %}
+                  <dt class="col-sm-4 text-secondary">{{ item.field.name }}</dt>
+                  <dd class="col-sm-8">{% if item.field.field_type == 'boolean' %}{{ item.value|yesno:"是,否" }}{% elif item.field.field_type == 'date' %}{{ item.value|date:"Y-m-d" }}{% else %}{{ item.value }}{% endif %}</dd>
+                {% endfor %}
+              </dl>
+            {% else %}<p class="text-secondary mb-0">暂无扩展字段值。</p>{% endif %}
+          </div>
+        </section>
+      {% elif can_summary_fields %}
+        <section class="card shadow-sm mb-3" aria-labelledby="summary-scope-title">
+          <div class="card-header"><h2 class="h5 mb-0" id="summary-scope-title">责任摘要</h2></div>
+          <div class="card-body">
+            <dl class="row mb-0">
+              <dt class="col-sm-4 text-secondary">部门</dt><dd class="col-sm-8">{{ asset.department.name|default:"—" }}</dd>
+              <dt class="col-sm-4 text-secondary">责任人</dt><dd class="col-sm-8">{{ asset.responsible_employee.name|default:"—" }}</dd>
+              <dt class="col-sm-4 text-secondary">当前位置</dt><dd class="col-sm-8">{{ location_path }}</dd>
+              <dt class="col-sm-4 text-secondary">状态</dt><dd class="col-sm-8">{{ asset.get_asset_status_display }}</dd>
+            </dl>
+          </div>
+        </section>
+      {% endif %}
+
+      {% if can_financial %}
+        <section class="card shadow-sm mb-3" aria-labelledby="finance-title">
+          <div class="card-header"><h2 class="h5 mb-0" id="finance-title">财务信息</h2></div>
+          <div class="card-body"><p class="text-secondary mb-0">财务确认和财务资料将在 Sprint 4 启用；当前没有财务真源数据。</p></div>
+        </section>
+      {% endif %}
+
+      <section class="card shadow-sm" aria-labelledby="future-tabs-title">
+        <div class="card-header"><h2 class="h5 mb-0" id="future-tabs-title">后续业务记录</h2></div>
+        <div class="card-body">
+          <p class="text-secondary mb-0">折旧、变动、盘点、保养、处置、二维码与标签功能属于后续 Sprint，当前不生成伪数据。</p>
+        </div>
+      </section>
+    </div>
+
+    <div class="col-12 col-xl-4">
+      {% if can_p1 %}
+        <section class="card shadow-sm" aria-labelledby="attachments-title">
+          <div class="card-header d-flex align-items-center justify-content-between gap-2">
+            <h2 class="h5 mb-0" id="attachments-title">附件</h2>
+            {% if can_upload_a0 or can_upload_a1 %}<a class="btn btn-sm btn-primary" href="{% url 'assets:attachment-upload' asset.pk %}">上传</a>{% endif %}
+          </div>
+          <div class="card-body">
+            {% if attachment_rows %}
+              <div class="list-group list-group-flush">
+                {% for row in attachment_rows %}
+                  <div class="list-group-item px-0">
+                    <div class="fw-semibold text-break">{{ row.link.attachment.safe_filename }}</div>
+                    <div class="small text-secondary">{{ row.link.get_role_display }} · {{ row.link.get_security_class_display }} · {{ row.link.attachment.file_size|filesizeformat }}</div>
+                    <div class="small text-secondary">{{ row.link.attachment.uploaded_at|date:"Y-m-d H:i" }}</div>
+                    <div class="d-flex gap-2 mt-2">
+                      <a class="btn btn-sm btn-outline-primary" href="{% url 'assets:attachment-download' asset.pk row.link.pk %}">下载</a>
+                      {% if row.can_void %}<a class="btn btn-sm btn-outline-danger" href="{% url 'assets:attachment-void' asset.pk row.link.pk %}">作废</a>{% endif %}
+                    </div>
+                  </div>
+                {% endfor %}
+              </div>
+            {% else %}<p class="text-secondary mb-0">暂无有权查看的有效附件。</p>{% endif %}
+          </div>
+        </section>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

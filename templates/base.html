@@ -34,6 +34,11 @@
           <div class="text-secondary small mb-2">功能菜单</div>
           <nav aria-label="主菜单">
             <a class="nav-link px-0" href="{% url 'home' %}">首页</a>
+            {% if asset_nav.initialized and asset_nav.can_view %}
+              <div class="text-secondary small mt-3 mb-1">资产管理</div>
+              <a class="nav-link px-0" href="{% url 'assets:asset-list' %}">资产总账</a>
+              {% if asset_nav.can_create %}<a class="nav-link px-0" href="{% url 'assets:asset-create' %}">新增资产</a>{% endif %}
+            {% endif %}
             {% if can_access_setup %}<a class="nav-link px-0" href="{% url 'masterdata:setup' %}">初始化向导</a>{% endif %}
             {% if masterdata_nav.company or masterdata_nav.department or masterdata_nav.employee or masterdata_nav.location or masterdata_nav.asset_category or masterdata_nav.coding_scheme %}
               <div class="text-secondary small mt-3 mb-1">基础资料</div>
@@ -50,7 +55,7 @@
               {% if masterdata_nav.user_permissions %}<a class="nav-link px-0" href="{% url 'masterdata:user-permissions-list' %}">用户权限</a>{% endif %}
             {% endif %}
             {% if masterdata_manage.department or masterdata_manage.employee %}<a class="nav-link px-0" href="{% url 'imports:home' %}">基础资料导入</a>{% endif %}
-            <span class="nav-link disabled px-0">资产业务模块将在后续 Sprint 提供</span>
+            {% if not asset_nav.initialized %}<span class="nav-link disabled px-0">资产建档将在初始化全部完成后开放</span>{% endif %}
           </nav>
         </aside>
         <main class="col-12 col-md-9 col-lg-10 p-4">

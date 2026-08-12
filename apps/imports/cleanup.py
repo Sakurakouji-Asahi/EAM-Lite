@@ -8,7 +8,7 @@ from datetime import timedelta
 from pathlib import Path, PurePosixPath
 
 from django.conf import settings
-from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.exceptions import ObjectDoesNotExist, PermissionDenied, ValidationError
 from django.core.files.storage import default_storage
 from django.db import transaction
 from django.utils import timezone
@@ -357,6 +357,17 @@ def cleanup_orphan_attachments(
             if attachment.import_batches.exists():
                 report.attachments_skipped[attachment_id] = "仍被导入批次引用"
                 continue
+            # Sprint 3 adds a protected business-object link.  An attachment
+            # can be unavailable/orphan-marked because of an interrupted old
+            # operation, yet still be evidence referenced by an asset. Treat
+            # that inconsistency as a protected skip, not a cleanup failure.
+            try:
+                has_business_link = attachment.business_link is not None
+            except ObjectDoesNotExist:
+                has_business_link = False
+            if has_business_link:
+                report.attachments_skipped[attachment_id] = "仍被资产业务记录引用"
+                continue
             if attachment.is_available or not attachment.orphaned_at:
                 report.attachments_skipped[attachment_id] = "不是不可用孤儿候选"
                 continue
@@ -490,7 +501,13 @@ def cleanup_legacy_temp_files(
 
 
 def cleanup_unreferenced_private_files(
-    *, actor, older_than_days, dry_run=True, task_id="manual", now=None
+    *,
+    actor,
+    older_than_days,
+    dry_run=True,
+    task_id="manual",
+    now=None,
+    private_prefixes=("private/imports",),
 ):
     """Remove expired storage objects that have no Attachment metadata.
 
@@ -505,43 +522,55 @@ def cleanup_unreferenced_private_files(
     now = now or timezone.now()
     cutoff = now - timedelta(days=days)
     report = CleanupReport(dry_run=dry_run)
-    root = Path(default_storage.path("private/imports")).resolve()
-    if not root.exists():
-        return report
     referenced = set(Attachment.objects.values_list("storage_key", flat=True))
     audit_company = None if dry_run else _cleanup_audit_company()
-    for candidate in sorted(root.rglob("*")):
-        if candidate.is_symlink() or not candidate.is_file():
+    storage_root = Path(default_storage.location).resolve()
+    for prefix in private_prefixes:
+        normalized_prefix = PurePosixPath(str(prefix)).as_posix().strip("/")
+        if normalized_prefix not in {"private/imports", "private/assets"}:
+            raise ValidationError("私有文件清理前缀不在批准白名单中。")
+        root = Path(default_storage.path(normalized_prefix)).resolve()
+        if not root.exists():
             continue
-        candidate = _safe_cleanup_path(root, candidate)
-        storage_key = PurePosixPath(
-            candidate.relative_to(Path(default_storage.location).resolve()).as_posix()
-        ).as_posix()
-        modified = timezone.datetime.fromtimestamp(
-            candidate.stat().st_mtime, tz=timezone.get_current_timezone()
-        )
-        if modified > cutoff:
-            report.legacy_files_skipped[storage_key] = "尚未达到保留期"
-            continue
-        if storage_key in referenced:
-            report.legacy_files_skipped[storage_key] = "仍被附件元数据引用"
-            continue
-        if not dry_run:
-            with transaction.atomic():
-                _audit_cleanup(
-                    company=audit_company,
-                    actor=actor,
-                    object_type="PrivateImportFile",
-                    object_id=hashlib.sha256(storage_key.encode()).hexdigest(),
-                    action="import_private_file_cleanup",
-                    data={
-                        "new": {
-                            "delete_requested": True,
-                            "task_id": str(task_id),
-                            "older_than_days": days,
-                        }
-                    },
-                )
-            default_storage.delete(storage_key)
-        report.legacy_files_deleted.append(storage_key)
+        for candidate in sorted(root.rglob("*")):
+            if candidate.is_symlink() or not candidate.is_file():
+                continue
+            candidate = _safe_cleanup_path(root, candidate)
+            storage_key = PurePosixPath(
+                candidate.relative_to(storage_root).as_posix()
+            ).as_posix()
+            modified = timezone.datetime.fromtimestamp(
+                candidate.stat().st_mtime, tz=timezone.get_current_timezone()
+            )
+            if modified > cutoff:
+                report.legacy_files_skipped[storage_key] = "尚未达到保留期"
+                continue
+            if storage_key in referenced:
+                report.legacy_files_skipped[storage_key] = "仍被附件元数据引用"
+                continue
+            if not dry_run:
+                is_import_file = storage_key.startswith("private/imports/")
+                with transaction.atomic():
+                    _audit_cleanup(
+                        company=audit_company,
+                        actor=actor,
+                        object_type=(
+                            "PrivateImportFile" if is_import_file else "PrivateAssetFile"
+                        ),
+                        object_id=hashlib.sha256(storage_key.encode()).hexdigest(),
+                        action=(
+                            "import_private_file_cleanup"
+                            if is_import_file
+                            else "asset_private_file_cleanup"
+                        ),
+                        data={
+                            "new": {
+                                "delete_requested": True,
+                                "task_id": str(task_id),
+                                "older_than_days": days,
+                            }
+                        },
+                    )
+                default_storage.delete(storage_key)
+            report.legacy_files_deleted.append(storage_key)
     return report

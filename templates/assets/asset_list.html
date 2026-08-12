@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}资产总账 - EAM-Lite{% endblock %}
+{% block content %}
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+    <div>
+      <h1 class="h3 mb-1">资产总账</h1>
+      <p class="text-secondary mb-0">仅显示当前公司及当前账号数据范围内的资产。</p>
+    </div>
+    {% if can_create %}<a class="btn btn-primary" href="{% url 'assets:asset-create' %}">新增资产</a>{% endif %}
+  </div>
+
+  <form method="get" class="card shadow-sm mb-3" aria-label="资产搜索和筛选">
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-12 col-lg-4">
+          <label class="form-label" for="asset-search">搜索</label>
+          <input class="form-control" id="asset-search" name="q" value="{{ query }}" placeholder="正式编号、名称、型号、序列号、出厂编号、责任人">
+        </div>
+        <div class="col-12 col-sm-6 col-lg-2">
+          <label class="form-label" for="filter-category">实物分类</label>
+          <select class="form-select" id="filter-category" name="category">
+            <option value="">全部</option>
+            {% for category in categories %}<option value="{{ category.pk }}" {% if category.pk|stringformat:"s" == filters.category %}selected{% endif %}>{{ category.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-sm-6 col-lg-2">
+          <label class="form-label" for="filter-department">部门</label>
+          <select class="form-select" id="filter-department" name="department">
+            <option value="">全部</option>
+            {% for department in departments %}<option value="{{ department.pk }}" {% if department.pk|stringformat:"s" == filters.department %}selected{% endif %}>{{ department.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-sm-6 col-lg-2">
+          <label class="form-label" for="filter-employee">责任人</label>
+          <select class="form-select" id="filter-employee" name="employee">
+            <option value="">全部</option>
+            {% for employee in employees %}<option value="{{ employee.pk }}" {% if employee.pk|stringformat:"s" == filters.employee %}selected{% endif %}>{{ employee.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-sm-6 col-lg-2">
+          <label class="form-label" for="filter-location">位置</label>
+          <select class="form-select" id="filter-location" name="location">
+            <option value="">全部</option>
+            {% for location in locations %}<option value="{{ location.pk }}" {% if location.pk|stringformat:"s" == filters.location %}selected{% endif %}>{{ location.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-sm-6 col-lg-2">
+          <label class="form-label" for="filter-status">资产状态</label>
+          <select class="form-select" id="filter-status" name="asset_status">
+            <option value="">全部</option>
+            {% for value, label in status_choices %}<option value="{{ value }}" {% if value == filters.asset_status %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-lg-10 d-flex align-items-end gap-2">
+          <button class="btn btn-primary" type="submit">查询</button>
+          <a class="btn btn-outline-secondary" href="{% url 'assets:asset-list' %}">清除筛选</a>
+        </div>
+      </div>
+    </div>
+  </form>
+
+  <div class="card shadow-sm">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th scope="col">编号/草稿号</th>
+            <th scope="col">名称</th>
+            <th scope="col">实物分类</th>
+            {% if list_has_p1 %}
+              <th scope="col">型号</th>
+            {% endif %}
+            <th scope="col">部门</th>
+            <th scope="col">责任人</th>
+            <th scope="col">位置</th>
+            {% if list_has_p1 %}<th scope="col">数量</th>{% endif %}
+            <th scope="col">状态</th>
+            <th scope="col">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for asset in page %}
+            <tr>
+              <td>{{ asset.asset_code|default:asset.draft_number }}</td>
+              <td>{{ asset.asset_name }}</td>
+              <td>{{ asset.category.name }}</td>
+              {% if list_has_p1 %}<td>{{ asset.model|default:"—" }}</td>{% endif %}
+              <td>{{ asset.department.name|default:"—" }}</td>
+              <td>{{ asset.responsible_employee.name|default:"—" }}</td>
+              <td>{{ asset.location.name|default:"—" }}</td>
+              {% if list_has_p1 %}<td>1</td>{% endif %}
+              <td><span class="badge text-bg-{% if asset.asset_status == 'draft' %}secondary{% elif asset.asset_status == 'pending_finance' %}warning{% else %}info{% endif %}">{{ asset.get_asset_status_display }}</span></td>
+              <td><a class="btn btn-sm btn-outline-primary" href="{% url 'assets:asset-detail' asset.pk %}">查看</a></td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="10" class="text-center text-secondary py-4">没有符合当前条件的资产。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if page.paginator.num_pages > 1 %}
+      <div class="card-footer d-flex align-items-center justify-content-between">
+        <span class="text-secondary">第 {{ page.number }} / {{ page.paginator.num_pages }} 页，共 {{ page.paginator.count }} 条</span>
+        <div class="btn-group" role="group" aria-label="分页">
+          {% if page.has_previous %}<a class="btn btn-sm btn-outline-secondary" href="?page={{ page.previous_page_number }}&q={{ query|urlencode }}&category={{ filters.category|urlencode }}&department={{ filters.department|urlencode }}&employee={{ filters.employee|urlencode }}&location={{ filters.location|urlencode }}&asset_status={{ filters.asset_status|urlencode }}">上一页</a>{% endif %}
+          {% if page.has_next %}<a class="btn btn-sm btn-outline-secondary" href="?page={{ page.next_page_number }}&q={{ query|urlencode }}&category={{ filters.category|urlencode }}&department={{ filters.department|urlencode }}&employee={{ filters.employee|urlencode }}&location={{ filters.location|urlencode }}&asset_status={{ filters.asset_status|urlencode }}">下一页</a>{% endif %}
+        </div>
+      </div>
+    {% endif %}
+  </div>
+{% endblock %}

@@ -3,10 +3,10 @@
 EAM-Lite 是公司局域网内使用的轻量级企业资产管理系统。本仓库根目录就是包含
 AGENTS.md、docs/、tasks/ 和 manage.py 的当前目录，不存在第二层项目仓库。
 
-当前代码完成到 Sprint 1：除 Sprint 0 的身份、登录和审计基础外，已提供公司、部门、
-人员、位置、实物分类、用户部门范围、非财务技术设置、初始化向导步骤 1–5/8，以及
-部门/人员 XLSX 的受保护上传、校验、预览和原子确认。资产主档、编码、财务、折旧、
-盘点等后续业务仍未开始。
+当前代码完成到 Sprint 3：除身份、登录、审计、基础资料和导入外，已提供可版本化的
+资产编码配置与无消耗预览，以及受初始化完成门槛保护的资产主档草稿、动态字段、私有
+附件、权限化台账和“草稿 → 待财务确认”流程。财务确认、正式发号、折旧、二维码、
+盘点等后续业务尚未启用。
 
 ## 版本与依赖
 
@@ -20,6 +20,7 @@ AGENTS.md、docs/、tasks/ 和 manage.py 的当前目录，不存在第二层项
 - HTMX：2.0.10，本地静态文件
 - openpyxl：3.1.5，用于生成并解析无宏 XLSX
 - defusedxml：0.7.1，作为 XML 解析安全加固依赖
+- Pillow：12.3.0，用于附件图片真实解码、格式确认和像素上限保护
 
 requirements/production.in 和 requirements/development.in 记录直接依赖的兼容范围；
 production.lock 和 development.lock 记录当前环境实际解析出的全部精确版本。安装和
@@ -366,8 +367,30 @@ system_admin 可在“基础资料 → 编码规则”建立草稿、维护片�
 
 正式资产发号尚未启用，将在 Sprint 4 财务确认事务中接通。
 
-## Sprint 2 之后仍未实现
+## Sprint 3 资产主档
 
-未创建 Asset 主档、AttachmentLink、正式资产导入、财务确认、正式发号、折旧、二维码、
-盘点、保养、离职清退、处置、报表、T+、生产部署或备份任务；初始化向导步骤 7、9 也未实现。
-后续功能只能在对应 Sprint 获得明确授权后开始。
+完成初始化的公司可由 finance、equipment、warehouse 或范围内 department_manager 创建和
+编辑单件资产草稿；system_admin 可查看非财务资料并在正式化前指定当前生效的编码方案，但
+不能代替业务角色维护实物资料。台账搜索和筛选始终先应用当前公司、角色与部门范围；HR 仅
+获得批准的识别及责任摘要，财务敏感字段和 A1 附件不会出现在无权响应中。
+
+草稿可保存同公司实物分类、部门、在职责任人、一个树形叶级位置以及 `text/decimal/date/
+boolean/select` 分类动态值。提交 Service 会锁定资产并重新校验数量恒为 1、单位、责任关系、
+叶级位置、有效照片和必填动态值，只迁移到 `pending_finance`；重复提交不重复审计。原提交人
+可带原因撤回，finance 可带原因退回。附件使用随机 `private/assets/...` 存储键、实际签名/MIME/
+大小校验和鉴权下载；A1 仅 finance 创建/作废，finance/management 查看。业务作废只作废
+AttachmentLink，文件证据和摘要继续保留。
+
+`cleanup_import_staging --unreferenced-private-days <经批准天数>` 现在同时扫描受控白名单下的
+`private/imports` 与 `private/assets` 无元数据文件；命令仍默认为 dry-run，只有显式
+`--execute` 才删除，并要求可登录 system_admin、记录审计且重复执行安全。带 Attachment 元数据
+或业务 Link 的资产附件不会被该路径误删；作废附件也继续保留。
+
+正式编号和财务确认尚未启用。Sprint 3 不写 `SequenceCounter`、`IssuedCode` 或
+`AssetCodeHistory`，也没有财务确认、正式发号、贴标或后续状态入口。
+
+## Sprint 3 之后仍未实现
+
+资产 Excel 导入、财务确认、正式发号、折旧、二维码、盘点、保养、离职清退、处置、报表、
+T+、生产部署或备份任务尚未实现；初始化向导步骤 7、9 也尚未实现。后续功能只能在对应
+Sprint 范围内接入。

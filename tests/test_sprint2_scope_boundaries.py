@@ -55,12 +55,15 @@ def _top_level_callable_names(path: Path):
             yield node.name.casefold()
 
 
-def test_sprint2_does_not_register_asset_master_model():
+def test_asset_master_is_registered_only_by_the_sprint3_assets_app():
     registered_models = {
         model._meta.label_lower for model in apps.get_models(include_auto_created=True)
     }
 
-    assert not any(label.rsplit(".", 1)[-1] == "asset" for label in registered_models)
+    asset_models = {
+        label for label in registered_models if label.rsplit(".", 1)[-1] == "asset"
+    }
+    assert asset_models == {"assets.asset"}
 
 
 def test_sprint2_urls_have_no_unbound_official_issuance_endpoint():
@@ -98,10 +101,8 @@ def test_sprint2_services_export_no_issue_or_allocate_primitive():
     assert forbidden == []
 
 
-def test_sprint2_source_has_no_asset_model_or_later_sprint_domain_model():
+def test_sprint3_source_has_no_sprint4_or_later_domain_model():
     forbidden_model_names = {
-        "asset",
-        "assetcodehistory",
         "assetfinance",
         "assetqridentity",
         "assetmovement",

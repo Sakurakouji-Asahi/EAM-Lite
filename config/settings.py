@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     "apps.audit.apps.AuditConfig",
     "apps.masterdata.apps.MasterDataConfig",
     "apps.coding.apps.CodingConfig",
+    "apps.assets.apps.AssetsConfig",
     "apps.imports.apps.ImportsConfig",
     "apps.core.apps.CoreConfig",
 ]
@@ -64,6 +65,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "apps.masterdata.context_processors.masterdata_navigation",
+                "apps.assets.context_processors.asset_navigation",
             ],
         },
     },

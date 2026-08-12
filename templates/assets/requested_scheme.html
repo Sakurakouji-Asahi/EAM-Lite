@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}指定编码方案 - EAM-Lite{% endblock %}
+{% block content %}
+  <div class="d-flex align-items-center justify-content-between gap-2 mb-3">
+    <div><h1 class="h3 mb-1">指定编码方案版本</h1><div class="text-secondary">{{ asset.draft_number }} · {{ asset.asset_name }}</div></div>
+    <a class="btn btn-outline-secondary" href="{% url 'assets:asset-detail' asset.pk %}">返回详情</a>
+  </div>
+  <div class="alert alert-info">此操作只保存正式化时优先解析的具体活动版本，不预览或签发正式编号。</div>
+  <div class="card shadow-sm">
+    <div class="card-body">
+      {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+      <form method="post" novalidate>
+        {% csrf_token %}
+        {% for field in form %}{% include "assets/_field.html" with field=field %}{% endfor %}
+        <button class="btn btn-primary" type="submit">保存指定版本</button>
+        <a class="btn btn-outline-secondary" href="{% url 'assets:asset-detail' asset.pk %}">取消</a>
+      </form>
+    </div>
+  </div>
+{% endblock %}
