@@ -126,7 +126,7 @@ def test_bootstrap_rolls_back_account_when_required_audit_fails(monkeypatch):
     monkeypatch.setenv("TEST_BOOTSTRAP_PASSWORD", "Rollback-Password-2026!Strong")
     monkeypatch.setenv("TEST_ACTOR_PASSWORD", "Root-Password-2026!")
     with patch(
-        "apps.accounts.management.commands.bootstrap_user.write_audit_log",
+        "apps.accounts.management.commands.bootstrap_user.write_system_audit_log",
         side_effect=RuntimeError("audit unavailable"),
     ):
         with pytest.raises(RuntimeError, match="audit unavailable"):

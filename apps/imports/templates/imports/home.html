@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}基础资料导入 - EAM-Lite{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">基础资料导入</h1>
+<p class="text-secondary">当前公司：{{ company.short_name }}。导入只新增，不覆盖任何现有记录。</p>
+<div class="row g-3">
+  {% for definition in definitions %}
+  <div class="col-md-6">
+    <div class="card h-100"><div class="card-body">
+      <h2 class="h5">{{ definition.label }}导入</h2>
+      <p>模板版本：{{ definition.version }}；工作表：{{ definition.sheet_name }}</p>
+      <a class="btn btn-outline-primary" href="{% url 'imports:template' definition.import_type %}">下载标准模板</a>
+      <a class="btn btn-primary" href="{% url 'imports:upload' definition.import_type %}">上传并验证</a>
+    </div></div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

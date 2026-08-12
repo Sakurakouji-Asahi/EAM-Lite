@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}{{ resource_config.label }}详情 - EAM-Lite{% endblock %}
+{% block content %}
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+    <div>
+      <h1 class="h3 mb-1">{{ resource_config.label }}详情</h1>
+      <span class="badge text-bg-{% if object.is_active %}success{% else %}secondary{% endif %}">
+        {% if object.is_active %}启用{% else %}停用{% endif %}
+      </span>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-secondary" href="{{ back_url }}">返回列表</a>
+      {% if technical_link_url %}<a class="btn btn-outline-primary" href="{{ technical_link_url }}">关联登录账号</a>{% endif %}
+      {% if can_manage %}
+        <a class="btn btn-primary" href="{{ edit_url }}">编辑</a>
+        <button class="btn btn-{% if object.is_active %}outline-danger{% else %}outline-success{% endif %}" type="button" data-bs-toggle="modal" data-bs-target="#status-confirm">
+          {% if object.is_active %}停用{% else %}启用{% endif %}
+        </button>
+      {% endif %}
+    </div>
+  </div>
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <dl class="row mb-0">
+        {% for label, value in rows %}
+          <dt class="col-sm-4 col-lg-3 text-secondary">{{ label }}</dt>
+          <dd class="col-sm-8 col-lg-9">{{ value }}</dd>
+        {% endfor %}
+      </dl>
+    </div>
+  </div>
+  {% if can_manage %}
+    <div class="modal fade" id="status-confirm" tabindex="-1" aria-labelledby="status-confirm-title" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <form method="post" action="{{ status_url }}">
+            {% csrf_token %}
+            <div class="modal-header">
+              <h2 class="modal-title fs-5" id="status-confirm-title">确认{% if object.is_active %}停用{% else %}启用{% endif %}</h2>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body">
+              <p>此操作不会物理删除记录，历史引用将继续保留。</p>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" value="1" id="confirm-status" name="confirm" required>
+                <label class="form-check-label" for="confirm-status">我确认执行此操作</label>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button>
+              <button type="submit" class="btn btn-{% if object.is_active %}danger{% else %}success{% endif %}">确认{% if object.is_active %}停用{% else %}启用{% endif %}</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  {% endif %}
+{% endblock %}

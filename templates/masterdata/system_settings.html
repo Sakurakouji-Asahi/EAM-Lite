@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}系统技术设置 - EAM-Lite{% endblock %}
+{% block content %}
+  <h1 class="h3 mb-3">系统技术设置</h1>
+  <div class="alert alert-info">Sprint 1 仅开放附件扩展名和大小上限。固定资产提示阈值将在 Sprint 4 由财务角色配置。</div>
+  <div class="card shadow-sm"><div class="card-body">
+    {% if can_manage %}
+      <form method="post" novalidate>{% csrf_token %}
+        {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+        {% for field in form %}<fieldset class="mb-3"><legend class="fs-6">{{ field.label }}</legend>{{ field }}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}{% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</fieldset>{% endfor %}
+        <button class="btn btn-primary" type="submit">保存技术设置</button>
+      </form>
+    {% else %}
+      <dl class="row mb-0"><dt class="col-sm-5">允许扩展名</dt><dd class="col-sm-7">{{ values.attachment_allowed_extensions|join:', ' }}</dd><dt class="col-sm-5">单文件大小上限</dt><dd class="col-sm-7">{{ values.attachment_max_size_bytes }} 字节</dd></dl>
+    {% endif %}
+  </div></div>
+{% endblock %}

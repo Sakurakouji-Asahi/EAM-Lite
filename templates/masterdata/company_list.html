@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}公司 - EAM-Lite{% endblock %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="h3 mb-0">公司</h1>
+    {% if can_manage and not has_company %}<a class="btn btn-primary" href="{% url 'masterdata:company-create' %}">新增公司</a>{% endif %}
+  </div>
+  {% include "masterdata/_filters.html" %}
+  <div class="table-responsive card shadow-sm">
+    <table class="table table-hover align-middle mb-0">
+      <thead><tr><th>编码</th><th>公司全称</th><th>简称</th><th>币种</th><th>时区</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody>
+        {% for object in objects %}
+          <tr>
+            <td>{{ object.code }}</td><td>{{ object.name }}</td><td>{{ object.short_name }}</td>
+            <td>{{ object.currency }}</td><td>{{ object.timezone }}</td>
+            <td>{% if object.is_active %}<span class="badge text-bg-success">启用</span>{% else %}<span class="badge text-bg-secondary">停用</span>{% endif %}</td>
+            <td><a href="{% url 'masterdata:company-detail' object.pk %}">查看</a></td>
+          </tr>
+        {% empty %}<tr><td colspan="7" class="text-center text-secondary py-4">暂无公司资料</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

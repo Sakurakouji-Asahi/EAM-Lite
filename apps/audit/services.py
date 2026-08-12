@@ -8,6 +8,14 @@ from apps.core.logging import redact_log_text
 
 
 REDACTED = "[REDACTED]"
+PRE_INITIALIZATION_ACTIONS = frozenset(
+    {
+        "auth.login_succeeded",
+        "auth.login_failed",
+        "account.bootstrap_created",
+        "auth.pre_initialization",
+    }
+)
 _SENSITIVE_NAME_PARTS = (
     "password",
     "passwd",
@@ -115,21 +123,49 @@ def write_audit_log(
     correlation_id=None,
     excluded_fields=None,
     company=None,
+    _allow_pre_initialization=False,
 ):
     """
     追加一条审计记录。
 
-    Sprint 1 将 company 参数替换为真实的 Company PROTECT/NULL 外键；Sprint 0
-    仅允许 company=None 的预初始化系统事件，禁止文本公司标识。
+    The generic API always requires a real Company. The narrow
+    ``write_system_audit_log`` wrapper is the only path that may omit it for
+    fixed Sprint 0 bootstrap/authentication events before Company exists.
     """
-    if company is not None:
-        raise ValueError("Sprint 0 尚未建立 Company，审计 company 必须为 None")
+    if (
+        company is not None
+        and getattr(getattr(company, "_meta", None), "label", None)
+        != "masterdata.Company"
+    ):
+        raise ValueError("company 必须是真实的 Company 实例")
     if not str(action).strip() or not str(object_type).strip():
         raise ValueError("action 和 object_type 不得为空")
+    normalized_action = str(action).strip()
+    if company is None:
+        if not _allow_pre_initialization:
+            raise ValueError("通用审计事件必须关联真实 Company")
+        if normalized_action not in PRE_INITIALIZATION_ACTIONS:
+            raise ValueError("company=None 只允许固定的预初始化系统事件")
+        try:
+            from apps.masterdata.models import Company
+        except (ImportError, RuntimeError):
+            Company = None
+        if Company is not None:
+            # During a real Sprint 0 -> Sprint 1 migration the model may be
+            # importable before its table exists.  That is still genuinely
+            # pre-initialization and must not break authentication auditing.
+            from django.db import connection
+
+            if (
+                Company._meta.db_table in connection.introspection.table_names()
+                and Company.objects.exists()
+            ):
+                raise ValueError("Company 已建立，审计事件必须关联真实 Company")
 
     values = {
+        "company": company,
         "user": user,
-        "action": str(action).strip(),
+        "action": normalized_action,
         "object_type": str(object_type).strip(),
         "object_id": "" if object_id is None else str(object_id),
         "old_data_json": sanitize_audit_data(
@@ -146,3 +182,22 @@ def write_audit_log(
     if correlation_id is not None:
         values["correlation_id"] = correlation_id
     return AuditLog.objects.create(**values)
+
+
+def write_system_audit_log(*, action, company=None, **kwargs):
+    """Write a fixed authentication/bootstrap event, including pre-init."""
+    if str(action).strip() not in PRE_INITIALIZATION_ACTIONS:
+        raise ValueError("不允许的系统审计事件")
+    return write_audit_log(
+        action=action,
+        company=company,
+        _allow_pre_initialization=company is None,
+        **kwargs,
+    )
+
+
+def write_business_audit_log(*, company, **kwargs):
+    """写入必须具备公司边界的业务审计事件。"""
+    if company is None:
+        raise ValueError("业务审计事件必须关联 Company")
+    return write_audit_log(company=company, **kwargs)

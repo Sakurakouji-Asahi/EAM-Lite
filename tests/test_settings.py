@@ -1,4 +1,5 @@
 import pytest
+from pathlib import Path
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.db import connection
@@ -48,6 +49,23 @@ def test_business_locale_timezone_currency_and_selected_database():
     assert connection.vendor == settings.DATABASE_ENGINE
     assert settings.LOGIN_FAILURE_WINDOW_SECONDS > 0
     assert settings.LOGIN_FAILURE_PAIR_LIMIT > 0
+
+
+def test_private_attachment_and_upload_temp_roots_are_separate_from_static():
+    roots = [
+        Path(settings.STATIC_ROOT).resolve(),
+        Path(settings.MEDIA_ROOT).resolve(),
+        Path(settings.IMPORT_TEMP_ROOT).resolve(),
+    ]
+    for index, first in enumerate(roots):
+        for second in roots[index + 1 :]:
+            assert first != second
+            assert first not in second.parents
+            assert second not in first.parents
+    assert Path(settings.FILE_UPLOAD_TEMP_DIR).resolve() == roots[2]
+    assert settings.STORAGES["default"]["BACKEND"].endswith(
+        "PrivateFileSystemStorage"
+    )
 
 
 @pytest.mark.parametrize("value", ["", "1.5", "true", "0", "-1"])

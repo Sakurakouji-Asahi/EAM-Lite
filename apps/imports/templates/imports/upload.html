@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}{{ definition.label }}导入 - EAM-Lite{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">{{ definition.label }} Excel 导入</h1>
+<div class="alert alert-info">
+  请使用 {{ definition.version }} 标准模板。未知列、公式、宏、外部链接或嵌入对象将被拒绝；存在任何行错误时不能确认。
+</div>
+<p><a href="{% url 'imports:template' definition.import_type %}">下载标准模板</a></p>
+<form method="post" enctype="multipart/form-data" novalidate>
+  {% csrf_token %}
+  {{ form.non_field_errors }}
+  {{ form.import_type }}{{ form.idempotency_key }}
+  <div class="mb-3">
+    <label class="form-label" for="{{ form.file.id_for_label }}">{{ form.file.label }}</label>
+    {{ form.file }}
+    {% for error in form.file.errors %}<div class="text-danger">{{ error }}</div>{% endfor %}
+    <div class="form-text">{{ form.file.help_text }}</div>
+  </div>
+  <button class="btn btn-primary" type="submit">上传、解析并验证</button>
+  <a class="btn btn-link" href="{% url 'imports:home' %}">返回</a>
+</form>
+{% endblock %}

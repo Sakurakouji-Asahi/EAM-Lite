@@ -56,7 +56,14 @@ V1 的部署只允许一个活动公司，但业务表仍显式保存 `company_i
 
 外键：`company -> Company PROTECT`；`parent -> Department PROTECT/NULL`；`manager_employee -> Employee SET_NULL/NULL`。
 
-约束：`UNIQUE(company_id, normalized_code)`；父级、经理与本部门同公司；`parent_id != id`；递归校验和数据库触发器禁止任意深度循环。已有资产或子部门时只能停用，不能删除。
+约束：`UNIQUE(company_id, normalized_code)`；父级与本部门同公司；`parent_id != id`；递归校验和数据库触发器禁止任意深度循环。已有资产或子部门时只能停用，不能删除。
+
+新绑定的 `manager_employee` 必须与部门属于同一公司，并同时满足
+`employment_status='active' AND is_active=true`，且该员工当前所属部门必须启用；经理可以来自
+公司内任意启用部门，不要求具备登录账号或 `department_manager` 角色。经理进入
+`leaving/resigned`、员工被停用或其所属部门被停用时，只能由受控 Service 在同一事务中清空其
+全部 `Department.manager_employee` 关联，并对每一项清空分别写入带公司的 AuditLog；不得通过
+普通表单、批量 `update()` 或绕过 Service 的方式留下失效经理关联。
 
 ### 2.4 `Employee`
 

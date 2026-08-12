@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}导入批次 - EAM-Lite{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">{{ definition.label }}导入预览</h1>
+{% for message in messages %}<div class="alert alert-{% if message.tags == 'error' %}danger{% else %}success{% endif %}">{{ message }}</div>{% endfor %}
+<dl class="row">
+  <dt class="col-sm-2">批次状态</dt><dd class="col-sm-10">{{ batch.get_status_display }}</dd>
+  <dt class="col-sm-2">模板版本</dt><dd class="col-sm-10">{{ batch.template_version }}</dd>
+  <dt class="col-sm-2">行数</dt><dd class="col-sm-10">{{ batch.total_rows }}（有效 {{ batch.valid_rows }} / 错误 {{ batch.error_rows }}）</dd>
+  <dt class="col-sm-2">原文件</dt><dd class="col-sm-10"><a href="{% url 'imports:source' batch.pk %}">受保护下载</a></dd>
+</dl>
+{% if batch.status == 'invalid' %}
+<div class="alert alert-danger">本批次存在错误，不会写入正式基础资料。请修正原文件后重新上传。</div>
+{% elif batch.status == 'validated' %}
+<div class="alert alert-warning">确认后将整批新增 {{ batch.valid_rows }} 条记录；任何写入失败都会整批回滚。</div>
+<form method="post" action="{% url 'imports:confirm' batch.pk %}">
+  {% csrf_token %}
+  <div class="form-check mb-3">
+    <input class="form-check-input" type="checkbox" name="confirm" value="1" id="confirm-import" required>
+    <label class="form-check-label" for="confirm-import">我确认整批写入；本导入只新增，不覆盖现有记录。</label>
+  </div>
+  <button class="btn btn-danger" type="submit">确认整批导入</button>
+</form>
+{% elif batch.status == 'confirmed' %}
+<div class="alert alert-success">本批次已成功确认，重复提交不会重复创建。</div>
+{% endif %}
+<div class="table-responsive mt-4">
+<table class="table table-sm table-bordered align-middle">
+  <thead><tr><th>行</th><th>状态</th><th>原始数据</th><th>错误</th><th>创建结果</th></tr></thead>
+  <tbody>
+  {% for row in rows %}
+    <tr class="{% if row.validation_status == 'invalid' %}table-danger{% endif %}">
+      <td>{{ row.row_number }}</td><td>{{ row.get_validation_status_display }}</td>
+      <td><dl>{% for key, value in row.raw_data_json.items %}<dt>{{ key }}</dt><dd>{{ value|default_if_none:"" }}</dd>{% endfor %}</dl></td>
+      <td>{% for error in row.errors_json %}<div><strong>{{ error.field }}</strong>：{{ error.value|default_if_none:"" }} — {{ error.reason }}</div>{% empty %}无{% endfor %}</td>
+      <td>{% if row.created_object_id %}{{ row.created_object_type }} #{{ row.created_object_id }}{% else %}-{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<a class="btn btn-link" href="{% url 'imports:home' %}">返回导入首页</a>
+{% endblock %}

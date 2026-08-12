@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}用户权限 - EAM-Lite{% endblock %}
+{% block content %}
+  <div class="mb-3"><h1 class="h3 mb-1">用户、固定角色及部门范围</h1><p class="text-secondary mb-0">V1 只允许固定角色；部门范围本身不授予动作权限。</p></div>
+  <div class="table-responsive card shadow-sm"><table class="table table-hover align-middle mb-0"><thead><tr><th>用户</th><th>状态</th><th>固定角色</th><th>活动部门范围</th><th>操作</th></tr></thead><tbody>
+    {% for row in rows %}<tr><td>{{ row.user.display_name|default:row.user.username }}<br><small class="text-secondary">{{ row.user.username }}</small></td><td>{% if row.login_capable %}<span class="badge text-bg-success">可登录</span>{% elif not row.user.is_active %}<span class="badge text-bg-secondary">停用</span>{% else %}<span class="badge text-bg-warning">无可用密码</span>{% endif %}</td><td>{% for role in row.roles %}<span class="badge text-bg-primary me-1">{{ role }}</span>{% empty %}<span class="text-secondary">无</span>{% endfor %}</td><td>{% for scope in row.scopes %}<span class="badge text-bg-light border text-dark me-1">{{ scope.department }}{% if scope.include_descendants %}（含下级）{% endif %}</span>{% empty %}<span class="text-secondary">无</span>{% endfor %}</td><td><a href="{% url 'masterdata:user-permissions-detail' row.user.pk %}">配置</a></td></tr>{% empty %}<tr><td colspan="5" class="text-center text-secondary py-4">暂无应用用户</td></tr>{% endfor %}
+  </tbody></table></div>
+{% endblock %}

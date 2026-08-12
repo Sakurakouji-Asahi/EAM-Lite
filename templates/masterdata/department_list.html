@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}部门 - EAM-Lite{% endblock %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div><h1 class="h3 mb-0">部门</h1><small class="text-secondary">{{ company.short_name }}</small></div>
+    <div class="d-flex gap-2">
+      {% if can_manage %}<a class="btn btn-primary" href="{% url 'masterdata:department-create' %}">新增部门</a>{% endif %}
+      {% if can_manage %}<a class="btn btn-outline-secondary" href="{% url 'imports:template' 'department' %}">下载模板</a><a class="btn btn-outline-primary" href="{% url 'imports:upload' 'department' %}">Excel 导入</a>{% endif %}
+    </div>
+  </div>
+  {% include "masterdata/_filters.html" %}
+  <div class="table-responsive card shadow-sm">
+    <table class="table table-hover align-middle mb-0">
+      <thead><tr><th>层级与部门</th><th>编码</th><th>经理</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody>
+        {% for row in rows %}{% with object=row.object %}
+          <tr><td><span class="d-inline-block ps-{{ row.depth }}">{% if row.depth %}↳ {% endif %}{{ object.name }}</span></td><td>{{ object.code }}</td><td>{{ object.manager_employee|default:'—' }}</td><td>{% if object.is_active %}<span class="badge text-bg-success">启用</span>{% else %}<span class="badge text-bg-secondary">停用</span>{% endif %}</td><td><a href="{% url 'masterdata:department-detail' object.pk %}">查看</a></td></tr>
+        {% endwith %}{% empty %}<tr><td colspan="5" class="text-center text-secondary py-4">暂无部门资料</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

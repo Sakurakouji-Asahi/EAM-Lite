@@ -56,12 +56,19 @@ def test_required_vendor_asset_is_packaged_locally(asset_path):
 
 
 def test_templates_do_not_reference_public_cdn():
-    for template in (settings.BASE_DIR / "templates").rglob("*.html"):
-        content = template.read_text(encoding="utf-8").lower()
-        assert "cdn." not in content
-        assert "unpkg.com" not in content
-        assert "http://" not in content
-        assert "https://" not in content
+    template_roots = [settings.BASE_DIR / "templates"]
+    template_roots.extend(
+        path for path in (settings.BASE_DIR / "apps").glob("*/templates") if path.is_dir()
+    )
+    for root in template_roots:
+        for template in root.rglob("*.html"):
+            content = template.read_text(encoding="utf-8").lower()
+            assert "cdn." not in content
+            assert "unpkg.com" not in content
+            assert "http://" not in content
+            assert "https://" not in content
+            assert " onsubmit=" not in content
+            assert " onclick=" not in content
 
 
 def test_local_styles_include_htmx_indicator_defaults():

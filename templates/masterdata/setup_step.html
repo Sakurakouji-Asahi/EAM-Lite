@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}步骤 {{ step.number }}：{{ step.name }} - EAM-Lite{% endblock %}
+{% block content %}
+  <nav aria-label="面包屑"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="{% url 'masterdata:setup' %}">初始化向导</a></li><li class="breadcrumb-item active" aria-current="page">步骤 {{ step.number }}</li></ol></nav>
+  <div class="card shadow-sm"><div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-3"><h1 class="h3 mb-0">步骤 {{ step.number }}：{{ step.name }}</h1>{% if step.complete %}<span class="badge text-bg-success">完成条件已满足</span>{% else %}<span class="badge text-bg-warning">完成条件未满足</span>{% endif %}</div>
+    <p>本步骤所需维护角色：<strong>{{ step.writer }}</strong>。完成状态根据真实启用数据重新计算，不会因访问页面而置为完成。</p>
+    {% if not has_writer_role %}<div class="alert alert-warning"><strong>当前账号不能代行本步骤写权限。</strong> 请使用具备 {{ step.writer }} 固定角色的应用账号完成维护。{% if bootstrap_hint %}若缺少对应账号，请在服务器管理终端使用 Sprint 0 账号引导命令创建并分配固定角色。{% endif %}</div>{% endif %}
+    {% if step.number == 8 and can_view_step %}
+      <dl class="row">
+        <dt class="col-sm-4"><code>users_configured</code></dt><dd class="col-sm-8">{% if progress.users_configured %}<span class="badge text-bg-success">已满足</span>{% else %}<span class="badge text-bg-warning">未满足</span>{% endif %}</dd>
+        <dt class="col-sm-4"><code>permissions_configured</code></dt><dd class="col-sm-8">{% if progress.permissions_configured %}<span class="badge text-bg-success">已满足</span>{% else %}<span class="badge text-bg-warning">未满足</span>{% endif %}</dd>
+      </dl>
+      {% if not step.complete %}
+      <div class="alert alert-warning">
+        <strong>步骤 8 阻断项：</strong>
+        <ul class="mb-2">
+          {% if not has_application_users %}<li>尚无普通应用用户。</li>{% endif %}
+          {% if not has_login_admin %}<li>缺少至少一名可登录的 <code>system_admin</code>。</li>{% endif %}
+          {% if not has_login_finance %}<li>缺少至少一名可登录的 <code>finance</code>。</li>{% endif %}
+          {% for manager in managers_without_scope %}<li>部门经理账号 {{ manager.username }} 尚无启用部门范围。</li>{% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+      {% if show_bootstrap_guidance %}
+        <div class="alert alert-info">
+          请在服务器受控管理终端按 README 的“创建恢复管理员与首批应用账号”章节执行
+          <code>bootstrap_user</code>，创建所需应用账号并显式分配固定角色；命令要求执行人再认证和原因。
+        </div>
+      {% endif %}
+      {% if has_writer_role %}
+        <form method="post" class="mb-3">{% csrf_token %}<button class="btn btn-outline-primary" type="submit">重新校验并保存步骤 8 状态</button></form>
+      {% endif %}
+    {% endif %}
+    {% if can_view_step %}<a class="btn btn-primary" href="{% url step.url %}">{% if has_writer_role %}进入维护页面{% else %}查看当前资料{% endif %}</a>{% endif %}
+    <a class="btn btn-outline-secondary" href="{% url 'masterdata:setup' %}">返回向导</a>
+  </div></div>
+{% endblock %}

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+
 from config.env import (
     parse_database_engine,
     read_bool_env,
@@ -32,6 +34,8 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "apps.accounts.apps.AccountsConfig",
     "apps.audit.apps.AuditConfig",
+    "apps.masterdata.apps.MasterDataConfig",
+    "apps.imports.apps.ImportsConfig",
     "apps.core.apps.CoreConfig",
 ]
 
@@ -58,6 +62,7 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "apps.masterdata.context_processors.masterdata_navigation",
             ],
         },
     },
@@ -133,7 +138,46 @@ STATIC_ROOT = resolve_configured_path(
     BASE_DIR, read_env("STATIC_ROOT", "var/static")
 )
 MEDIA_ROOT = resolve_configured_path(BASE_DIR, read_env("MEDIA_ROOT", "var/media"))
+# Django may spool uploads larger than FILE_UPLOAD_MAX_MEMORY_SIZE here.  It is
+# deliberately separate from both static files and the durable attachment
+# store so a reverse proxy cannot accidentally publish an in-flight upload.
+IMPORT_TEMP_ROOT = resolve_configured_path(
+    BASE_DIR, read_env("IMPORT_TEMP_ROOT", "var/tmp")
+)
+IMPORT_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+
+
+def _path_contains(parent, child):
+    parent = Path(parent).resolve()
+    child = Path(child).resolve()
+    return child == parent or parent in child.parents
+
+
+for _private_root, _public_root, _label in (
+    (MEDIA_ROOT, STATIC_ROOT, "MEDIA_ROOT"),
+    (IMPORT_TEMP_ROOT, STATIC_ROOT, "IMPORT_TEMP_ROOT"),
+    (IMPORT_TEMP_ROOT, MEDIA_ROOT, "IMPORT_TEMP_ROOT"),
+):
+    if _path_contains(_public_root, _private_root) or _path_contains(
+        _private_root, _public_root
+    ):
+        raise ImproperlyConfigured(
+            f"{_label} 必须与静态或附件目录完全分离，不能相同或互相嵌套"
+        )
+
 MEDIA_URL = "/protected-media/"
+FILE_UPLOAD_MAX_MEMORY_SIZE = 2 * 1024 * 1024
+DATA_UPLOAD_MAX_MEMORY_SIZE = 21 * 1024 * 1024
+FILE_UPLOAD_TEMP_DIR = str(IMPORT_TEMP_ROOT)
+
+STORAGES = {
+    "default": {
+        "BACKEND": "apps.core.storage.PrivateFileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 AUTH_USER_MODEL = "accounts.User"

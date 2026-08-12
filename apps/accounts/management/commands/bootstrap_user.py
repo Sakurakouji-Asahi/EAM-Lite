@@ -8,7 +8,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from apps.accounts.roles import ROLE_NAMES, ensure_fixed_roles
-from apps.audit.services import write_audit_log
+from apps.audit.services import write_system_audit_log
 
 
 class Command(BaseCommand):
@@ -98,11 +98,13 @@ class Command(BaseCommand):
             raise CommandError("新用户资料或密码不符合要求：" + "；".join(exc.messages))
 
         with transaction.atomic():
+            from apps.masterdata.models import Company
+
             ensure_fixed_roles()
             user.set_password(password)
             user.save()
             user.groups.set(user.groups.model.objects.filter(name__in=roles))
-            write_audit_log(
+            write_system_audit_log(
                 user=actor,
                 action="account.bootstrap_created",
                 object_type="User",
@@ -117,6 +119,7 @@ class Command(BaseCommand):
                     "roles": list(roles),
                     "reason": reason,
                 },
+                company=Company.objects.order_by("-is_active", "created_at").first(),
             )
 
         self.stdout.write(self.style.SUCCESS(f"已创建应用用户：{username}"))

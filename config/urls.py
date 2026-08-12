@@ -1,8 +1,9 @@
-from django.urls import path
+from django.urls import include, path
 
 from apps.accounts.forms import ChineseAuthenticationForm
 from apps.accounts.views import ApplicationLoginView, ApplicationLogoutView
 from apps.core.views import home
+from apps.masterdata.views import setup_overview, setup_step
 
 
 urlpatterns = [
@@ -13,4 +14,8 @@ urlpatterns = [
         name="login",
     ),
     path("logout/", ApplicationLogoutView.as_view(), name="logout"),
+    path("setup/", setup_overview, name="setup"),
+    path("setup/<int:step>/", setup_step, name="setup-step"),
+    path("master-data/", include("apps.masterdata.urls")),
+    path("imports/", include("apps.imports.urls")),
 ]

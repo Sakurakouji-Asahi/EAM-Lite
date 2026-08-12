@@ -13,10 +13,12 @@
 </head>
 <body class="bg-body-tertiary">
   <header class="navbar navbar-dark bg-primary px-3 shadow-sm">
-    <span class="navbar-brand mb-0 h1">EAM-Lite</span>
+    <a class="navbar-brand mb-0 h1 text-decoration-none" href="{% url 'home' %}">
+      {% if current_company %}{{ current_company.short_name }} · {% endif %}EAM-Lite
+    </a>
     {% if request.user.is_authenticated %}
       <div class="d-flex align-items-center gap-3 text-white">
-        <span>当前用户：{{ request.user.display_name|default:request.user.username }}</span>
+        <span class="d-none d-md-inline">当前用户：{{ request.user.display_name|default:request.user.username }}{% if current_role_names %}（{{ current_role_names|join:', ' }}）{% endif %}</span>
         <form method="post" action="{% url 'logout' %}" class="m-0">
           {% csrf_token %}
           <button type="submit" class="btn btn-sm btn-outline-light">退出</button>
@@ -31,11 +33,27 @@
         <aside class="col-12 col-md-3 col-lg-2 border-end bg-white p-3">
           <div class="text-secondary small mb-2">功能菜单</div>
           <nav aria-label="主菜单">
-            <span class="nav-link active px-0" aria-current="page">首页</span>
-            <span class="nav-link disabled px-0">业务模块将在后续 Sprint 提供</span>
+            <a class="nav-link px-0" href="{% url 'home' %}">首页</a>
+            {% if can_access_setup %}<a class="nav-link px-0" href="{% url 'masterdata:setup' %}">初始化向导</a>{% endif %}
+            {% if masterdata_nav.company or masterdata_nav.department or masterdata_nav.employee or masterdata_nav.location or masterdata_nav.asset_category %}
+              <div class="text-secondary small mt-3 mb-1">基础资料</div>
+              {% if masterdata_nav.company %}<a class="nav-link px-0" href="{% url 'masterdata:company-list' %}">公司</a>{% endif %}
+              {% if masterdata_nav.department %}<a class="nav-link px-0" href="{% url 'masterdata:department-list' %}">部门</a>{% endif %}
+              {% if masterdata_nav.employee %}<a class="nav-link px-0" href="{% url 'masterdata:employee-list' %}">人员</a>{% endif %}
+              {% if masterdata_nav.asset_category %}<a class="nav-link px-0" href="{% url 'masterdata:category-list' %}">实物分类</a>{% endif %}
+              {% if masterdata_nav.location %}<a class="nav-link px-0" href="{% url 'masterdata:location-list' %}">位置</a>{% endif %}
+            {% endif %}
+            {% if masterdata_nav.system_setting or masterdata_nav.user_permissions %}
+              <div class="text-secondary small mt-3 mb-1">系统设置</div>
+              {% if masterdata_nav.system_setting %}<a class="nav-link px-0" href="{% url 'masterdata:system-settings' %}">附件技术设置</a>{% endif %}
+              {% if masterdata_nav.user_permissions %}<a class="nav-link px-0" href="{% url 'masterdata:user-permissions-list' %}">用户权限</a>{% endif %}
+            {% endif %}
+            {% if masterdata_manage.department or masterdata_manage.employee %}<a class="nav-link px-0" href="{% url 'imports:home' %}">基础资料导入</a>{% endif %}
+            <span class="nav-link disabled px-0">资产业务模块将在后续 Sprint 提供</span>
           </nav>
         </aside>
         <main class="col-12 col-md-9 col-lg-10 p-4">
+          {% include "masterdata/_messages.html" %}
           {% block content %}{% endblock %}
         </main>
       </div>

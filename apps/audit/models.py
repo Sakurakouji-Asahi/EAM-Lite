@@ -15,8 +15,14 @@ class AuditLogQuerySet(models.QuerySet):
 
 
 class AuditLog(models.Model):
-    # Sprint 1 在 Company 模型建立后增加 company -> Company PROTECT/NULL。
-    # 在此之前只有预初始化系统事件，因此不得用文本或假外键伪造 company。
+    company = models.ForeignKey(
+        "masterdata.Company",
+        verbose_name="公司",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="audit_logs",
+    )
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         verbose_name="操作用户",

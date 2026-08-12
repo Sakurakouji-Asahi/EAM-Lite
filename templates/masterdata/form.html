@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} - EAM-Lite{% endblock %}
+{% block content %}
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h1 class="h3 mb-0">{{ title }}</h1>
+    <a class="btn btn-outline-secondary" href="{{ cancel_url }}">返回</a>
+  </div>
+  <div class="card shadow-sm">
+    <div class="card-body">
+      {% if form.non_field_errors %}
+        <div class="alert alert-danger" role="alert">
+          <strong>保存失败，请检查：</strong>
+          {{ form.non_field_errors }}
+        </div>
+      {% endif %}
+      <form method="post" novalidate>
+        {% csrf_token %}
+        {% if department_scope_impact %}
+          <input type="hidden" name="scope_impact_token" value="{{ department_scope_impact.confirmation_token }}">
+          <div class="alert alert-warning" role="alert">
+            <h2 class="h5">部门改挂影响摘要</h2>
+            <p>
+              拟将 {{ department_scope_impact.department }} 从
+              {{ department_scope_impact.old_parent }} 改挂至
+              {{ department_scope_impact.new_parent }}。
+            </p>
+            {% if department_scope_impact.rows %}
+              <ul>
+                {% for impact in department_scope_impact.rows %}
+                  <li>
+                    <strong>{{ impact.user.display_name|default:impact.user.username }}（{{ impact.user.username }}）</strong><br>
+                    范围扩大：{% if impact.added %}{{ impact.added|join:"、" }}{% else %}无{% endif %}<br>
+                    范围缩小：{% if impact.removed %}{{ impact.removed|join:"、" }}{% else %}无{% endif %}
+                  </li>
+                {% endfor %}
+              </ul>
+            {% else %}
+              <p>现有活动授权的解析结果不变（范围扩大 0 个部门，范围缩小 0 个部门）。</p>
+            {% endif %}
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="1" id="confirm-scope-impact" name="confirm_scope_impact" required>
+              <label class="form-check-label" for="confirm-scope-impact">我已核对上述范围扩大/缩小影响并明确确认本次改挂</label>
+            </div>
+          </div>
+        {% endif %}
+        {% for field in form %}
+          {% if field.field.widget.input_type == 'checkbox' %}
+            <div class="form-check mb-3">
+              {{ field }}
+              <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+              {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+              {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+            </div>
+          {% else %}
+            <div class="mb-3">
+              <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+              {{ field }}
+              {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+              {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+            </div>
+          {% endif %}
+        {% endfor %}
+        <div class="d-flex gap-2">
+          <button class="btn btn-primary" type="submit">{% if department_scope_impact %}确认改挂并保存{% else %}保存{% endif %}</button>
+          <a class="btn btn-outline-secondary" href="{{ cancel_url }}">取消</a>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

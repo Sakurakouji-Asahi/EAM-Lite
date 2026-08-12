@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}人员 - EAM-Lite{% endblock %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div><h1 class="h3 mb-0">人员</h1><small class="text-secondary">任职资料由 HR 维护，账号技术关联由 system_admin 维护</small></div>
+    <div class="d-flex gap-2">{% if can_manage %}<a class="btn btn-primary" href="{% url 'masterdata:employee-create' %}">新增人员</a><a class="btn btn-outline-secondary" href="{% url 'imports:template' 'employee' %}">下载模板</a><a class="btn btn-outline-primary" href="{% url 'imports:upload' 'employee' %}">Excel 导入</a>{% endif %}</div>
+  </div>
+  <form method="get" class="row g-2 align-items-end mb-3" role="search">
+    <div class="col-12 col-md-4"><label class="form-label" for="employee-search">搜索</label><input id="employee-search" class="form-control" type="search" name="q" value="{{ q }}" placeholder="员工编号、姓名或手机"></div>
+    <div class="col-6 col-md-3"><label class="form-label" for="employee-record-status">启用状态</label><select id="employee-record-status" class="form-select" name="status"><option value="active"{% if status == 'active' %} selected{% endif %}>启用</option><option value="inactive"{% if status == 'inactive' %} selected{% endif %}>停用</option><option value="all"{% if status == 'all' %} selected{% endif %}>全部</option></select></div>
+    <div class="col-6 col-md-3"><label class="form-label" for="employment-status">任职状态</label><select id="employment-status" class="form-select" name="employment_status"><option value="">全部</option><option value="active"{% if employment_status == 'active' %} selected{% endif %}>在职</option><option value="leaving"{% if employment_status == 'leaving' %} selected{% endif %}>离职处理中</option><option value="resigned"{% if employment_status == 'resigned' %} selected{% endif %}>已离职</option></select></div>
+    <div class="col-12 col-md-2"><button class="btn btn-outline-primary w-100" type="submit">筛选</button></div>
+  </form>
+  <div class="table-responsive card shadow-sm"><table class="table table-hover align-middle mb-0"><thead><tr><th>员工编号</th><th>姓名</th><th>部门</th><th>任职状态</th><th>启用状态</th>{% if show_user_link %}<th>登录账号</th>{% endif %}<th>操作</th></tr></thead><tbody>
+    {% for object in objects %}<tr><td>{{ object.employee_no }}</td><td>{{ object.name }}</td><td>{{ object.department }}</td><td>{{ object.get_employment_status_display }}</td><td>{% if object.is_active %}<span class="badge text-bg-success">启用</span>{% else %}<span class="badge text-bg-secondary">停用</span>{% endif %}</td>{% if show_user_link %}<td>{{ object.user|default:'未关联' }}</td>{% endif %}<td><a href="{% url 'masterdata:employee-detail' object.pk %}">查看</a></td></tr>{% empty %}<tr><td colspan="{% if show_user_link %}7{% else %}6{% endif %}" class="text-center text-secondary py-4">暂无人员资料</td></tr>{% endfor %}
+  </tbody></table></div>
+{% endblock %}

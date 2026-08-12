@@ -1,0 +1,1080 @@
+from __future__ import annotations
+
+from decimal import Decimal, InvalidOperation
+
+from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator, RegexValidator
+from django.db import models
+from django.db.models import Q
+from django.utils import timezone
+
+from .normalization import clean_display_identifier, normalize_identifier
+
+
+HEX64_VALIDATOR = RegexValidator(
+    regex=r"\A[0-9a-f]{64}\Z",
+    message="必须是 64 位小写十六进制 SHA-256。",
+)
+
+
+class NormalizedCodeModel(models.Model):
+    code = models.CharField("编码", max_length=100)
+    normalized_code = models.CharField("规范化编码", max_length=100, editable=False)
+
+    class Meta:
+        abstract = True
+
+    def _normalize_code(self):
+        self.code = clean_display_identifier(self.code)
+        self.normalized_code = normalize_identifier(self.code)
+
+    def clean(self):
+        super().clean()
+        self._normalize_code()
+        if not self.normalized_code:
+            raise ValidationError({"code": "编码不能为空。"})
+
+    def save(self, *args, **kwargs):
+        self._normalize_code()
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None and "code" in update_fields:
+            kwargs["update_fields"] = {*update_fields, "normalized_code"}
+        return super().save(*args, **kwargs)
+
+
+class TimeStampedModel(models.Model):
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+    updated_at = models.DateTimeField("更新时间", auto_now=True)
+
+    class Meta:
+        abstract = True
+
+
+def _validate_tree_node(instance, *, level_field: str | None = None):
+    parent = instance.parent
+    if parent is None:
+        if level_field:
+            setattr(instance, level_field, 1)
+        return
+    if parent.pk == instance.pk and instance.pk is not None:
+        raise ValidationError({"parent": "不能把自身设为上级。"})
+    if parent.company_id != instance.company_id:
+        raise ValidationError({"parent": "上级必须属于同一公司。"})
+    seen = {instance.pk} if instance.pk is not None else set()
+    ancestor = parent
+    while ancestor is not None:
+        if ancestor.pk in seen:
+            raise ValidationError({"parent": "树形关系不能形成循环。"})
+        seen.add(ancestor.pk)
+        ancestor = ancestor.parent
+    if level_field:
+        setattr(instance, level_field, getattr(parent, level_field) + 1)
+
+
+class Company(NormalizedCodeModel, TimeStampedModel):
+    name = models.CharField("公司名称", max_length=200)
+    short_name = models.CharField("公司简称", max_length=100)
+    currency = models.CharField("币种", max_length=3, default="CNY")
+    timezone = models.CharField("业务时区", max_length=64, default="Asia/Shanghai")
+    is_active = models.BooleanField("启用", default=True)
+
+    class Meta:
+        verbose_name = "公司"
+        verbose_name_plural = "公司"
+        constraints = [
+            models.UniqueConstraint(
+                fields=("normalized_code",), name="uq_company_normalized_code"
+            ),
+            models.UniqueConstraint(
+                fields=("is_active",),
+                condition=Q(is_active=True),
+                name="uq_company_single_active",
+            ),
+            models.CheckConstraint(
+                condition=~Q(normalized_code=""), name="ck_company_code_nonempty"
+            ),
+            models.CheckConstraint(
+                condition=Q(currency="CNY"), name="ck_company_currency_cny"
+            ),
+            models.CheckConstraint(
+                condition=Q(timezone="Asia/Shanghai"),
+                name="ck_company_timezone_shanghai",
+            ),
+        ]
+
+    def __str__(self):
+        return self.short_name or self.name
+
+
+class Department(NormalizedCodeModel, TimeStampedModel):
+    company = models.ForeignKey(
+        Company,
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="departments",
+    )
+    name = models.CharField("部门名称", max_length=200)
+    parent = models.ForeignKey(
+        "self",
+        verbose_name="上级部门",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="children",
+    )
+    manager_employee = models.ForeignKey(
+        "Employee",
+        verbose_name="部门经理",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="managed_departments",
+    )
+    is_active = models.BooleanField("启用", default=True)
+
+    class Meta:
+        verbose_name = "部门"
+        verbose_name_plural = "部门"
+        ordering = ("company_id", "normalized_code")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "normalized_code"),
+                name="uq_department_company_code",
+            ),
+            models.CheckConstraint(
+                condition=~Q(normalized_code=""), name="ck_department_code_nonempty"
+            ),
+            models.CheckConstraint(
+                condition=~Q(id=models.F("parent_id")),
+                name="ck_department_not_self_parent",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        _validate_tree_node(self)
+        manager = self.manager_employee
+        if manager is not None:
+            if manager.company_id != self.company_id:
+                raise ValidationError(
+                    {"manager_employee": "部门经理必须属于同一公司。"}
+                )
+            if manager.employment_status != Employee.EmploymentStatus.ACTIVE:
+                raise ValidationError(
+                    {"manager_employee": "部门经理必须是在职员工。"}
+                )
+            if not manager.is_active:
+                raise ValidationError(
+                    {"manager_employee": "部门经理必须为启用状态。"}
+                )
+            if not manager.department_id or not manager.department.is_active:
+                raise ValidationError(
+                    {"manager_employee": "部门经理必须属于一个启用部门。"}
+                )
+
+    def __str__(self):
+        return self.name
+
+
+class Employee(TimeStampedModel):
+    class EmploymentStatus(models.TextChoices):
+        ACTIVE = "active", "在职"
+        LEAVING = "leaving", "离职处理中"
+        RESIGNED = "resigned", "已离职"
+
+    company = models.ForeignKey(
+        Company,
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="employees",
+    )
+    employee_no = models.CharField("员工编号", max_length=100)
+    normalized_employee_no = models.CharField(
+        "规范化员工编号", max_length=100, editable=False
+    )
+    name = models.CharField("姓名", max_length=100)
+    department = models.ForeignKey(
+        Department,
+        verbose_name="所属部门",
+        on_delete=models.PROTECT,
+        related_name="employees",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="登录账号",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="employees",
+    )
+    employment_status = models.CharField(
+        "任职状态",
+        max_length=16,
+        choices=EmploymentStatus.choices,
+        default=EmploymentStatus.ACTIVE,
+    )
+    hire_date = models.DateField("入职日期", null=True, blank=True)
+    termination_date = models.DateField("实际离职日期", null=True, blank=True)
+    mobile = models.CharField("手机号码", max_length=32, blank=True)
+    remark = models.TextField("备注", blank=True)
+    is_active = models.BooleanField("启用", default=True)
+
+    class Meta:
+        verbose_name = "员工"
+        verbose_name_plural = "员工"
+        ordering = ("company_id", "normalized_employee_no")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "normalized_employee_no"),
+                name="uq_employee_company_no",
+            ),
+            models.UniqueConstraint(
+                fields=("user",),
+                condition=Q(user__isnull=False),
+                name="uq_employee_user",
+            ),
+            models.CheckConstraint(
+                condition=~Q(normalized_employee_no=""),
+                name="ck_employee_no_nonempty",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(employment_status="active")
+                    | Q(employment_status__in=("leaving", "resigned"), is_active=False)
+                ),
+                name="ck_employee_status_active_flag",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(employment_status="resigned", termination_date__isnull=False)
+                    | Q(
+                        employment_status__in=("active", "leaving"),
+                        termination_date__isnull=True,
+                    )
+                ),
+                name="ck_employee_termination_status",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(hire_date__isnull=True)
+                    | Q(termination_date__isnull=True)
+                    | Q(termination_date__gte=models.F("hire_date"))
+                ),
+                name="ck_employee_termination_after_hire",
+            ),
+            models.CheckConstraint(
+                condition=Q(employment_status__in=("active", "leaving", "resigned")),
+                name="ck_employee_employment_status_valid",
+            ),
+        ]
+
+    def _normalize_employee_no(self):
+        self.employee_no = clean_display_identifier(self.employee_no)
+        self.normalized_employee_no = normalize_identifier(self.employee_no)
+
+    @property
+    def can_receive_new_responsibility(self):
+        return bool(
+            self.employment_status == self.EmploymentStatus.ACTIVE
+            and self.is_active
+            and self.company.is_active
+            and self.department.is_active
+        )
+
+    def clean(self):
+        super().clean()
+        self._normalize_employee_no()
+        if not self.normalized_employee_no:
+            raise ValidationError({"employee_no": "员工编号不能为空。"})
+        if self.department_id and self.department.company_id != self.company_id:
+            raise ValidationError({"department": "所属部门必须属于同一公司。"})
+        if self.employment_status in {
+            self.EmploymentStatus.LEAVING,
+            self.EmploymentStatus.RESIGNED,
+        } and self.is_active:
+            raise ValidationError(
+                {"is_active": "离职处理中或已离职员工不能处于启用状态。"}
+            )
+        if self.employment_status == self.EmploymentStatus.RESIGNED:
+            if self.termination_date is None:
+                raise ValidationError(
+                    {"termination_date": "已离职员工必须填写实际离职日期。"}
+                )
+        elif self.termination_date is not None:
+            raise ValidationError(
+                {"termination_date": "仅已离职员工可以填写实际离职日期。"}
+            )
+        if (
+            self.hire_date
+            and self.termination_date
+            and self.termination_date < self.hire_date
+        ):
+            raise ValidationError(
+                {"termination_date": "实际离职日期不得早于入职日期。"}
+            )
+
+    def save(self, *args, **kwargs):
+        self._normalize_employee_no()
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None and "employee_no" in update_fields:
+            kwargs["update_fields"] = {*update_fields, "normalized_employee_no"}
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.name}（{self.employee_no}）"
+
+
+class UserDepartmentScope(models.Model):
+    company = models.ForeignKey(
+        Company,
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="user_department_scopes",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="用户",
+        on_delete=models.PROTECT,
+        related_name="department_scopes",
+    )
+    department = models.ForeignKey(
+        Department,
+        verbose_name="授权根部门",
+        on_delete=models.PROTECT,
+        related_name="user_scopes",
+    )
+    include_descendants = models.BooleanField("包含下级部门", default=True)
+    is_active = models.BooleanField("活动授权", default=True)
+    assigned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="分配人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="assigned_department_scopes",
+    )
+    assigned_at = models.DateTimeField("分配时间", default=timezone.now)
+    revoked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="撤销人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="revoked_department_scopes",
+    )
+    revoked_at = models.DateTimeField("撤销时间", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "用户部门范围"
+        verbose_name_plural = "用户部门范围"
+        ordering = ("company_id", "user_id", "department_id", "-assigned_at")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "user", "department"),
+                condition=Q(is_active=True),
+                name="uq_user_scope_active_root",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(is_active=True, revoked_at__isnull=True)
+                    | Q(is_active=False, revoked_at__isnull=False)
+                ),
+                name="ck_user_scope_revocation_state",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.department_id and self.department.company_id != self.company_id:
+            raise ValidationError({"department": "授权部门必须属于同一公司。"})
+        if self.is_active:
+            if self.revoked_at is not None or self.revoked_by_id is not None:
+                raise ValidationError("活动授权不能包含撤销信息。")
+        elif self.revoked_at is None:
+            raise ValidationError({"revoked_at": "撤销授权必须记录撤销时间。"})
+        if self.user_id:
+            employee_companies = set(
+                Employee.objects.filter(user_id=self.user_id).values_list(
+                    "company_id", flat=True
+                )
+            )
+            if employee_companies and employee_companies != {self.company_id}:
+                raise ValidationError({"user": "用户绑定员工与授权公司不一致。"})
+
+    def __str__(self):
+        return f"{self.user} - {self.department}"
+
+
+class Location(NormalizedCodeModel, TimeStampedModel):
+    class LocationType(models.TextChoices):
+        SITE = "site", "厂区"
+        WORKSHOP = "workshop", "车间"
+        DEPARTMENT_AREA = "department_area", "部门区域"
+        WAREHOUSE = "warehouse", "仓库"
+        OFFICE = "office", "办公室"
+        POSITION = "position", "具体位置"
+        OTHER = "other", "其他"
+
+    company = models.ForeignKey(
+        Company,
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="locations",
+    )
+    name = models.CharField("位置名称", max_length=200)
+    parent = models.ForeignKey(
+        "self",
+        verbose_name="上级位置",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="children",
+    )
+    level = models.PositiveIntegerField("层级", default=1, editable=False)
+    location_type = models.CharField(
+        "位置类型", max_length=32, choices=LocationType.choices
+    )
+    is_active = models.BooleanField("启用", default=True)
+
+    class Meta:
+        verbose_name = "位置"
+        verbose_name_plural = "位置"
+        ordering = ("company_id", "level", "normalized_code")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "normalized_code"),
+                name="uq_location_company_code",
+            ),
+            models.CheckConstraint(
+                condition=~Q(normalized_code=""), name="ck_location_code_nonempty"
+            ),
+            models.CheckConstraint(
+                condition=~Q(id=models.F("parent_id")),
+                name="ck_location_not_self_parent",
+            ),
+            models.CheckConstraint(
+                condition=Q(level__gte=1), name="ck_location_level_positive"
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    location_type__in=(
+                        "site",
+                        "workshop",
+                        "department_area",
+                        "warehouse",
+                        "office",
+                        "position",
+                        "other",
+                    )
+                ),
+                name="ck_location_type_valid",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        _validate_tree_node(self, level_field="level")
+
+    def save(self, *args, **kwargs):
+        if self.parent_id:
+            self.level = self.parent.level + 1
+        else:
+            self.level = 1
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None and "parent" in update_fields:
+            kwargs["update_fields"] = {*update_fields, "level"}
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.name
+
+
+class AssetCategory(NormalizedCodeModel, TimeStampedModel):
+    class CategoryType(models.TextChoices):
+        EQUIPMENT = "equipment", "设备"
+        MOLD = "mold", "模具"
+        TOOL = "tool", "工具"
+        INSPECTION_TOOL = "inspection_tool", "检具"
+        OFFICE_EQUIPMENT = "office_equipment", "办公设备"
+        OTHER = "other", "其他"
+
+    company = models.ForeignKey(
+        Company,
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="asset_categories",
+    )
+    name = models.CharField("分类名称", max_length=200)
+    parent = models.ForeignKey(
+        "self",
+        verbose_name="上级分类",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="children",
+    )
+    category_level = models.PositiveIntegerField("分类层级", default=1, editable=False)
+    category_type = models.CharField(
+        "实物类型", max_length=32, choices=CategoryType.choices
+    )
+    is_maintenance_required_default = models.BooleanField(
+        "默认需要保养", default=False
+    )
+    is_active = models.BooleanField("启用", default=True)
+
+    class Meta:
+        verbose_name = "实物分类"
+        verbose_name_plural = "实物分类"
+        ordering = ("company_id", "category_level", "normalized_code")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "normalized_code"),
+                name="uq_asset_category_company_code",
+            ),
+            models.CheckConstraint(
+                condition=~Q(normalized_code=""), name="ck_category_code_nonempty"
+            ),
+            models.CheckConstraint(
+                condition=~Q(id=models.F("parent_id")),
+                name="ck_category_not_self_parent",
+            ),
+            models.CheckConstraint(
+                condition=Q(category_level__gte=1),
+                name="ck_category_level_positive",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    category_type__in=(
+                        "equipment",
+                        "mold",
+                        "tool",
+                        "inspection_tool",
+                        "office_equipment",
+                        "other",
+                    )
+                ),
+                name="ck_category_type_valid",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        _validate_tree_node(self, level_field="category_level")
+
+    def save(self, *args, **kwargs):
+        if self.parent_id:
+            self.category_level = self.parent.category_level + 1
+        else:
+            self.category_level = 1
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None and "parent" in update_fields:
+            kwargs["update_fields"] = {*update_fields, "category_level"}
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.name
+
+
+class SystemSetting(models.Model):
+    class ValueType(models.TextChoices):
+        INTEGER = "integer", "整数"
+        DECIMAL = "decimal", "小数"
+        STRING_LIST = "string_list", "字符串列表"
+
+    REGISTRY_TYPES = {
+        "attachment_allowed_extensions": ValueType.STRING_LIST,
+        "attachment_max_size_bytes": ValueType.INTEGER,
+        "fixed_asset_warning_amount": ValueType.DECIMAL,
+    }
+
+    company = models.ForeignKey(
+        Company,
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="system_settings",
+    )
+    key = models.CharField("设置键", max_length=100)
+    value = models.TextField("设置值")
+    value_type = models.CharField(
+        "值类型", max_length=16, choices=ValueType.choices
+    )
+    description = models.CharField("说明", max_length=255)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="更新人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="updated_system_settings",
+    )
+    updated_at = models.DateTimeField("更新时间", auto_now=True)
+
+    class Meta:
+        verbose_name = "系统设置"
+        verbose_name_plural = "系统设置"
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "key"), name="uq_system_setting_company_key"
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        key="attachment_allowed_extensions",
+                        value_type="string_list",
+                    )
+                    | Q(key="attachment_max_size_bytes", value_type="integer")
+                    | Q(key="fixed_asset_warning_amount", value_type="decimal")
+                ),
+                name="ck_system_setting_registry_type",
+            ),
+            models.CheckConstraint(
+                condition=Q(value_type__in=("integer", "decimal", "string_list")),
+                name="ck_system_setting_value_type_valid",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        expected_type = self.REGISTRY_TYPES.get(self.key)
+        if expected_type is None:
+            raise ValidationError({"key": "未知或禁止的系统设置键。"})
+        if self.value_type != expected_type:
+            raise ValidationError({"value_type": "值类型与固定 registry 不一致。"})
+        if self.key == "attachment_max_size_bytes":
+            try:
+                parsed = int(self.value)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError({"value": "附件上限必须是整数。"}) from exc
+            if str(parsed) != str(self.value).strip() or not 1 <= parsed <= 20 * 1024 * 1024:
+                raise ValidationError(
+                    {"value": "附件上限必须是 1 至 20971520 的规范整数。"}
+                )
+        elif self.key == "fixed_asset_warning_amount":
+            try:
+                parsed = Decimal(self.value)
+            except (InvalidOperation, TypeError, ValueError) as exc:
+                raise ValidationError({"value": "提示阈值必须是 Decimal。"}) from exc
+            if not parsed.is_finite() or parsed < 0:
+                raise ValidationError({"value": "提示阈值必须是不小于 0 的数值。"})
+        else:
+            import json
+
+            try:
+                parsed = json.loads(self.value)
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise ValidationError({"value": "扩展名白名单必须是 JSON 数组。"}) from exc
+            allowed = {"jpg", "jpeg", "png", "webp", "pdf", "xlsx", "docx"}
+            if (
+                not isinstance(parsed, list)
+                or not parsed
+                or any(not isinstance(item, str) for item in parsed)
+                or len(set(parsed)) != len(parsed)
+                or any(item not in allowed or item != item.lower() for item in parsed)
+            ):
+                raise ValidationError(
+                    {"value": "扩展名须为非空、去重且只含批准小写值的 JSON 数组。"}
+                )
+
+    def __str__(self):
+        return self.key
+
+
+class InitializationSetting(models.Model):
+    company = models.OneToOneField(
+        Company,
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="initialization_setting",
+    )
+    initialization_completed = models.BooleanField("初始化完成", default=False)
+    company_configured = models.BooleanField("公司已配置", default=False)
+    departments_configured = models.BooleanField("部门已配置", default=False)
+    employees_configured = models.BooleanField("人员已配置", default=False)
+    categories_configured = models.BooleanField("实物分类已配置", default=False)
+    locations_configured = models.BooleanField("位置已配置", default=False)
+    coding_scheme_configured = models.BooleanField("编码规则已配置", default=False)
+    finance_rules_configured = models.BooleanField("财务规则已配置", default=False)
+    permissions_configured = models.BooleanField("权限已配置", default=False)
+    users_configured = models.BooleanField("用户已配置", default=False)
+    completed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="完成人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="completed_initializations",
+    )
+    completed_at = models.DateTimeField("完成时间", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "初始化设置"
+        verbose_name_plural = "初始化设置"
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        initialization_completed=True,
+                        company_configured=True,
+                        departments_configured=True,
+                        employees_configured=True,
+                        categories_configured=True,
+                        locations_configured=True,
+                        coding_scheme_configured=True,
+                        finance_rules_configured=True,
+                        permissions_configured=True,
+                        users_configured=True,
+                        completed_by__isnull=False,
+                        completed_at__isnull=False,
+                    )
+                    | Q(
+                        initialization_completed=False,
+                        completed_by__isnull=True,
+                        completed_at__isnull=True,
+                    )
+                ),
+                name="ck_initialization_completion_state",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.company} 初始化进度"
+
+
+class Attachment(models.Model):
+    class MalwareScanStatus(models.TextChoices):
+        PENDING = "pending", "待校验"
+        POLICY_LIMITED = "policy_limited", "策略受限校验通过"
+        CLEAN = "clean", "恶意软件扫描通过"
+        REJECTED = "rejected", "已拒绝"
+
+    company = models.ForeignKey(
+        Company,
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="attachments",
+    )
+    storage_key = models.CharField("存储键", max_length=512)
+    original_filename = models.CharField("原文件名", max_length=255)
+    safe_filename = models.CharField("安全文件名", max_length=255)
+    file_size = models.PositiveBigIntegerField(
+        "文件大小", validators=[MinValueValidator(1)]
+    )
+    mime_type = models.CharField("MIME 类型", max_length=127)
+    sha256 = models.CharField("SHA-256", max_length=64, validators=[HEX64_VALIDATOR])
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="上传人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="uploaded_attachments",
+    )
+    uploaded_at = models.DateTimeField("上传时间", auto_now_add=True)
+    orphaned_at = models.DateTimeField(
+        "进入孤儿候选时间", null=True, blank=True
+    )
+    malware_scan_status = models.CharField(
+        "安全扫描状态",
+        max_length=24,
+        choices=MalwareScanStatus.choices,
+        default=MalwareScanStatus.PENDING,
+    )
+    is_available = models.BooleanField("可提供", default=False)
+
+    class Meta:
+        verbose_name = "附件"
+        verbose_name_plural = "附件"
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "storage_key"),
+                name="uq_attachment_company_storage",
+            ),
+            models.CheckConstraint(
+                condition=Q(file_size__gt=0), name="ck_attachment_size_positive"
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    malware_scan_status__in=(
+                        "pending",
+                        "policy_limited",
+                        "clean",
+                        "rejected",
+                    )
+                ),
+                name="ck_attachment_scan_status_valid",
+            ),
+            models.CheckConstraint(
+                condition=Q(orphaned_at__isnull=True) | Q(is_available=False),
+                name="ck_attachment_orphan_unavailable",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        self.sha256 = (self.sha256 or "").strip().lower()
+        if not self.storage_key or self.storage_key.strip() != self.storage_key:
+            raise ValidationError({"storage_key": "存储键不能为空或包含首尾空格。"})
+        path_parts = self.storage_key.replace("\\", "/").split("/")
+        if self.storage_key.startswith(("/", "\\")) or ".." in path_parts:
+            raise ValidationError({"storage_key": "存储键必须是服务端生成的安全相对键。"})
+        if self.orphaned_at is not None and self.is_available:
+            raise ValidationError({"is_available": "孤儿候选附件不能标记为可用。"})
+
+    def save(self, *args, **kwargs):
+        self.sha256 = (self.sha256 or "").strip().lower()
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.original_filename
+
+
+class ImportBatchQuerySet(models.QuerySet):
+    def delete(self):
+        raise ValidationError("导入批次只能通过受控清理 Service 删除。")
+
+
+class ImportBatch(models.Model):
+    class ImportType(models.TextChoices):
+        DEPARTMENT = "department", "部门"
+        EMPLOYEE = "employee", "人员"
+
+    class Status(models.TextChoices):
+        UPLOADED = "uploaded", "已上传"
+        VALIDATED = "validated", "校验通过"
+        INVALID = "invalid", "校验不通过"
+        CONFIRMED = "confirmed", "已确认"
+        FAILED = "failed", "处理失败"
+
+    company = models.ForeignKey(
+        Company,
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="import_batches",
+    )
+    import_type = models.CharField(
+        "导入类型", max_length=32, choices=ImportType.choices
+    )
+    template_version = models.CharField("模板版本", max_length=32)
+    file_attachment = models.ForeignKey(
+        Attachment,
+        verbose_name="源文件附件",
+        on_delete=models.PROTECT,
+        related_name="import_batches",
+    )
+    file_sha256 = models.CharField(
+        "文件 SHA-256", max_length=64, validators=[HEX64_VALIDATOR]
+    )
+    status = models.CharField(
+        "批次状态", max_length=16, choices=Status.choices, default=Status.UPLOADED
+    )
+    total_rows = models.PositiveIntegerField("总行数", null=True, blank=True)
+    valid_rows = models.PositiveIntegerField("有效行数", null=True, blank=True)
+    error_rows = models.PositiveIntegerField("错误行数", null=True, blank=True)
+    warning_rows = models.PositiveIntegerField("警告行数", null=True, blank=True)
+    request_hash = models.CharField("请求摘要", max_length=64, validators=[HEX64_VALIDATOR])
+    idempotency_key = models.CharField("幂等键", max_length=255)
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="上传人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="uploaded_import_batches",
+    )
+    uploaded_at = models.DateTimeField("上传时间", auto_now_add=True)
+    validated_at = models.DateTimeField("校验时间", null=True, blank=True)
+    confirmed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="确认人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="confirmed_import_batches",
+    )
+    confirmed_at = models.DateTimeField("确认时间", null=True, blank=True)
+
+    objects = ImportBatchQuerySet.as_manager()
+
+    class Meta:
+        verbose_name = "导入批次"
+        verbose_name_plural = "导入批次"
+        ordering = ("-uploaded_at",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "idempotency_key"),
+                name="uq_import_batch_company_idem",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        total_rows__isnull=True,
+                        valid_rows__isnull=True,
+                        error_rows__isnull=True,
+                        warning_rows__isnull=True,
+                    )
+                    | Q(
+                        total_rows__isnull=False,
+                        valid_rows__isnull=False,
+                        error_rows__isnull=False,
+                        warning_rows__isnull=False,
+                        total_rows=models.F("valid_rows") + models.F("error_rows"),
+                        warning_rows__lte=models.F("total_rows"),
+                    )
+                ),
+                name="ck_import_batch_counts",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        status="uploaded",
+                        validated_at__isnull=True,
+                        confirmed_by__isnull=True,
+                        confirmed_at__isnull=True,
+                    )
+                    | Q(
+                        status="validated",
+                        validated_at__isnull=False,
+                        error_rows=0,
+                        confirmed_by__isnull=True,
+                        confirmed_at__isnull=True,
+                    )
+                    | Q(
+                        status="invalid",
+                        validated_at__isnull=False,
+                        error_rows__gt=0,
+                        confirmed_by__isnull=True,
+                        confirmed_at__isnull=True,
+                    )
+                    | Q(
+                        status="confirmed",
+                        validated_at__isnull=False,
+                        error_rows=0,
+                        confirmed_by__isnull=False,
+                        confirmed_at__isnull=False,
+                    )
+                    | Q(status="failed", confirmed_by__isnull=True, confirmed_at__isnull=True)
+                ),
+                name="ck_import_batch_status_fields",
+            ),
+            models.CheckConstraint(
+                condition=Q(import_type__in=("department", "employee")),
+                name="ck_import_batch_type_valid",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    status__in=(
+                        "uploaded",
+                        "validated",
+                        "invalid",
+                        "confirmed",
+                        "failed",
+                    )
+                ),
+                name="ck_import_batch_status_valid",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        self.file_sha256 = (self.file_sha256 or "").strip().lower()
+        self.request_hash = (self.request_hash or "").strip().lower()
+        if self.file_attachment_id:
+            if self.file_attachment.company_id != self.company_id:
+                raise ValidationError(
+                    {"file_attachment": "源文件附件必须属于同一公司。"}
+                )
+            if self.file_sha256 != self.file_attachment.sha256:
+                raise ValidationError(
+                    {"file_sha256": "文件摘要与源文件附件不一致。"}
+                )
+
+    def save(self, *args, **kwargs):
+        self.file_sha256 = (self.file_sha256 or "").strip().lower()
+        self.request_hash = (self.request_hash or "").strip().lower()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("导入批次只能通过受控清理 Service 删除。")
+
+    def __str__(self):
+        return f"{self.get_import_type_display()}导入 {self.pk}"
+
+
+class ImportRow(models.Model):
+    class ValidationStatus(models.TextChoices):
+        PENDING = "pending", "待校验"
+        VALID = "valid", "有效"
+        INVALID = "invalid", "无效"
+        CREATED = "created", "已创建"
+
+    batch = models.ForeignKey(
+        ImportBatch,
+        verbose_name="导入批次",
+        on_delete=models.CASCADE,
+        related_name="rows",
+    )
+    row_number = models.PositiveIntegerField("行号")
+    raw_data_json = models.JSONField("原始数据", default=dict, blank=True)
+    normalized_data_json = models.JSONField("规范化数据", default=dict, blank=True)
+    validation_status = models.CharField(
+        "校验状态",
+        max_length=16,
+        choices=ValidationStatus.choices,
+        default=ValidationStatus.PENDING,
+    )
+    errors_json = models.JSONField("错误", default=list, blank=True)
+    warnings_json = models.JSONField("警告", default=list, blank=True)
+    created_object_type = models.CharField("创建对象类型", max_length=100, blank=True)
+    created_object_id = models.CharField("创建对象标识", max_length=255, blank=True)
+
+    class Meta:
+        verbose_name = "导入暂存行"
+        verbose_name_plural = "导入暂存行"
+        ordering = ("batch_id", "row_number")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("batch", "row_number"), name="uq_import_row_batch_number"
+            ),
+            models.CheckConstraint(
+                condition=Q(row_number__gte=1), name="ck_import_row_number_positive"
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        validation_status="created",
+                        created_object_type__gt="",
+                        created_object_id__gt="",
+                    )
+                    | Q(
+                        validation_status__in=("pending", "valid", "invalid"),
+                        created_object_type="",
+                        created_object_id="",
+                    )
+                ),
+                name="ck_import_row_created_mapping",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    validation_status__in=("pending", "valid", "invalid", "created")
+                ),
+                name="ck_import_row_validation_status_valid",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if not isinstance(self.errors_json, list):
+            raise ValidationError({"errors_json": "错误必须是结构化数组。"})
+        if not isinstance(self.warnings_json, list):
+            raise ValidationError({"warnings_json": "警告必须是结构化数组。"})
+        if self.validation_status == self.ValidationStatus.INVALID and not self.errors_json:
+            raise ValidationError({"errors_json": "无效行必须包含至少一项错误。"})
+        if self.validation_status == self.ValidationStatus.CREATED:
+            if self.batch.status != ImportBatch.Status.CONFIRMED:
+                raise ValidationError("只有已确认批次的行可以标记为已创建。")
+            if not self.created_object_type or not self.created_object_id:
+                raise ValidationError("已创建行必须记录对象类型和对象标识。")
+
+    def __str__(self):
+        return f"批次 {self.batch_id} 第 {self.row_number} 行"

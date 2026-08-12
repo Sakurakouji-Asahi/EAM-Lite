@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}配置用户权限 - EAM-Lite{% endblock %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-center mb-3"><div><h1 class="h3 mb-1">配置用户权限</h1><span>{{ target_user.display_name|default:target_user.username }}（{{ target_user.username }}）</span></div><a class="btn btn-outline-secondary" href="{% url 'masterdata:user-permissions-list' %}">返回列表</a></div>
+  <div class="card shadow-sm mb-4"><div class="card-header"><strong>最终权限摘要</strong></div><div class="card-body">
+    <dl class="row mb-0"><dt class="col-sm-3">固定角色</dt><dd class="col-sm-9">{% for role in assigned_roles %}<span class="badge text-bg-primary me-1">{{ role }}</span>{% empty %}<span class="text-secondary">无</span>{% endfor %}</dd><dt class="col-sm-3">活动数据范围</dt><dd class="col-sm-9">{% for scope in scopes %}<span class="badge text-bg-light border text-dark me-1">{{ scope.department }}{% if scope.include_descendants %}（含下级）{% endif %}</span>{% empty %}<span class="text-secondary">无</span>{% endfor %}</dd><dt class="col-sm-3">财务字段可见性</dt><dd class="col-sm-9">{% if finance_fields_visible %}按 finance 固定矩阵可见{% else %}不可见{% endif %}</dd><dt class="col-sm-3">关键动作</dt><dd class="col-sm-9">由以上固定角色与实时公司/部门范围共同决定；范围本身不授予动作权限。</dd></dl>
+  </div></div>
+  <div class="row g-4">
+    <div class="col-12 col-lg-6"><div class="card shadow-sm h-100"><div class="card-header"><strong>固定角色</strong></div><div class="card-body">
+      <p class="small text-secondary">授予或移除 system_admin / finance 必须填写原因并验证当前操作人密码；系统禁止移除最后一名可登录成员。授予 department_manager 前，先在右侧分配至少一个启用部门范围。</p>
+      <form method="post" action="{% url 'masterdata:user-roles-update' target_user.pk %}" novalidate>{% csrf_token %}
+        {% for field in role_form %}<div class="mb-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}</div>{% endfor %}
+        <button class="btn btn-primary" type="submit">保存角色</button>
+      </form>
+    </div></div></div>
+    <div class="col-12 col-lg-6"><div class="card shadow-sm h-100"><div class="card-header"><strong>部门数据范围</strong></div><div class="card-body">
+      <p class="small text-secondary">默认包含下级部门，不包含上级或同级。撤销后立即失权并保留历史。</p>
+      <form method="post" action="{% url 'masterdata:user-scope-assign' target_user.pk %}" novalidate>{% csrf_token %}
+        {% for field in scope_form %}<div class="mb-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}</div>{% endfor %}
+        <button class="btn btn-primary" type="submit">分配范围</button>
+      </form>
+      <hr>
+      <h2 class="h6">当前活动范围</h2>
+      {% for scope in scopes %}<div class="border rounded p-2 mb-2"><div class="d-flex justify-content-between gap-2"><span>{{ scope.department }}{% if scope.include_descendants %}（含下级）{% endif %}</span><form method="post" action="{% url 'masterdata:user-scope-revoke' target_user.pk scope.pk %}" class="d-flex gap-2">{% csrf_token %}<input class="form-control form-control-sm" type="text" name="reason" required placeholder="撤销原因" aria-label="撤销原因"><button class="btn btn-sm btn-outline-danger" type="submit">撤销</button></form></div></div>{% empty %}<p class="text-secondary">暂无活动范围。</p>{% endfor %}
+    </div></div></div>
+  </div>
+{% endblock %}

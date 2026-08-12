@@ -11,6 +11,7 @@ from apps.audit.services import (
     REDACTED,
     sanitize_audit_data,
     write_audit_log,
+    write_system_audit_log,
 )
 from apps.core.logging import RedactingFormatter
 
@@ -22,8 +23,8 @@ def test_audit_service_serializes_decimal_date_datetime_and_uuid():
     identifier = uuid4()
     occurred_at = datetime(2026, 8, 11, 12, 30, tzinfo=timezone.utc)
 
-    audit = write_audit_log(
-        action="test.serialize",
+    audit = write_system_audit_log(
+        action="auth.pre_initialization",
         object_type="Example",
         object_id=identifier,
         old_data={"amount": Decimal("12.30"), "date": date(2026, 8, 11)},
@@ -71,7 +72,7 @@ def test_audit_service_rejects_unsupported_and_circular_values():
         sanitize_audit_data(circular)
 
 
-def test_sprint_zero_rejects_fake_company_value():
+def test_audit_rejects_fake_company_value():
     with pytest.raises(ValueError):
         write_audit_log(
             action="test.company",
@@ -81,7 +82,9 @@ def test_sprint_zero_rejects_fake_company_value():
 
 
 def test_audit_rows_are_append_only():
-    audit = write_audit_log(action="test.append", object_type="Example")
+    audit = write_system_audit_log(
+        action="auth.pre_initialization", object_type="Example"
+    )
     audit.action = "test.changed"
 
     with pytest.raises(ValidationError):
@@ -117,8 +120,8 @@ def test_runtime_formatter_redacts_sensitive_assignments():
 
 
 def test_audit_service_redacts_sensitive_user_agent_assignments():
-    audit = write_audit_log(
-        action="test.user_agent",
+    audit = write_system_audit_log(
+        action="auth.pre_initialization",
         object_type="Example",
         user_agent=(
             "ExampleBrowser password=plain-password token=plain-token safe=value"
@@ -133,8 +136,8 @@ def test_audit_service_redacts_sensitive_user_agent_assignments():
 
 
 def test_user_agent_is_redacted_before_length_limit():
-    audit = write_audit_log(
-        action="test.user_agent_boundary",
+    audit = write_system_audit_log(
+        action="auth.pre_initialization",
         object_type="Example",
         user_agent=("a" * 985) + " password=boundary-secret",
     )
