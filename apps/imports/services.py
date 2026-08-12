@@ -13,6 +13,7 @@ import uuid
 import zipfile
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from defusedxml import ElementTree as DefusedElementTree
@@ -20,7 +21,8 @@ from defusedxml import ElementTree as DefusedElementTree
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
-from django.db import transaction
+from django.db import connection, transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.text import get_valid_filename
 from openpyxl import Workbook, load_workbook
@@ -28,8 +30,15 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from apps.audit.services import request_audit_context, write_business_audit_log
+from apps.assets.permissions import can_create_asset_draft
+from apps.assets.services import create_asset_draft
+from apps.finance.permissions import can_manage_finance
 from apps.masterdata.normalization import clean_display_identifier, normalize_identifier
-from apps.masterdata.permissions import current_company, require_manage_masterdata
+from apps.masterdata.permissions import (
+    current_company,
+    role_names_for,
+    require_manage_masterdata,
+)
 from apps.masterdata.services import (
     create_department,
     create_employee,
@@ -44,7 +53,7 @@ MAX_UNCOMPRESSED_BYTES = 20 * 1024 * 1024
 MAX_ARCHIVE_MEMBER_BYTES = 10 * 1024 * 1024
 MAX_COMPRESSION_RATIO = 100
 MAX_WORKSHEET_ROWS = 10_001
-MAX_WORKSHEET_COLUMNS = 32
+MAX_WORKSHEET_COLUMNS = 128
 MAX_WORKSHEET_CELLS = MAX_WORKSHEET_ROWS * MAX_WORKSHEET_COLUMNS
 MAX_IMPORT_ROWS = 10_000
 CELL_REFERENCE_PATTERN = re.compile(r"^\$?([A-Za-z]{1,3})\$?([1-9][0-9]*)$")
@@ -93,6 +102,7 @@ class TemplateDefinition:
     version: str
     sheet_name: str
     columns: tuple[Column, ...]
+    has_example_sheet: bool = False
 
     @property
     def headers(self):
@@ -130,21 +140,114 @@ TEMPLATE_REGISTRY = {
             Column("是否启用", "is_active"),
         ),
     ),
+    "asset_initialization": TemplateDefinition(
+        import_type="asset_initialization",
+        label="资产初始化",
+        version="asset-initialization-v1",
+        sheet_name="资产初始化导入",
+        has_example_sheet=True,
+        columns=(
+            Column("资产名称", "asset_name", True),
+            Column("实物分类编码", "category_code", True),
+            Column("品牌", "brand"),
+            Column("型号", "model"),
+            Column("厂家", "manufacturer"),
+            Column("序列号", "serial_number"),
+            Column("出厂编号", "factory_number"),
+            Column("历史参考编号", "historical_code"),
+            Column("数量", "quantity", True),
+            Column("单位", "unit", True),
+            Column("公司编码", "company_code", True),
+            Column("部门编码", "department_code", True),
+            Column("责任员工编号", "responsible_employee_no", True),
+            Column("位置编码", "location_code", True),
+            Column("购置日期", "acquisition_date"),
+            Column("达到可使用状态日期", "commissioning_date"),
+            Column("是否需要保养", "is_maintenance_required"),
+            Column("附件后续上传说明", "attachment_note"),
+            Column("备注", "notes"),
+            Column("会计认定", "accounting_treatment"),
+            Column("会计认定说明", "accounting_treatment_reason"),
+            Column("固定资产类别编码", "fixed_asset_category_code"),
+            Column("原值", "original_cost"),
+            Column("资本化日期", "capitalization_date"),
+            Column("折旧政策编码", "depreciation_policy_key"),
+            Column("折旧方法", "method"),
+            Column("计提周期", "posting_period"),
+            Column("起算规则", "start_rule"),
+            Column("指定起算日期", "specified_start"),
+            Column("历史起算原因", "historical_start_reason"),
+            Column("停止规则", "stop_rule"),
+            Column("使用寿命月数", "useful_life_months"),
+            Column("残值方式", "salvage_mode"),
+            Column("残值率", "salvage_rate"),
+            Column("残值金额", "salvage_amount"),
+            Column("年度计提月份", "annual_posting_month"),
+            Column("预计总工作量", "expected_total_units"),
+            Column("工作量单位", "work_unit"),
+            Column("实际期初累计折旧", "opening_actual_accumulated_depreciation"),
+            Column("期初减值", "opening_impairment"),
+            Column("实际期初账面净值", "opening_book_value"),
+            Column("理论测算截止日", "theoretical_as_of_date"),
+            Column("财务备注", "finance_remark"),
+        ),
+    ),
 }
 
 
-def get_template_definition(import_type: str) -> TemplateDefinition:
+def get_template_definition(import_type: str, *, company=None) -> TemplateDefinition:
     try:
-        return TEMPLATE_REGISTRY[import_type]
+        definition = TEMPLATE_REGISTRY[import_type]
     except KeyError as exc:
         raise ValidationError("不支持的导入类型。") from exc
+    if import_type != "asset_initialization":
+        return definition
+    if company is None:
+        return definition
+    from apps.assets.models import AssetCustomField
+
+    custom_columns = tuple(
+        Column(f"自定义:{field.code}", f"custom:{field.normalized_code}")
+        for field in AssetCustomField.objects.filter(
+            company=company, is_active=True
+        ).order_by("display_order", "normalized_code")
+    )
+    return TemplateDefinition(
+        import_type=definition.import_type,
+        label=definition.label,
+        version=definition.version,
+        sheet_name=definition.sheet_name,
+        columns=definition.columns + custom_columns,
+        has_example_sheet=True,
+    )
 
 
-def _require_import_permission(actor, import_type):
+def require_import_permission(
+    actor, import_type, *, company=None, department=None
+):
+    """Apply the same import action gate to pages, downloads and Services."""
+
+    if import_type == "asset_initialization":
+        roles = role_names_for(actor)
+        if roles.intersection({"finance", "equipment", "warehouse"}):
+            return
+        if "department_manager" in roles:
+            if department is None:
+                # Upload/template access is allowed; every staged row is still
+                # re-authorized against its concrete department below.
+                return
+            if company is not None and can_create_asset_draft(
+                actor, company, department
+            ):
+                return
+        raise PermissionDenied("您没有导入资产初始化草稿的权限。")
     resource = {"department": "department", "employee": "employee"}.get(import_type)
     if resource is None:
         raise ValidationError("不支持的导入类型。")
     require_manage_masterdata(actor, resource)
+
+
+_require_import_permission = require_import_permission
 
 
 def _require_current_import_company(company):
@@ -157,8 +260,8 @@ def _require_current_import_company(company):
         raise PermissionDenied("导入目标不属于当前公司。")
 
 
-def build_template_workbook(import_type: str) -> bytes:
-    definition = get_template_definition(import_type)
+def build_template_workbook(import_type: str, company=None) -> bytes:
+    definition = get_template_definition(import_type, company=company)
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = definition.sheet_name
@@ -173,9 +276,12 @@ def build_template_workbook(import_type: str) -> bytes:
             14, len(column.name) * 2 + 4
         )
         sheet.cell(1, index).comment = None
+    boolean_header = (
+        "是否启用" if "是否启用" in definition.headers else "是否需要保养"
+    )
     boolean_validation = DataValidation(type="list", formula1='"是,否"')
     sheet.add_data_validation(boolean_validation)
-    boolean_column = definition.headers.index("是否启用") + 1
+    boolean_column = definition.headers.index(boolean_header) + 1
     boolean_validation.add(
         f"{sheet.cell(2, boolean_column).coordinate}:"
         f"{sheet.cell(1001, boolean_column).coordinate}"
@@ -189,6 +295,16 @@ def build_template_workbook(import_type: str) -> bytes:
         status_validation.add(
             f"{sheet.cell(2, status_column).coordinate}:"
             f"{sheet.cell(1001, status_column).coordinate}"
+        )
+    if import_type == "asset_initialization":
+        treatment_validation = DataValidation(
+            type="list", formula1='"fixed_asset,controlled_non_fixed"'
+        )
+        sheet.add_data_validation(treatment_validation)
+        treatment_column = definition.headers.index("会计认定") + 1
+        treatment_validation.add(
+            f"{sheet.cell(2, treatment_column).coordinate}:"
+            f"{sheet.cell(1001, treatment_column).coordinate}"
         )
     instructions = workbook.create_sheet("填写说明")
     instructions.append(["项目", "说明"])
@@ -207,11 +323,42 @@ def build_template_workbook(import_type: str) -> bytes:
         )
         policies.append(("经理", "按当前公司已有员工编号匹配"))
     else:
-        policies.append(("匹配键", "部门按当前公司已有部门编码匹配"))
+        if import_type == "employee":
+            policies.append(("匹配键", "部门按当前公司已有部门编码匹配"))
+        else:
+            policies.extend(
+                (
+                    ("匹配键", "公司/分类/部门/位置按 code，责任人按 employee_no 精确匹配"),
+                    ("单件规则", "每一行只代表一件实物，数量必须精确为 1"),
+                    ("确认结果", "仅创建草稿，不生成正式编号、二维码或实际折旧分录"),
+                    ("附件", "本表只填写后续上传说明，不接受本机路径或 URL 自动抓取"),
+                    ("财务列", "只有 finance 可提交；无财务权限时所有财务列必须留空"),
+                    ("会计认定", "只能为 fixed_asset 或 controlled_non_fixed"),
+                    ("折旧机器值", "方法/周期/起止/残值方式使用系统机器值，不接受别名"),
+                    ("动态字段", "自定义列按“自定义:<code>”精确匹配当前启用字段"),
+                )
+            )
     for row in policies:
         instructions.append(row)
     instructions.column_dimensions["A"].width = 18
     instructions.column_dimensions["B"].width = 90
+    if definition.has_example_sheet:
+        example = workbook.create_sheet("示例")
+        example.append(definition.headers)
+        sample = {
+            "资产名称": "示例设备（请勿直接导入）",
+            "实物分类编码": "EQUIPMENT",
+            "数量": 1,
+            "单位": "台",
+            "公司编码": "COMPANY",
+            "部门编码": "DEPT",
+            "责任员工编号": "E0001",
+            "位置编码": "POSITION-01",
+            "是否需要保养": "是",
+            "附件后续上传说明": "确认草稿后通过受保护附件入口上传照片",
+        }
+        example.append([sample.get(header, "") for header in definition.headers])
+        example.freeze_panes = "A2"
     output = io.BytesIO()
     workbook.save(output)
     return output.getvalue()
@@ -225,6 +372,96 @@ def _json_value(value):
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     return str(value)
+
+
+ASSET_FINANCE_KEYS = frozenset(
+    {
+        "accounting_treatment",
+        "accounting_treatment_reason",
+        "fixed_asset_category_code",
+        "original_cost",
+        "capitalization_date",
+        "depreciation_policy_key",
+        "method",
+        "posting_period",
+        "start_rule",
+        "specified_start",
+        "historical_start_reason",
+        "stop_rule",
+        "useful_life_months",
+        "salvage_mode",
+        "salvage_rate",
+        "salvage_amount",
+        "annual_posting_month",
+        "expected_total_units",
+        "work_unit",
+        "opening_actual_accumulated_depreciation",
+        "opening_impairment",
+        "opening_book_value",
+        "theoretical_as_of_date",
+        "finance_remark",
+    }
+)
+
+def _decimal_value(value, field, errors, *, places, required=False, minimum=None):
+    if value in (None, ""):
+        if required:
+            errors.append(_error(field, value, "必填。"))
+        return None
+    if isinstance(value, bool):
+        errors.append(
+            _error(field, value, "必须提供十进制数值，不能使用布尔值。")
+        )
+        return None
+    try:
+        result = value if isinstance(value, Decimal) else Decimal(str(value).strip())
+    except (InvalidOperation, TypeError, ValueError):
+        errors.append(_error(field, value, "不是有效的十进制数。"))
+        return None
+    if not result.is_finite():
+        errors.append(_error(field, value, "必须是有限十进制数。"))
+        return None
+    exponent = -result.as_tuple().exponent
+    if exponent > places:
+        errors.append(_error(field, value, f"小数位不得超过 {places} 位。"))
+        return None
+    if minimum is not None and result < minimum:
+        errors.append(_error(field, value, f"不得小于 {minimum}。"))
+        return None
+    return result
+
+
+def _integer_value(value, field, errors, *, required=False, minimum=None, maximum=None):
+    decimal_value = _decimal_value(
+        value, field, errors, places=0, required=required, minimum=minimum
+    )
+    if decimal_value is None:
+        return None
+    integer = int(decimal_value)
+    if maximum is not None and integer > maximum:
+        errors.append(_error(field, value, f"不得大于 {maximum}。"))
+        return None
+    return integer
+
+
+def _nullable_boolean(value, field, errors):
+    if value in (None, ""):
+        return None
+    return _boolean(value, field, errors, default=False)
+
+
+def _serialize_mapping(value):
+    """Recursively make finance preview data safe for JSON staging."""
+
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _serialize_mapping(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_serialize_mapping(item) for item in value]
+    return value
 
 
 def _error(field, value, reason):
@@ -497,6 +734,34 @@ def _worksheet_limits_error(workbook):
     return None
 
 
+def _xlsx_decimal_literals(data, worksheet_path):
+    """Return numeric cell literals straight from XLSX XML, before float conversion."""
+
+    literals = {}
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        with archive.open(worksheet_path) as source:
+            for _event, element in DefusedElementTree.iterparse(
+                source, events=("end",)
+            ):
+                if element.tag.rsplit("}", 1)[-1].lower() != "c":
+                    continue
+                reference = str(element.attrib.get("r", ""))
+                cell_type = str(element.attrib.get("t", "") or "")
+                if cell_type in {"", "n"}:
+                    value_node = next(
+                        (
+                            child
+                            for child in element
+                            if child.tag.rsplit("}", 1)[-1].lower() == "v"
+                        ),
+                        None,
+                    )
+                    if value_node is not None and value_node.text is not None:
+                        literals[reference] = value_node.text
+                element.clear()
+    return literals
+
+
 def _load_rows(data, definition):
     try:
         workbook = load_workbook(
@@ -514,6 +779,8 @@ def _load_rows(data, definition):
                 )
             ]
         expected_sheets = {definition.sheet_name, "填写说明"}
+        if definition.has_example_sheet:
+            expected_sheets.add("示例")
         missing_sheets = [name for name in expected_sheets if name not in workbook.sheetnames]
         if missing_sheets:
             return [], [
@@ -547,6 +814,7 @@ def _load_rows(data, definition):
                 )
             ]
         sheet = workbook[definition.sheet_name]
+        numeric_literals = _xlsx_decimal_literals(data, sheet._worksheet_path)
         actual_headers = tuple(_text(cell.value) for cell in sheet[1])
         if actual_headers != definition.headers:
             unknown = [value for value in actual_headers if value not in definition.headers]
@@ -570,10 +838,24 @@ def _load_rows(data, definition):
                 or (isinstance(cell.value, str) and cell.value.startswith("="))
             ]
             raw = {
-                column.name: _json_value(cells[index].value)
+                column.name: (
+                    numeric_literals[cells[index].coordinate]
+                    if isinstance(cells[index].value, float)
+                    and cells[index].coordinate in numeric_literals
+                    else _json_value(cells[index].value)
+                )
                 for index, column in enumerate(definition.columns)
             }
-            rows.append((row_number, cells, raw, formulas))
+            values = {
+                column.key: (
+                    Decimal(numeric_literals[cells[index].coordinate])
+                    if isinstance(cells[index].value, float)
+                    and cells[index].coordinate in numeric_literals
+                    else cells[index].value
+                )
+                for index, column in enumerate(definition.columns)
+            }
+            rows.append((row_number, values, raw, formulas))
             if len(rows) > MAX_IMPORT_ROWS:
                 return [], [
                     _error(
@@ -599,8 +881,7 @@ def _normalize_department_rows(company, loaded_rows, definition):
     }
     prepared = []
     seen = {}
-    for row_number, cells, raw, formulas in loaded_rows:
-        values = {column.key: cells[index].value for index, column in enumerate(definition.columns)}
+    for row_number, values, raw, formulas in loaded_rows:
         errors = []
         if formulas:
             errors.extend(_error(field, raw.get(field), "禁止公式单元格。") for field in formulas)
@@ -676,8 +957,7 @@ def _normalize_employee_rows(company, loaded_rows, definition):
     }
     prepared = []
     seen = {}
-    for row_number, cells, raw, formulas in loaded_rows:
-        values = {column.key: cells[index].value for index, column in enumerate(definition.columns)}
+    for row_number, values, raw, formulas in loaded_rows:
         errors = []
         if formulas:
             errors.extend(_error(field, raw.get(field), "禁止公式单元格。") for field in formulas)
@@ -734,6 +1014,543 @@ def _normalize_employee_rows(company, loaded_rows, definition):
     return prepared
 
 
+def _asset_theoretical_summary(result, *, as_of_date=None):
+    lines = result.get("lines", ()) if isinstance(result, dict) else result.lines
+    selected = [
+        line
+        for line in lines
+        if as_of_date is None or line.period_end <= as_of_date
+    ]
+    if isinstance(result, dict):
+        opening = result["opening_book_value"]
+        salvage = result["salvage_value"]
+        natural_end = result["natural_end_date"]
+        start = result["start_date"]
+        requires = result.get("requires_period_input")
+    else:
+        opening = result.opening_book_value
+        salvage = result.salvage_value
+        natural_end = result.natural_end_date
+        start = result.start_date
+        requires = None
+    planned = sum((line.planned_amount for line in selected), Decimal("0.00"))
+    closing = selected[-1].closing_book_value if selected else opening
+    return _serialize_mapping(
+        {
+            "as_of_date": as_of_date,
+            "start_date": start,
+            "natural_end_date": natural_end,
+            "salvage_value": salvage,
+            "planned_accumulated_depreciation": planned,
+            "theoretical_book_value": closing,
+            "period_count": len(selected),
+            "requires_period_input": requires,
+        }
+    )
+
+
+def _inflate_asset_row(*, company, normalized, lock=False):
+    from apps.assets.models import AssetCustomField
+    from apps.masterdata.models import AssetCategory, Department, Employee, Location
+
+    asset_data = normalized["asset_data"]
+    query = lambda model: model.objects.select_for_update() if lock else model.objects
+    category = query(AssetCategory).filter(
+        pk=asset_data["category_id"], company=company, is_active=True
+    ).first()
+    department = query(Department).filter(
+        pk=asset_data["department_id"], company=company, is_active=True
+    ).first()
+    employee = query(Employee).select_related("department").filter(
+        pk=asset_data["responsible_employee_id"],
+        company=company,
+        employment_status="active",
+        is_active=True,
+        department__is_active=True,
+    ).first()
+    location = query(Location).filter(
+        pk=asset_data["location_id"], company=company, is_active=True
+    ).first()
+    if not all((category, department, employee, location)):
+        raise ValidationError("导入确认前的分类、部门、责任人或位置已失效。")
+    if employee.department_id != department.pk:
+        raise ValidationError("导入确认前责任人与资产部门已不一致。")
+    if location.children.exists():
+        raise ValidationError("导入确认前位置已不再是叶级。")
+    data = {
+        **asset_data,
+        "category": category,
+        "department": department,
+        "responsible_employee": employee,
+        "location": location,
+        "acquisition_date": date.fromisoformat(asset_data["acquisition_date"])
+        if asset_data["acquisition_date"]
+        else None,
+        "commissioning_date": date.fromisoformat(asset_data["commissioning_date"])
+        if asset_data["commissioning_date"]
+        else None,
+    }
+    for key in ("category_id", "department_id", "responsible_employee_id", "location_id"):
+        data.pop(key, None)
+    field_ids = set(normalized.get("custom_values", {}))
+    fields = {
+        str(value.pk): value
+        for value in AssetCustomField.objects.filter(
+            pk__in=field_ids, company=company, category=category, is_active=True
+        )
+    }
+    if set(fields) != field_ids:
+        raise ValidationError("导入确认前动态字段已停用或不再适用。")
+    custom_values = {}
+    for field_id, stored in normalized.get("custom_values", {}).items():
+        field = fields[field_id]
+        value = stored
+        if field.field_type == "decimal":
+            value = Decimal(stored)
+        elif field.field_type == "date":
+            value = date.fromisoformat(stored)
+        custom_values[field_id] = value
+    return data, custom_values
+
+
+def _create_asset_finance_drafts(*, actor, asset, normalized, request=None):
+    from apps.finance.models import (
+        AssetDepreciationProfile,
+        AssetFinance,
+        DepreciationPolicy,
+    )
+    from apps.masterdata.models import FixedAssetCategory
+
+    stored_finance = normalized.get("finance_data")
+    if not stored_finance:
+        return None, None
+    if not can_manage_finance(actor):
+        raise PermissionDenied("只有 finance 可确认带财务列的导入。")
+    fixed_category = None
+    if stored_finance.get("fixed_asset_category_id"):
+        fixed_category = FixedAssetCategory.objects.filter(
+            pk=stored_finance["fixed_asset_category_id"],
+            company=asset.company,
+            is_active=True,
+        ).first()
+        if fixed_category is None:
+            raise ValidationError("导入确认前固定资产类别已失效。")
+    stored_profile = normalized.get("profile_data")
+    opening_impairment = Decimal("0.00")
+    if stored_profile:
+        opening_impairment = Decimal(
+            stored_profile.get("opening_impairment") or "0.00"
+        )
+    finance = AssetFinance(
+        company=asset.company,
+        asset=asset,
+        accounting_treatment=stored_finance["accounting_treatment"],
+        accounting_treatment_reason=stored_finance["accounting_treatment_reason"],
+        fixed_asset_category=fixed_category,
+        original_cost=Decimal(stored_finance["original_cost"]),
+        capitalization_date=date.fromisoformat(stored_finance["capitalization_date"])
+        if stored_finance["capitalization_date"]
+        else None,
+        # This cache is an authoritative balance derived only from confirmed
+        # adjustments.  The imported opening impairment remains in the draft
+        # Profile/audit until Sprint 4 formalization posts its opening entry.
+        impairment_balance_cache=Decimal("0.00"),
+        finance_remark=stored_finance["finance_remark"],
+    )
+    finance.full_clean()
+    finance.save()
+    write_business_audit_log(
+        company=asset.company,
+        user=actor,
+        action="asset_finance_import_draft_create",
+        object_type="AssetFinance",
+        object_id=finance.pk,
+        old_data={},
+        new_data={
+            "asset_id": str(asset.pk),
+            "accounting_treatment": finance.accounting_treatment,
+            "fixed_asset_category_id": (
+                str(finance.fixed_asset_category_id)
+                if finance.fixed_asset_category_id
+                else None
+            ),
+            "original_cost": str(finance.original_cost),
+            "capitalization_date": finance.capitalization_date,
+            "finance_confirmed": False,
+        },
+        **request_audit_context(request),
+    )
+    if not stored_profile:
+        return finance, None
+    profile_effective_from = date.fromisoformat(stored_profile["effective_from"])
+    policy_business_date = timezone.localdate()
+    policy = (
+        DepreciationPolicy.objects.select_for_update()
+        .filter(
+            pk=stored_profile["depreciation_policy_id"],
+            company=asset.company,
+            status="active",
+            effective_from__lte=policy_business_date,
+        )
+        .filter(Q(effective_to__isnull=True) | Q(effective_to__gte=policy_business_date))
+        .first()
+    )
+    if policy is None:
+        raise ValidationError("导入确认前折旧政策已失效或不再属于当前公司。")
+    profile = AssetDepreciationProfile(
+        company=asset.company,
+        asset=asset,
+        depreciation_policy=policy,
+        version=1,
+        method=stored_profile["method"],
+        posting_period=stored_profile["posting_period"],
+        start_rule=stored_profile["start_rule"],
+        stop_rule=stored_profile["stop_rule"],
+        start_date=date.fromisoformat(stored_profile["start_date"]),
+        useful_life_months=stored_profile["useful_life_months"],
+        salvage_mode=stored_profile["salvage_mode"],
+        salvage_rate=Decimal(stored_profile["salvage_rate"])
+        if stored_profile.get("salvage_rate") is not None
+        else None,
+        salvage_amount=Decimal(stored_profile["salvage_amount"])
+        if stored_profile.get("salvage_amount") is not None
+        else None,
+        opening_book_value=Decimal(stored_profile["opening_book_value"]),
+        opening_actual_accumulated_depreciation=Decimal(
+            stored_profile["opening_actual_accumulated_depreciation"]
+        ),
+        expected_total_units=Decimal(stored_profile["expected_total_units"])
+        if stored_profile.get("expected_total_units") is not None
+        else None,
+        work_unit=stored_profile.get("work_unit", ""),
+        annual_posting_month=stored_profile.get("annual_posting_month"),
+        effective_from=profile_effective_from,
+        effective_to=date.fromisoformat(stored_profile["effective_to"])
+        if stored_profile.get("effective_to")
+        else None,
+        status="draft",
+        change_reason=stored_profile.get("change_reason", ""),
+        created_by=actor,
+    )
+    profile.full_clean()
+    profile.save()
+    reference = normalized.get("theoretical_reference") or {}
+    write_business_audit_log(
+        company=asset.company,
+        user=actor,
+        action="depreciation_profile_import_draft_create",
+        object_type="AssetDepreciationProfile",
+        object_id=profile.pk,
+        old_data={},
+        new_data={
+            "asset_id": str(asset.pk),
+            "version": 1,
+            "status": "draft",
+            "opening_actual_accumulated_depreciation": str(
+                profile.opening_actual_accumulated_depreciation
+            ),
+            "opening_impairment": str(opening_impairment),
+            "opening_book_value": str(profile.opening_book_value),
+            "theoretical_accumulated_depreciation": reference.get(
+                "planned_accumulated_depreciation"
+            ),
+            "theoretical_difference": reference.get("difference"),
+        },
+        **request_audit_context(request),
+    )
+    return finance, profile
+
+
+def _normalize_asset_rows(*, actor, company, loaded_rows, definition):
+    from apps.assets.models import Asset, AssetCustomField
+    from apps.finance.models import DepreciationPolicy
+    from apps.finance.services import _profile_spec, resolve_depreciation_policy
+    from apps.masterdata.models import (
+        AssetCategory,
+        Department,
+        Employee,
+        FixedAssetCategory,
+        Location,
+    )
+
+    categories = {
+        value.normalized_code: value
+        for value in AssetCategory.objects.filter(company=company, is_active=True)
+    }
+    departments = {
+        value.normalized_code: value
+        for value in Department.objects.filter(company=company, is_active=True)
+    }
+    employees = {
+        value.normalized_employee_no: value
+        for value in Employee.objects.filter(
+            company=company,
+            employment_status="active",
+            is_active=True,
+            department__is_active=True,
+        ).select_related("department")
+    }
+    locations = {
+        value.normalized_code: value
+        for value in Location.objects.filter(company=company, is_active=True)
+    }
+    fixed_categories = {
+        value.normalized_code: value
+        for value in FixedAssetCategory.objects.filter(company=company, is_active=True)
+    }
+    custom_fields = list(
+        AssetCustomField.objects.filter(company=company, is_active=True).select_related(
+            "category"
+        )
+    )
+    custom_by_code = {value.normalized_code: value for value in custom_fields}
+    finance_allowed = can_manage_finance(actor)
+    warning_amount = get_system_setting(
+        company=company, key="fixed_asset_warning_amount"
+    )
+    prepared = []
+    for row_number, values, raw, formulas in loaded_rows:
+        errors = []
+        warnings = []
+        if formulas:
+            errors.extend(
+                _error(field, raw.get(field), "禁止公式单元格。") for field in formulas
+            )
+        company_code = _text(values["company_code"])
+        category_code = _text(values["category_code"])
+        department_code = _text(values["department_code"])
+        employee_no = _text(values["responsible_employee_no"])
+        location_code = _text(values["location_code"])
+        category = categories.get(normalize_identifier(category_code))
+        department = departments.get(normalize_identifier(department_code))
+        employee = employees.get(normalize_identifier(employee_no))
+        location = locations.get(normalize_identifier(location_code))
+        required_values = (
+            ("资产名称", "asset_name"),
+            ("实物分类编码", "category_code"),
+            ("公司编码", "company_code"),
+            ("部门编码", "department_code"),
+            ("责任员工编号", "responsible_employee_no"),
+            ("位置编码", "location_code"),
+            ("单位", "unit"),
+        )
+        for label, key in required_values:
+            if not _text(values[key]):
+                errors.append(_error(label, values[key], "必填。"))
+        if normalize_identifier(company_code) != company.normalized_code:
+            errors.append(_error("公司编码", company_code, "必须精确匹配当前启用公司。"))
+        if category is None:
+            errors.append(_error("实物分类编码", category_code, "当前公司不存在该启用分类。"))
+        if department is None:
+            errors.append(_error("部门编码", department_code, "当前公司不存在该启用部门。"))
+        elif not can_create_asset_draft(actor, company, department):
+            errors.append(_error("部门编码", department_code, "超出调用人的资产草稿创建范围。"))
+        if employee is None:
+            errors.append(_error("责任员工编号", employee_no, "必须匹配当前公司在职、启用且所属部门启用的员工。"))
+        elif department is not None and employee.department_id != department.pk:
+            errors.append(_error("责任员工编号", employee_no, "责任人必须属于资产当前部门。"))
+        if location is None:
+            errors.append(_error("位置编码", location_code, "当前公司不存在该启用位置。"))
+        elif location.children.exists():
+            errors.append(_error("位置编码", location_code, "必须选择叶级具体位置。"))
+        quantity = _integer_value(values["quantity"], "数量", errors, required=True)
+        if quantity is not None and quantity != 1:
+            errors.append(_error("数量", values["quantity"], "V1 每行只能为数量 1 的单件资产。"))
+        acquisition_date = _date(values["acquisition_date"], "购置日期", errors)
+        commissioning_date = _date(
+            values["commissioning_date"], "达到可使用状态日期", errors
+        )
+        maintenance = _nullable_boolean(
+            values["is_maintenance_required"], "是否需要保养", errors
+        )
+        if maintenance is None and category is not None:
+            maintenance = category.is_maintenance_required_default
+        attachment_note = _text(values["attachment_note"])
+        if attachment_note and re.search(
+            r"(?:https?://|file://|^[A-Za-z]:[\\/]|^[/\\])", attachment_note, re.I
+        ):
+            errors.append(_error("附件后续上传说明", attachment_note, "只允许后续受控上传说明，不接受本机路径或 URL。"))
+
+        custom_values = {}
+        for key, raw_value in values.items():
+            if not key.startswith("custom:"):
+                continue
+            code = key.split(":", 1)[1]
+            field = custom_by_code.get(code)
+            if field is None:
+                errors.append(_error(f"自定义:{code}", raw_value, "未知或已停用的动态字段。"))
+                continue
+            if category is None or field.category_id != category.pk:
+                if raw_value not in (None, ""):
+                    errors.append(_error(f"自定义:{field.code}", raw_value, "该字段不适用于本行实物分类。"))
+                continue
+            label = f"自定义:{field.code}"
+            if raw_value in (None, ""):
+                if field.required:
+                    errors.append(_error(label, raw_value, "该分类的必填动态字段不得为空。"))
+                continue
+            parsed = raw_value
+            if field.field_type == "decimal":
+                parsed = _decimal_value(raw_value, label, errors, places=8)
+            elif field.field_type == "date":
+                parsed = _date(raw_value, label, errors)
+            elif field.field_type == "boolean":
+                parsed = _nullable_boolean(raw_value, label, errors)
+            elif field.field_type in {"text", "select"}:
+                parsed = _text(raw_value)
+                if field.field_type == "select" and parsed not in field.options_json:
+                    errors.append(_error(label, raw_value, "必须为已配置选项之一。"))
+            if parsed is not None:
+                custom_values[str(field.pk)] = _serialize_mapping(parsed)
+
+        finance_supplied = any(values.get(key) not in (None, "") for key in ASSET_FINANCE_KEYS)
+        finance_data = None
+        profile_data = None
+        theoretical_summary = None
+        if finance_supplied and not finance_allowed:
+            errors.append(_error("财务列", None, "只有 finance 可导入会计认定、期初值和折旧参数。"))
+        elif finance_supplied:
+            treatment = _text(values["accounting_treatment"])
+            if treatment not in {"fixed_asset", "controlled_non_fixed"}:
+                errors.append(_error("会计认定", treatment, "只能为 fixed_asset 或 controlled_non_fixed。"))
+            cost = _decimal_value(values["original_cost"], "原值", errors, places=2, required=True, minimum=Decimal("0"))
+            capitalization_date = _date(values["capitalization_date"], "资本化日期", errors)
+            fixed_category_code = _text(values["fixed_asset_category_code"])
+            fixed_category = fixed_categories.get(normalize_identifier(fixed_category_code))
+            if treatment == "fixed_asset" and fixed_category is None:
+                errors.append(_error("固定资产类别编码", fixed_category_code, "固定资产必须匹配当前公司启用会计类别。"))
+            if treatment == "fixed_asset" and capitalization_date is None:
+                errors.append(_error("资本化日期", values["capitalization_date"], "固定资产必填。"))
+            if treatment == "controlled_non_fixed" and fixed_category_code:
+                errors.append(_error("固定资产类别编码", fixed_category_code, "受控非固定资产不得填写固定资产类别。"))
+            finance_data = {
+                "accounting_treatment": treatment,
+                "accounting_treatment_reason": _text(values["accounting_treatment_reason"]),
+                "fixed_asset_category_id": str(fixed_category.pk) if fixed_category else None,
+                "original_cost": str(cost) if cost is not None else None,
+                "capitalization_date": capitalization_date.isoformat() if capitalization_date else None,
+                "finance_remark": _text(values["finance_remark"]),
+            }
+            if cost is not None and cost >= warning_amount:
+                warnings.append(_error("原值", str(cost), f"达到固定资产提示阈值 {warning_amount}，仅提醒，不自动改变会计认定。"))
+            if treatment == "fixed_asset" and category and commissioning_date and cost is not None and fixed_category:
+                policy_key = _text(values["depreciation_policy_key"])
+                requested = None
+                if policy_key:
+                    policy_business_date = timezone.localdate()
+                    policies = list(
+                        DepreciationPolicy.objects.filter(
+                            company=company,
+                            policy_key=policy_key,
+                            status="active",
+                            effective_from__lte=policy_business_date,
+                        ).filter(
+                            Q(effective_to__isnull=True)
+                            | Q(effective_to__gte=policy_business_date)
+                        )
+                    )
+                    if len(policies) != 1:
+                        errors.append(_error("折旧政策编码", policy_key, "必须精确解析一个当前生效政策版本。"))
+                    else:
+                        requested = policies[0]
+                temp_asset = Asset(company=company, category=category, commissioning_date=commissioning_date)
+                profile_values = {
+                    "method": _text(values["method"]) or None,
+                    "posting_period": _text(values["posting_period"]) or None,
+                    "start_rule": _text(values["start_rule"]) or None,
+                    "specified_start": _date(values["specified_start"], "指定起算日期", errors),
+                    "stop_rule": _text(values["stop_rule"]) or None,
+                    "useful_life_months": _integer_value(values["useful_life_months"], "使用寿命月数", errors, minimum=1),
+                    "salvage_mode": _text(values["salvage_mode"]) or None,
+                    "salvage_rate": _decimal_value(values["salvage_rate"], "残值率", errors, places=8, minimum=Decimal("0")),
+                    "salvage_amount": _decimal_value(values["salvage_amount"], "残值金额", errors, places=2, minimum=Decimal("0")),
+                    "annual_posting_month": _integer_value(values["annual_posting_month"], "年度计提月份", errors, minimum=1, maximum=12),
+                    "expected_total_units": _decimal_value(values["expected_total_units"], "预计总工作量", errors, places=6, minimum=Decimal("0")),
+                    "work_unit": _text(values["work_unit"]),
+                    "opening_actual_accumulated_depreciation": _decimal_value(values["opening_actual_accumulated_depreciation"], "实际期初累计折旧", errors, places=2, minimum=Decimal("0")) or Decimal("0.00"),
+                    "opening_impairment": _decimal_value(values["opening_impairment"], "期初减值", errors, places=2, minimum=Decimal("0")) or Decimal("0.00"),
+                    "opening_book_value": _decimal_value(values["opening_book_value"], "实际期初账面净值", errors, places=2, minimum=Decimal("0")),
+                }
+                profile_values = {key: value for key, value in profile_values.items() if value is not None}
+                historical_reason = _text(values["historical_start_reason"])
+                if historical_reason:
+                    profile_values["allow_historical_start"] = True
+                    profile_values["change_reason"] = historical_reason
+                try:
+                    policy = resolve_depreciation_policy(asset=temp_asset, requested_policy=requested)
+                    _spec, result, resolved = _profile_spec(asset=temp_asset, finance_data={"original_cost": cost, "fixed_asset_category": fixed_category}, profile_data=profile_values, policy=policy)
+                    resolved["depreciation_policy_id"] = str(policy.pk)
+                    resolved["opening_impairment"] = profile_values.get("opening_impairment", Decimal("0.00"))
+                    profile_data = _serialize_mapping(resolved)
+                    theoretical_date = _date(values["theoretical_as_of_date"], "理论测算截止日", errors)
+                    theoretical_inputs = {
+                        **profile_values,
+                        "opening_actual_accumulated_depreciation": Decimal("0.00"),
+                        "opening_impairment": Decimal("0.00"),
+                        "opening_book_value": cost,
+                    }
+                    _theoretical_spec, theoretical_result, _theoretical_resolved = _profile_spec(
+                        asset=temp_asset,
+                        finance_data={
+                            "original_cost": cost,
+                            "fixed_asset_category": fixed_category,
+                        },
+                        profile_data=theoretical_inputs,
+                        policy=policy,
+                    )
+                    theoretical_summary = _asset_theoretical_summary(
+                        theoretical_result, as_of_date=theoretical_date
+                    )
+                    theoretical_summary["actual_opening_book_value"] = profile_data["opening_book_value"]
+                    theoretical_summary["difference"] = str(Decimal(profile_data["opening_book_value"]) - Decimal(theoretical_summary["theoretical_book_value"]))
+                except (ValidationError, ValueError) as exc:
+                    errors.extend(_error("折旧参数", None, message) for message in _validation_messages(exc))
+
+        normalized = {
+            "asset_data": {
+                "asset_name": _text(values["asset_name"]),
+                "category_id": str(category.pk) if category else None,
+                "brand": _text(values["brand"]),
+                "model": _text(values["model"]),
+                "manufacturer": _text(values["manufacturer"]),
+                "serial_number": _text(values["serial_number"]),
+                "factory_number": _text(values["factory_number"]),
+                "historical_code": _text(values["historical_code"]),
+                "unit": _text(values["unit"]),
+                "description": attachment_note,
+                "department_id": str(department.pk) if department else None,
+                "responsible_employee_id": str(employee.pk) if employee else None,
+                "location_id": str(location.pk) if location else None,
+                "acquisition_date": acquisition_date.isoformat() if acquisition_date else None,
+                "commissioning_date": commissioning_date.isoformat() if commissioning_date else None,
+                "is_maintenance_required": bool(maintenance),
+                "notes": _text(values["notes"]),
+            },
+            "custom_values": custom_values,
+            "finance_data": finance_data,
+            "profile_data": profile_data,
+            "theoretical_reference": theoretical_summary,
+        }
+        prepared.append({"row_number": row_number, "raw": raw, "normalized": normalized, "errors": errors, "warnings": warnings})
+
+    # Potential identity duplicates are warnings, never silent deduplication.
+    identity_fields = (("serial_number", "序列号"), ("factory_number", "出厂编号"), ("historical_code", "历史参考编号"))
+    for key, label in identity_fields:
+        seen = {}
+        db_values = set(Asset.objects.filter(company=company).exclude(**{key: ""}).values_list(key, flat=True))
+        for item in prepared:
+            value = item["normalized"]["asset_data"][key]
+            if not value:
+                continue
+            if value in db_values:
+                item["warnings"].append(_error(label, value, "当前公司已有相同值，请人工核查潜在重复。"))
+            if value in seen:
+                item["warnings"].append(_error(label, value, f"与文件第 {seen[value]} 行相同，请人工核查。"))
+            else:
+                seen[value] = item["row_number"]
+    return prepared
+
+
 def _audit_batch(*, batch, actor, action, new_data, old_data=None, request=None):
     write_business_audit_log(
         company=batch.company,
@@ -764,7 +1581,31 @@ def _preflight_business_rows(*, actor, company, import_type, prepared):
     if any(item["errors"] for item in prepared):
         return prepared
     with transaction.atomic():
-        if import_type == "department":
+        if import_type == "asset_initialization":
+            for item in prepared:
+                try:
+                    data, custom_values = _inflate_asset_row(
+                        company=company,
+                        normalized=item["normalized"],
+                    )
+                    asset = create_asset_draft(
+                        actor=actor,
+                        company=company,
+                        data=data,
+                        custom_values=custom_values,
+                        initialization_source="excel_import",
+                    )
+                    _create_asset_finance_drafts(
+                        actor=actor,
+                        asset=asset,
+                        normalized=item["normalized"],
+                    )
+                except (ValidationError, PermissionDenied) as exc:
+                    item["errors"].extend(
+                        _error("数据", None, message)
+                        for message in _validation_messages(exc)
+                    )
+        elif import_type == "department":
             existing = {
                 value.normalized_code: value
                 for value in Department.objects.filter(company=company)
@@ -856,14 +1697,17 @@ def upload_and_validate_import(
 ):
     from apps.masterdata.models import Attachment, ImportBatch, ImportRow
 
-    _require_import_permission(actor, import_type)
+    require_import_permission(actor, import_type, company=company)
     _require_current_import_company(company)
-    definition = get_template_definition(import_type)
+    definition = get_template_definition(import_type, company=company)
     allowed = set(get_system_setting(company=company, key="attachment_allowed_extensions"))
     if "xlsx" not in allowed:
         raise ValidationError("当前公司附件白名单未允许 xlsx。")
     if Path(uploaded_file.name).suffix.lower() != ".xlsx":
         raise ValidationError("只允许上传无宏的 .xlsx 文件。")
+    content_type = str(getattr(uploaded_file, "content_type", "") or "").lower()
+    if content_type != XLSX_MIME:
+        raise ValidationError("上传文件的 MIME 类型不是标准 XLSX。")
     limit = get_system_setting(company=company, key="attachment_max_size_bytes")
     data = _read_uploaded(uploaded_file, limit)
     container_errors = _validate_xlsx_container(data)
@@ -907,8 +1751,15 @@ def upload_and_validate_import(
         prepared = [{"row_number": 1, "raw": {}, "normalized": {}, "errors": workbook_errors}]
     elif import_type == "department":
         prepared = _normalize_department_rows(company, loaded_rows, definition)
-    else:
+    elif import_type == "employee":
         prepared = _normalize_employee_rows(company, loaded_rows, definition)
+    else:
+        prepared = _normalize_asset_rows(
+            actor=actor,
+            company=company,
+            loaded_rows=loaded_rows,
+            definition=definition,
+        )
     prepared = _preflight_business_rows(
         actor=actor,
         company=company,
@@ -975,6 +1826,7 @@ def upload_and_validate_import(
                 attachment.full_clean()
                 attachment.save()
                 errors_count = sum(bool(item["errors"]) for item in prepared)
+                warning_count = sum(bool(item.get("warnings")) for item in prepared)
                 batch = ImportBatch(
                     company=company,
                     import_type=import_type,
@@ -985,7 +1837,7 @@ def upload_and_validate_import(
                     total_rows=len(prepared),
                     valid_rows=len(prepared) - errors_count,
                     error_rows=errors_count,
-                    warning_rows=0,
+                    warning_rows=warning_count,
                     request_hash=request_hash,
                     idempotency_key=idempotency_key,
                     uploaded_by=actor,
@@ -1002,13 +1854,25 @@ def upload_and_validate_import(
                         normalized_data_json=item["normalized"],
                         validation_status="invalid" if item["errors"] else "valid",
                         errors_json=item["errors"],
-                        warnings_json=[],
+                        warnings_json=item.get("warnings", []),
                     )
                     for item in prepared
                 ]
                 for row in rows:
                     row.full_clean()
                 ImportRow.objects.bulk_create(rows)
+                _audit_batch(
+                    batch=batch,
+                    actor=actor,
+                    action="import_upload",
+                    new_data={
+                        "import_type": import_type,
+                        "template_version": definition.version,
+                        "file_sha256": digest,
+                        "status": "uploaded",
+                    },
+                    request=request,
+                )
                 _audit_batch(
                     batch=batch,
                     actor=actor,
@@ -1021,9 +1885,25 @@ def upload_and_validate_import(
                         "total_rows": batch.total_rows,
                         "valid_rows": batch.valid_rows,
                         "error_rows": batch.error_rows,
+                        "warning_rows": batch.warning_rows,
                     },
                     request=request,
                 )
+                if errors_count:
+                    _audit_batch(
+                        batch=batch,
+                        actor=actor,
+                        action="import_failure",
+                        new_data={
+                            "import_type": import_type,
+                            "template_version": definition.version,
+                            "file_sha256": digest,
+                            "status": batch.status,
+                            "stage": "validation",
+                            "error_rows": batch.error_rows,
+                        },
+                        request=request,
+                    )
                 # This update is the publication point.  Other transactions
                 # can only observe it after the validation rows and audit log
                 # have committed successfully.
@@ -1047,8 +1927,47 @@ def upload_and_validate_import(
         raise
 
 
-@transaction.atomic
 def confirm_import_batch(*, actor, batch, request=None):
+    """Confirm atomically and persist a separate safe failure audit on rollback."""
+
+    try:
+        return _confirm_import_batch_atomic(
+            actor=actor, batch=batch, request=request
+        )
+    except Exception as exc:
+        from apps.masterdata.models import ImportBatch
+
+        persisted = (
+            ImportBatch.objects.select_related("company")
+            .filter(pk=getattr(batch, "pk", None))
+            .first()
+        )
+        if persisted is not None:
+            try:
+                _audit_batch(
+                    batch=persisted,
+                    actor=actor,
+                    action="import_confirm_failed",
+                    old_data={"status": persisted.status},
+                    new_data={
+                        "status": persisted.status,
+                        "import_type": persisted.import_type,
+                        "file_sha256": persisted.file_sha256,
+                        "stage": "confirmation",
+                        "error_class": type(exc).__name__,
+                    },
+                    request=request,
+                )
+            except Exception:
+                # The original confirmation exception is the authoritative
+                # caller result.  Never replace it with a secondary audit
+                # transport failure.
+                pass
+        raise
+
+
+@transaction.atomic
+def _confirm_import_batch_atomic(*, actor, batch, request=None):
     from apps.masterdata.models import Department, Employee, ImportBatch
 
     # Share the upload/cleanup namespace lock.  Cleanup can therefore prove
@@ -1061,9 +1980,12 @@ def confirm_import_batch(*, actor, batch, request=None):
         .get(pk=batch.pk)
     )
     _require_current_import_company(batch.company)
-    _require_import_permission(actor, batch.import_type)
+    require_import_permission(actor, batch.import_type, company=batch.company)
     if batch.status == "confirmed":
         return batch
+    definition = get_template_definition(batch.import_type, company=batch.company)
+    if batch.template_version != definition.version:
+        raise ValidationError("批次模板版本已不再受支持，请重新下载模板并上传。")
     if batch.status != "validated" or batch.error_rows != 0:
         raise ValidationError("只能确认无错误的已验证批次。")
     if batch.file_sha256 != batch.file_attachment.sha256:
@@ -1080,7 +2002,35 @@ def confirm_import_batch(*, actor, batch, request=None):
         raise ValidationError("批次行状态与已验证状态不一致。")
 
     created = {}
-    if batch.import_type == "department":
+    if batch.import_type == "asset_initialization":
+        for row in rows:
+            item = row.normalized_data_json
+            data, custom_values = _inflate_asset_row(
+                company=batch.company, normalized=item, lock=True
+            )
+            require_import_permission(
+                actor,
+                batch.import_type,
+                company=batch.company,
+                department=data["department"],
+            )
+            asset = create_asset_draft(
+                actor=actor,
+                company=batch.company,
+                data=data,
+                custom_values=custom_values,
+                initialization_source="excel_import",
+                request=request,
+            )
+            _create_asset_finance_drafts(
+                actor=actor,
+                asset=asset,
+                normalized=item,
+                request=request,
+            )
+            row.created_object_type = "Asset"
+            row.created_object_id = str(asset.pk)
+    elif batch.import_type == "department":
         existing = {
             value.normalized_code: value
             for value in Department.objects.select_for_update().filter(company=batch.company)
@@ -1120,7 +2070,7 @@ def confirm_import_batch(*, actor, batch, request=None):
                 progressed = True
             if not progressed:
                 raise ValidationError("无法解析部门树的父级顺序，已整批回滚。")
-    else:
+    elif batch.import_type == "employee":
         existing_numbers = set(
             Employee.objects.select_for_update().filter(company=batch.company).values_list(
                 "normalized_employee_no", flat=True
@@ -1155,12 +2105,19 @@ def confirm_import_batch(*, actor, batch, request=None):
             )
             row.created_object_type = "Employee"
             row.created_object_id = str(employee.pk)
+    else:
+        raise ValidationError("不支持的导入类型。")
 
     batch.status = "confirmed"
     batch.confirmed_by = actor
     batch.confirmed_at = timezone.now()
     batch.full_clean()
     batch.save(update_fields=["status", "confirmed_by", "confirmed_at"])
+    if connection.vendor == "postgresql":
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT set_config('eam_lite.controlled_import_confirmation', 'on', true)"
+            )
     for row in rows:
         row.validation_status = "created"
         row.full_clean()
@@ -1171,6 +2128,11 @@ def confirm_import_batch(*, actor, batch, request=None):
                 "created_object_id",
             ]
         )
+    if connection.vendor == "postgresql":
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT set_config('eam_lite.controlled_import_confirmation', 'off', true)"
+            )
     _audit_batch(
         batch=batch,
         actor=actor,

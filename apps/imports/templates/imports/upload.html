@@ -5,6 +5,13 @@
 <div class="alert alert-info">
   请使用 {{ definition.version }} 标准模板。未知列、公式、宏、外部链接或嵌入对象将被拒绝；存在任何行错误时不能确认。
 </div>
+{% if definition.import_type == "asset_initialization" %}
+<div class="alert alert-warning">
+  <strong>初始化建账规则：</strong>每行只代表一件实物，数量必须精确为 1。公司、实物分类、部门、责任员工和叶级位置必须使用 code / employee_no 精确匹配。
+  资产照片或附件不能填写本机路径或 URL；草稿创建后再通过受保护的附件入口上传。
+</div>
+<p class="text-secondary">无财务权限时，原值、会计认定、期初累计折旧和折旧参数等财务列必须全部留空；系统不会静默忽略这些字段。</p>
+{% endif %}
 <p><a href="{% url 'imports:template' definition.import_type %}">下载标准模板</a></p>
 <form method="post" enctype="multipart/form-data" novalidate>
   {% csrf_token %}

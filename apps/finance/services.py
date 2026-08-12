@@ -1014,36 +1014,50 @@ def _issue_code(*, actor, asset, effective_date, reason, idempotency_key):
 
 
 def _create_profile_and_schedule(
-    *, actor, asset, policy, resolved, result, version=1
+    *, actor, asset, policy, resolved, result, version=1, existing_profile=None
 ):
     models = _models()
     Profile = models["AssetDepreciationProfile"]
     Schedule = models["DepreciationSchedule"]
-    profile = Profile(
-        company=asset.company,
-        asset=asset,
-        depreciation_policy=policy,
-        version=version,
-        method=resolved["method"],
-        posting_period=resolved["posting_period"],
-        start_rule=resolved["start_rule"],
-        stop_rule=resolved["stop_rule"],
-        start_date=resolved["start_date"],
-        useful_life_months=resolved["useful_life_months"],
-        salvage_mode=resolved["salvage_mode"],
-        salvage_rate=resolved["salvage_rate"],
-        salvage_amount=resolved["salvage_amount"],
-        opening_book_value=resolved["opening_book_value"],
-        opening_actual_accumulated_depreciation=resolved["opening_actual_accumulated_depreciation"],
-        expected_total_units=resolved["expected_total_units"],
-        work_unit=resolved["work_unit"] or "",
-        annual_posting_month=resolved["annual_posting_month"],
-        effective_from=resolved["effective_from"],
-        effective_to=resolved["effective_to"],
-        status="active",
-        change_reason=resolved["change_reason"] or "",
-        created_by=actor,
-    )
+    if existing_profile is not None:
+        profile = existing_profile
+        if (
+            profile.company_id != asset.company_id
+            or profile.asset_id != asset.pk
+            or profile.version != version
+            or profile.status != "draft"
+        ):
+            raise ValidationError("导入的折旧 Profile 草稿状态或版本无效。")
+        if profile.schedules.exists():
+            raise ValidationError("导入的折旧 Profile 草稿不得预先包含折旧计划。")
+    else:
+        profile = Profile(
+            company=asset.company,
+            asset=asset,
+            version=version,
+            created_by=actor,
+        )
+    profile.depreciation_policy = policy
+    profile.method = resolved["method"]
+    profile.posting_period = resolved["posting_period"]
+    profile.start_rule = resolved["start_rule"]
+    profile.stop_rule = resolved["stop_rule"]
+    profile.start_date = resolved["start_date"]
+    profile.useful_life_months = resolved["useful_life_months"]
+    profile.salvage_mode = resolved["salvage_mode"]
+    profile.salvage_rate = resolved["salvage_rate"]
+    profile.salvage_amount = resolved["salvage_amount"]
+    profile.opening_book_value = resolved["opening_book_value"]
+    profile.opening_actual_accumulated_depreciation = resolved[
+        "opening_actual_accumulated_depreciation"
+    ]
+    profile.expected_total_units = resolved["expected_total_units"]
+    profile.work_unit = resolved["work_unit"] or ""
+    profile.annual_posting_month = resolved["annual_posting_month"]
+    profile.effective_from = resolved["effective_from"]
+    profile.effective_to = resolved["effective_to"]
+    profile.status = "active"
+    profile.change_reason = resolved["change_reason"] or ""
     _save(profile)
     if resolved["method"] in {"units_of_production", "manual"}:
         # These methods need an explicit value in every posting period.  Their
@@ -1433,6 +1447,16 @@ def confirm_asset_finance(
         raise ValidationError("相同幂等键已用于其他资产或不同正式化参数。")
     if asset.current_issued_code_id:
         raise ValidationError("资产已有正式编号但缺少正式化幂等结果，请停止并复核数据。")
+    imported_profile_drafts = list(
+        models["AssetDepreciationProfile"]
+        .objects.select_for_update()
+        .filter(asset=asset, company=company, status="draft")
+        .order_by("version")
+    )
+    if len(imported_profile_drafts) > 1:
+        raise ValidationError(
+            "资产存在多个未确认折旧 Profile 草稿，必须先复核数据。"
+        )
     _validate_asset_physical(asset)
     target_date = _business_date(code_effective_date, field_name="code_effective_date")
     today = _business_date()
@@ -1469,6 +1493,10 @@ def confirm_asset_finance(
     else:
         if fixed_category is not None:
             raise ValidationError({"fixed_asset_category": "受控非固定资产不得填写固定资产类别。"})
+        if imported_profile_drafts:
+            raise ValidationError(
+                "资产已有固定资产折旧 Profile 草稿，不能认定为受控非固定资产。"
+            )
         if original >= threshold and not str(values.get("accounting_treatment_reason", "")).strip():
             raise ValidationError({"accounting_treatment_reason": "达到提示阈值而认定为非固定资产时必须填写说明。"})
         if profile_data:
@@ -1489,7 +1517,16 @@ def confirm_asset_finance(
     finance.save()
     profile = None
     if treatment == "fixed_asset":
-        profile = _create_profile_and_schedule(actor=actor, asset=asset, policy=policy, resolved=resolved, result=result)
+        profile = _create_profile_and_schedule(
+            actor=actor,
+            asset=asset,
+            policy=policy,
+            resolved=resolved,
+            result=result,
+            existing_profile=(
+                imported_profile_drafts[0] if imported_profile_drafts else None
+            ),
+        )
         _create_opening_effects(actor=actor, asset=asset, finance=finance, profile=profile, resolved=resolved)
     issued = _issue_code(
         actor=actor,

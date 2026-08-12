@@ -14,9 +14,10 @@ from apps.imports.services import (
     build_template_workbook,
     confirm_import_batch,
     get_template_definition,
+    require_import_permission,
     upload_and_validate_import,
 )
-from apps.masterdata.permissions import current_company, require_manage_masterdata
+from apps.masterdata.permissions import current_company, role_names_for
 
 
 def _company_or_404():
@@ -26,31 +27,54 @@ def _company_or_404():
     return company
 
 
-def _require(actor, import_type):
-    require_manage_masterdata(actor, import_type)
+def _definition_or_404(import_type, *, company=None):
+    try:
+        return get_template_definition(import_type, company=company)
+    except ValidationError as exc:
+        raise Http404("不支持的导入类型。") from exc
+
+
+def _require(actor, import_type, *, company=None):
+    require_import_permission(actor, import_type, company=company)
+
+
+def _require_batch(actor, batch):
+    """Apply the import gate and the asset-initialization object boundary."""
+
+    _require(actor, batch.import_type, company=batch.company)
+    if batch.import_type != "asset_initialization":
+        return
+    # Asset workbooks can contain F1 fields.  Finance may inspect company-wide
+    # initialization evidence; every physical creator revisits only batches
+    # they uploaded.  Concrete rows are also rechecked against current scope by
+    # the Service during validation and confirmation.
+    roles = role_names_for(actor)
+    if "finance" not in roles and batch.uploaded_by_id != actor.pk:
+        raise PermissionDenied("您没有查看此资产初始化导入批次的权限。")
 
 
 @login_required
 def import_home(request):
     company = _company_or_404()
     allowed = []
-    for import_type, definition in TEMPLATE_REGISTRY.items():
+    for import_type in TEMPLATE_REGISTRY:
         try:
-            _require(request.user, import_type)
+            _require(request.user, import_type, company=company)
         except PermissionDenied:
             continue
-        allowed.append(definition)
+        allowed.append(_definition_or_404(import_type, company=company))
     if not allowed:
-        raise PermissionDenied("您没有执行基础资料导入的权限。")
+        raise PermissionDenied("您没有执行导入的权限。")
     return render(request, "imports/home.html", {"company": company, "definitions": allowed})
 
 
 @login_required
 def download_template(request, import_type):
-    definition = get_template_definition(import_type)
-    _require(request.user, import_type)
+    company = _company_or_404()
+    definition = _definition_or_404(import_type, company=company)
+    _require(request.user, import_type, company=company)
     response = HttpResponse(
-        build_template_workbook(import_type),
+        build_template_workbook(import_type, company=company),
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
     response["Content-Disposition"] = (
@@ -62,9 +86,9 @@ def download_template(request, import_type):
 
 @login_required
 def upload_import(request, import_type):
-    definition = get_template_definition(import_type)
     company = _company_or_404()
-    _require(request.user, import_type)
+    definition = _definition_or_404(import_type, company=company)
+    _require(request.user, import_type, company=company)
     form = ImportUploadForm(request.POST or None, request.FILES or None, import_type=import_type)
     if request.method == "POST" and form.is_valid():
         try:
@@ -97,11 +121,16 @@ def batch_detail(request, pk):
         pk=pk,
         company=company,
     )
-    _require(request.user, batch.import_type)
+    _require_batch(request.user, batch)
     return render(
         request,
         "imports/batch_detail.html",
-        {"batch": batch, "rows": batch.rows.order_by("row_number"), "definition": get_template_definition(batch.import_type)},
+        {
+            "batch": batch,
+            "rows": batch.rows.order_by("row_number"),
+            "definition": _definition_or_404(batch.import_type, company=company),
+            "is_asset_initialization": batch.import_type == "asset_initialization",
+        },
     )
 
 
@@ -113,7 +142,7 @@ def confirm_batch(request, pk):
 
     company = _company_or_404()
     batch = get_object_or_404(ImportBatch, pk=pk, company=company)
-    _require(request.user, batch.import_type)
+    _require_batch(request.user, batch)
     if request.POST.get("confirm") != "1":
         messages.error(request, "请勾选确认后再执行整批导入。")
         return redirect("imports:batch_detail", pk=batch.pk)
@@ -134,7 +163,7 @@ def download_source(request, pk):
     batch = get_object_or_404(
         ImportBatch.objects.select_related("file_attachment"), pk=pk, company=company
     )
-    _require(request.user, batch.import_type)
+    _require_batch(request.user, batch)
     attachment = batch.file_attachment
     if not attachment.is_available or not default_storage.exists(attachment.storage_key):
         raise Http404("原文件不可用。")

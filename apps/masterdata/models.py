@@ -1360,6 +1360,7 @@ class ImportBatch(models.Model):
     class ImportType(models.TextChoices):
         DEPARTMENT = "department", "部门"
         EMPLOYEE = "employee", "人员"
+        ASSET_INITIALIZATION = "asset_initialization", "资产初始化"
 
     class Status(models.TextChoices):
         UPLOADED = "uploaded", "已上传"
@@ -1480,7 +1481,13 @@ class ImportBatch(models.Model):
                 name="ck_import_batch_status_fields",
             ),
             models.CheckConstraint(
-                condition=Q(import_type__in=("department", "employee")),
+                condition=Q(
+                    import_type__in=(
+                        "department",
+                        "employee",
+                        "asset_initialization",
+                    )
+                ),
                 name="ck_import_batch_type_valid",
             ),
             models.CheckConstraint(

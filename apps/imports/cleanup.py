@@ -10,7 +10,7 @@ from pathlib import Path, PurePosixPath
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist, PermissionDenied, ValidationError
 from django.core.files.storage import default_storage
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from apps.audit.services import write_business_audit_log
@@ -107,9 +107,19 @@ def _delete_batch_via_collector(batch):
     """Delete only after all checks while bypassing deliberately locked API."""
     from django.db.models.deletion import Collector
 
+    if connection.vendor == "postgresql":
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT set_config('eam_lite.controlled_import_cleanup', 'on', true)"
+            )
     collector = Collector(using=batch._state.db)
     collector.collect([batch])
     collector.delete()
+    if connection.vendor == "postgresql":
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT set_config('eam_lite.controlled_import_cleanup', 'off', true)"
+            )
 
 
 def _processing_idempotency_exists(batch):

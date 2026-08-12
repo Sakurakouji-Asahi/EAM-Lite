@@ -320,19 +320,29 @@ def _replace_custom_values(*, asset, custom_values):
 
 @transaction.atomic
 def create_asset_draft(
-    *, actor, company, data, custom_values=None, request=None
+    *,
+    actor,
+    company,
+    data,
+    custom_values=None,
+    initialization_source="manual",
+    request=None,
 ):
     from apps.assets.models import Asset
 
     company = _require_current_company(company)
     _require_initialization_completed(company)
+    if initialization_source not in {"manual", "excel_import"}:
+        raise ValidationError(
+            {"initialization_source": "初始化来源只能是手工录入或受控 Excel 导入。"}
+        )
     _validate_create_scope(actor, company, data)
     asset = _apply_asset_data(Asset(company=company), data)
     asset.asset_status = Asset.AssetStatus.DRAFT
     asset.record_status = Asset.RecordStatus.ACTIVE
     asset.asset_code = None
     asset.current_issued_code = None
-    asset.initialization_source = "manual"
+    asset.initialization_source = initialization_source
     asset.initialization_date = timezone.localdate()
     asset.initialized_by = actor
     asset.created_by = actor
@@ -347,6 +357,7 @@ def create_asset_draft(
             **_snapshot(asset),
             "quantity": 1,
             "asset_status": "draft",
+            "initialization_source": initialization_source,
             "custom_values": _custom_values_snapshot(asset),
         },
         request=request,

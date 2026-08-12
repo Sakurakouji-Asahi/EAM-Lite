@@ -67,6 +67,10 @@ class Asset(models.Model):
     class TrackingMode(models.TextChoices):
         SINGLE_ITEM = "single_item", "单件追踪"
 
+    class InitializationSource(models.TextChoices):
+        MANUAL = "manual", "手工录入"
+        EXCEL_IMPORT = "excel_import", "受控 Excel 导入"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey(
         Company,
@@ -158,7 +162,10 @@ class Asset(models.Model):
     )
     is_maintenance_required = models.BooleanField("需要保养", default=False)
     initialization_source = models.CharField(
-        "初始化来源", max_length=32, default="manual"
+        "初始化来源",
+        max_length=32,
+        choices=InitializationSource.choices,
+        default=InitializationSource.MANUAL,
     )
     initialization_date = models.DateField(
         "初始化日期", default=timezone.localdate
@@ -218,6 +225,10 @@ class Asset(models.Model):
             models.CheckConstraint(
                 condition=Q(tracking_mode="single_item"),
                 name="ck_asset_tracking_single",
+            ),
+            models.CheckConstraint(
+                condition=Q(initialization_source__in=("manual", "excel_import")),
+                name="ck_asset_initialization_source",
             ),
             models.CheckConstraint(
                 condition=Q(

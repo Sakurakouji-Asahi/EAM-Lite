@@ -1,14 +1,22 @@
 {% extends "base.html" %}
-{% block title %}基础资料导入 - EAM-Lite{% endblock %}
+{% block title %}导入中心 - EAM-Lite{% endblock %}
 {% block content %}
-<h1 class="h3 mb-3">基础资料导入</h1>
-<p class="text-secondary">当前公司：{{ company.short_name }}。导入只新增，不覆盖任何现有记录。</p>
+<h1 class="h3 mb-3">导入中心</h1>
+<p class="text-secondary">当前公司：{{ company.short_name }}。请先下载对应版本的标准模板；所有导入均采用整批校验、整批确认。</p>
 <div class="row g-3">
   {% for definition in definitions %}
   <div class="col-md-6">
     <div class="card h-100"><div class="card-body">
       <h2 class="h5">{{ definition.label }}导入</h2>
       <p>模板版本：{{ definition.version }}；工作表：{{ definition.sheet_name }}</p>
+      {% if definition.import_type == "asset_initialization" %}
+        <div class="alert alert-info py-2">
+          每行只代表一件实物，数量必须为 1。确认后只创建资产草稿，不生成正式编号、二维码或实际折旧分录。
+        </div>
+        <p class="small text-secondary">模板中的公司、实物分类、部门、责任员工和位置必须分别使用 code / employee_no 精确匹配；当前公司启用的资产自定义字段会随模板生成。</p>
+      {% else %}
+        <p class="small text-secondary">导入只新增，不按名称或编码覆盖现有记录。</p>
+      {% endif %}
       <a class="btn btn-outline-primary" href="{% url 'imports:template' definition.import_type %}">下载标准模板</a>
       <a class="btn btn-primary" href="{% url 'imports:upload' definition.import_type %}">上传并验证</a>
     </div></div>

@@ -7,6 +7,7 @@ class ImportUploadForm(forms.Form):
     IMPORT_CHOICES = (
         ("department", "部门"),
         ("employee", "人员"),
+        ("asset_initialization", "资产初始化"),
     )
 
     import_type = forms.ChoiceField(label="导入类型", choices=IMPORT_CHOICES)
@@ -30,6 +31,9 @@ class ImportUploadForm(forms.Form):
         uploaded = self.cleaned_data["file"]
         if not uploaded.name.lower().endswith(".xlsx"):
             raise forms.ValidationError("只允许上传无宏的 .xlsx 标准模板。")
+        expected = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        if str(getattr(uploaded, "content_type", "") or "").lower() != expected:
+            raise forms.ValidationError("文件 MIME 必须为标准 XLSX 类型。")
         return uploaded
 
     def clean_idempotency_key(self):

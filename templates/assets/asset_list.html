@@ -6,7 +6,13 @@
       <h1 class="h3 mb-1">资产总账</h1>
       <p class="text-secondary mb-0">仅显示当前公司及当前账号数据范围内的资产。</p>
     </div>
-    {% if can_create %}<a class="btn btn-primary" href="{% url 'assets:asset-create' %}">新增资产</a>{% endif %}
+    {% if can_create %}
+      <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-outline-primary" href="{% url 'imports:template' 'asset_initialization' %}">下载初始化模板</a>
+        <a class="btn btn-outline-primary" href="{% url 'imports:upload' 'asset_initialization' %}">批量初始化建账</a>
+        <a class="btn btn-primary" href="{% url 'assets:asset-create' %}">新增资产</a>
+      </div>
+    {% endif %}
   </div>
 
   <form method="get" class="card shadow-sm mb-3" aria-label="资产搜索和筛选">
