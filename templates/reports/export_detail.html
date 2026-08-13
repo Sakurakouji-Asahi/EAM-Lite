@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}导出结果 | EAM-Lite{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <div><h1 class="h3 mb-1">{{ definition.title }}导出结果</h1><p class="text-secondary mb-0">导出 ID：{{ export_log.pk }}</p></div>
+  {% if can_download %}<a class="btn btn-success" href="{% url 'reports:export-download' export_log.pk %}">下载 Excel</a>{% endif %}
+</div>
+
+<section class="card shadow-sm mb-3">
+  <div class="card-body">
+    {% if export_log.status == 'failed' %}<div class="alert alert-danger">{{ export_log.error_summary }}</div>{% elif export_log.status == 'expired' %}<div class="alert alert-warning">文件已过期，不能下载。</div>{% elif export_log.status == 'pending' %}<div class="alert alert-info">文件正在生成。</div>{% endif %}
+    <dl class="row mb-0">
+      <dt class="col-sm-3">状态</dt><dd class="col-sm-9">{{ export_log.get_status_display }}</dd>
+      <dt class="col-sm-3">导出人</dt><dd class="col-sm-9">{{ export_log.requested_by.display_name|default:export_log.requested_by.username|default:'系统' }}</dd>
+      <dt class="col-sm-3">请求时间</dt><dd class="col-sm-9">{{ export_log.requested_at|date:'Y-m-d H:i:s' }}</dd>
+      <dt class="col-sm-3">生成时间</dt><dd class="col-sm-9">{{ export_log.completed_at|date:'Y-m-d H:i:s'|default:'—' }}</dd>
+      <dt class="col-sm-3">数据截止时间</dt><dd class="col-sm-9">{{ export_log.data_snapshot_at|date:'Y-m-d H:i:s'|default:'—' }}</dd>
+      <dt class="col-sm-3">行数</dt><dd class="col-sm-9">{{ export_log.row_count|default_if_none:'—' }}</dd>
+      <dt class="col-sm-3">口径版本</dt><dd class="col-sm-9"><code>{{ export_log.totals_schema_version|default:'—' }}</code></dd>
+      {% if export_log.output_attachment %}<dt class="col-sm-3">文件名</dt><dd class="col-sm-9">{{ export_log.output_attachment.safe_filename }}</dd>{% endif %}
+    </dl>
+  </div>
+</section>
+
+<section class="card shadow-sm mb-3">
+  <div class="card-header">筛选条件</div>
+  <div class="card-body"><dl class="row mb-0">{% for key, value in display_filters.items %}<dt class="col-sm-3"><code>{{ key }}</code></dt><dd class="col-sm-9">{{ value }}</dd>{% empty %}<dd class="text-secondary mb-0">无附加筛选条件。</dd>{% endfor %}</dl></div>
+</section>
+
+{% if export_log.totals.all %}
+<section class="card shadow-sm"><div class="card-header">金额合计</div><div class="table-responsive"><table class="table table-striped mb-0"><thead><tr><th>指标</th><th class="text-end">金额</th><th>币种</th></tr></thead><tbody>{% for total in export_log.totals.all %}<tr><td><code>{{ total.metric_key }}</code></td><td class="text-end">{{ total.amount|floatformat:2 }}</td><td>{{ total.currency }}</td></tr>{% empty %}<tr><td colspan="3" class="text-center text-secondary">无金额合计。</td></tr>{% endfor %}</tbody></table></div></section>
+{% endif %}
+{% endblock %}

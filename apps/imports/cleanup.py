@@ -367,6 +367,13 @@ def cleanup_orphan_attachments(
             if attachment.import_batches.exists():
                 report.attachments_skipped[attachment_id] = "仍被导入批次引用"
                 continue
+            try:
+                has_export_log = attachment.export_log is not None
+            except ObjectDoesNotExist:
+                has_export_log = False
+            if has_export_log:
+                report.attachments_skipped[attachment_id] = "仍被导出记录引用"
+                continue
             # Sprint 3 adds a protected business-object link.  An attachment
             # can be unavailable/orphan-marked because of an interrupted old
             # operation, yet still be evidence referenced by an asset. Treat

@@ -333,6 +333,7 @@ def test_employee_detail_links_hr_to_initiate_and_then_to_active_clearance(clien
     assert _detail_url(clearance) in second.content.decode()
 
 
+@pytest.mark.django_db(transaction=True)
 def test_home_unresolved_count_uses_clearance_scope(client):
     context = offboarding_context("S10HOME")
     formal_asset(context, "S10HOME-A")

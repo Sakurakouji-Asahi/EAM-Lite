@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}T+ 人工对账导出 | EAM-Lite{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+  <h1 class="h3 mb-1">T+ 月末人工对账导出</h1>
+  <p class="text-danger mb-0">仅供 T+ 人工对账，不代表已记账；不会同步、推送或写入 T+。</p>
+</div>
+
+<section class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="post" class="row g-3" novalidate>
+      {% csrf_token %}
+      {% if form.non_field_errors %}<div class="col-12"><div class="alert alert-danger mb-0">{{ form.non_field_errors }}</div></div>{% endif %}
+      {% for field in form %}
+        {% if field.is_hidden %}{{ field }}{% else %}
+          <div class="col-12 col-md-6 col-xl-3">
+            <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+            {{ field }}
+            {% for error in field.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+          </div>
+        {% endif %}
+      {% endfor %}
+      <div class="col-12 d-flex gap-2">
+        <button class="btn btn-outline-primary" type="submit" name="action" value="preview">校验并预览</button>
+        {% if dataset %}<button class="btn btn-success" type="submit" name="action" value="generate">生成对账文件</button>{% endif %}
+      </div>
+    </form>
+  </div>
+</section>
+
+{% if dataset %}
+<section class="card shadow-sm mb-3">
+  <div class="card-header"><strong>{{ period }} 对账预览</strong><div class="small text-secondary">预览生成时间 {{ generated_at|date:'Y-m-d H:i:s' }} · 数据截止时间 {{ dataset.data_snapshot_at|date:'Y-m-d H:i:s' }} · 资产 {{ dataset.row_count }} 项</div></div>
+  <div class="card-body">
+    {% for warning in dataset.warnings %}<div class="alert alert-warning">{{ warning }}</div>{% endfor %}
+    <div class="row g-2">
+      {% for key, amount in total_rows %}<div class="col-12 col-md-6 col-xl-4"><div class="border rounded p-2"><div class="small text-secondary">{{ key }}</div><div class="text-end fw-semibold">{{ amount|floatformat:2 }} CNY</div></div></div>{% endfor %}
+    </div>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-striped align-middle mb-0 report-preview-table">
+      <thead><tr>{% for column in asset_columns %}<th class="text-nowrap">{{ column.label }}</th>{% endfor %}</tr></thead>
+      <tbody>{% for row in asset_preview_rows %}<tr>{% for column, value in row %}<td class="{% if column.kind == 'money' or column.kind == 'decimal' or column.kind == 'integer' or column.kind == 'rate' %}text-end{% endif %}">{% if value is None or value == '' %}<span class="text-secondary">—</span>{% elif column.kind == 'money' %}{{ value|floatformat:2 }}{% elif column.kind == 'date' %}{{ value|date:'Y-m-d' }}{% else %}{{ value }}{% endif %}</td>{% endfor %}</tr>{% empty %}<tr><td colspan="{{ asset_columns|length }}" class="text-center text-secondary py-4">没有可导出的固定资产。</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+  {% if entry_preview_rows %}
+    <div class="card-header border-top"><strong>本期实际折旧分录预览</strong></div>
+    <div class="table-responsive"><table class="table table-striped align-middle mb-0 report-preview-table"><thead><tr>{% for column in entry_columns %}<th class="text-nowrap">{{ column.label }}</th>{% endfor %}</tr></thead><tbody>{% for row in entry_preview_rows %}<tr>{% for column, value in row %}<td class="{% if column.kind == 'money' %}text-end{% endif %}">{% if value is None or value == '' %}<span class="text-secondary">—</span>{% elif column.kind == 'money' %}{{ value|floatformat:2 }}{% elif column.kind == 'date' %}{{ value|date:'Y-m-d' }}{% elif column.kind == 'datetime' %}{{ value|date:'Y-m-d H:i:s' }}{% else %}{{ value }}{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="card shadow-sm">
+  <div class="card-header">历史导出</div>
+  <div class="table-responsive">
+    <table class="table table-striped align-middle mb-0">
+      <thead><tr><th>期间</th><th>状态</th><th>导出人</th><th>请求时间</th><th>生成时间</th><th>数据截止时间</th><th>资产数</th><th></th></tr></thead>
+      <tbody>{% for item in history %}<tr><td>{{ item.filters_json.period|default:'—' }}</td><td>{{ item.get_status_display }}</td><td>{{ item.requested_by.display_name|default:item.requested_by.username|default:'系统' }}</td><td>{{ item.requested_at|date:'Y-m-d H:i:s' }}</td><td>{{ item.completed_at|date:'Y-m-d H:i:s'|default:'—' }}</td><td>{{ item.data_snapshot_at|date:'Y-m-d H:i:s'|default:'—' }}</td><td>{{ item.row_count|default_if_none:'—' }}</td><td><a href="{% url 'reports:export-detail' item.pk %}">详情</a></td></tr>{% empty %}<tr><td colspan="8" class="text-center text-secondary py-4">暂无历史导出。</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

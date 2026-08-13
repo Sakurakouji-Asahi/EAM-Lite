@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     "apps.maintenance.apps.MaintenanceConfig",
     "apps.offboarding.apps.OffboardingConfig",
     "apps.imports.apps.ImportsConfig",
+    "apps.reports.apps.ReportsConfig",
     "apps.core.apps.CoreConfig",
 ]
 
@@ -73,6 +74,7 @@ TEMPLATES = [
                 "apps.inventory.context_processors.inventory_navigation",
                 "apps.maintenance.context_processors.maintenance_navigation",
                 "apps.offboarding.context_processors.offboarding_navigation",
+                "apps.reports.context_processors.report_navigation",
             ],
         },
     },

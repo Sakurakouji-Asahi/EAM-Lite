@@ -65,6 +65,12 @@
               <a class="nav-link px-0" href="{% url 'offboarding:clearance-list' %}">离职资产清退</a>
               {% if offboarding_nav.can_initiate %}<a class="nav-link px-0" href="{% url 'offboarding:clearance-initiate' %}">发起离职清退</a>{% endif %}
             {% endif %}
+            {% if reports_nav.can_view %}
+              <div class="text-secondary small mt-3 mb-1">报表中心</div>
+              <a class="nav-link px-0" href="{% url 'reports:report-center' %}">报表查询与导出</a>
+              {% if reports_nav.can_view_external_references %}<a class="nav-link px-0" href="{% url 'reports:external-reference-list' %}">T+ 资产卡片编码</a>{% endif %}
+              {% if reports_nav.can_view_tplus %}<a class="nav-link px-0" href="{% url 'reports:tplus-export' %}">T+ 人工对账导出</a>{% endif %}
+            {% endif %}
             {% if can_access_setup %}<a class="nav-link px-0" href="{% url 'masterdata:setup' %}">初始化向导</a>{% endif %}
             {% if masterdata_nav.company or masterdata_nav.department or masterdata_nav.employee or masterdata_nav.location or masterdata_nav.asset_category or masterdata_nav.coding_scheme %}
               <div class="text-secondary small mt-3 mb-1">基础资料</div>
@@ -75,10 +81,11 @@
               {% if masterdata_nav.coding_scheme %}<a class="nav-link px-0" href="{% url 'masterdata:coding-scheme-list' %}">编码规则</a>{% endif %}
               {% if masterdata_nav.location %}<a class="nav-link px-0" href="{% url 'masterdata:location-list' %}">位置</a>{% endif %}
             {% endif %}
-            {% if masterdata_nav.system_setting or masterdata_nav.user_permissions %}
+            {% if masterdata_nav.system_setting or masterdata_nav.user_permissions or audit_nav.can_view %}
               <div class="text-secondary small mt-3 mb-1">系统设置</div>
               {% if masterdata_nav.system_setting %}<a class="nav-link px-0" href="{% url 'masterdata:system-settings' %}">附件技术设置</a>{% endif %}
               {% if masterdata_nav.user_permissions %}<a class="nav-link px-0" href="{% url 'masterdata:user-permissions-list' %}">用户权限</a>{% endif %}
+              {% if audit_nav.can_view %}<a class="nav-link px-0" href="{% url 'audit:log-list' %}">操作日志</a>{% endif %}
             {% endif %}
             {% if masterdata_manage.department or masterdata_manage.employee %}<a class="nav-link px-0" href="{% url 'imports:home' %}">基础资料导入</a>{% endif %}
             {% if not asset_nav.initialized %}<span class="nav-link disabled px-0">资产建档将在初始化全部完成后开放</span>{% endif %}

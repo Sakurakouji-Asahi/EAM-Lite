@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}报表中心 | EAM-Lite{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-1">报表中心</h1>
+    <p class="text-secondary mb-0">预览、筛选条件和 Excel 导出使用同一数据口径与权限范围。</p>
+  </div>
+</div>
+
+<section class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-3" novalidate>
+      {% if form.non_field_errors %}<div class="col-12"><div class="alert alert-danger mb-0">{{ form.non_field_errors }}</div></div>{% endif %}
+      {% for field in form %}
+        <div class="col-12 col-md-6 col-xl-3">
+          <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+          {{ field }}
+          {% for error in field.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+        </div>
+      {% endfor %}
+      <div class="col-12 d-flex gap-2">
+        <button class="btn btn-primary" type="submit">查询预览</button>
+        <a class="btn btn-outline-secondary" href="{% url 'reports:report-center' %}">重置</a>
+      </div>
+    </form>
+  </div>
+</section>
+
+{% if dataset %}
+<section class="card shadow-sm">
+  <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <div>
+      <strong>{{ dataset.definition.title }}</strong>
+      <div class="small text-secondary">预览生成时间 {{ generated_at|date:'Y-m-d H:i:s' }} · 数据截止时间 {{ dataset.data_snapshot_at|date:'Y-m-d H:i:s' }} · 共 {{ dataset.row_count }} 行</div>
+    </div>
+    {% if can_export %}
+      <form method="post" action="{% url 'reports:report-export' %}" class="m-0">
+        {% csrf_token %}
+        {% for field in form %}{{ field.as_hidden }}{% endfor %}
+        <input type="hidden" name="idempotency_key" value="{{ export_idempotency_key }}">
+        <button class="btn btn-success" type="submit">生成 Excel</button>
+      </form>
+    {% endif %}
+  </div>
+  <div class="card-body border-bottom">
+    <div class="d-flex flex-wrap gap-2">
+      {% for label, value in display_filters %}<span class="badge text-bg-light border">{{ label }}：{{ value }}</span>{% empty %}<span class="text-secondary">未附加筛选条件</span>{% endfor %}
+    </div>
+    {% for warning in dataset.warnings %}<div class="alert alert-warning mt-3 mb-0">{{ warning }}</div>{% endfor %}
+    {% if dataset.row_count > preview_limit %}<div class="alert alert-info mt-3 mb-0">页面仅预览前 {{ preview_limit }} 行，Excel 包含全部授权结果。</div>{% endif %}
+  </div>
+  <div class="table-responsive">
+    <table class="table table-striped table-hover align-middle mb-0 report-preview-table">
+      <thead><tr>{% for column in columns %}<th class="text-nowrap">{{ column.label }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% for row in preview_rows %}
+          <tr>
+            {% for column, value in row %}
+              <td class="{% if column.kind == 'money' or column.kind == 'decimal' or column.kind == 'integer' or column.kind == 'rate' %}text-end{% endif %}">
+                {% if value is None or value == '' %}<span class="text-secondary">—</span>{% elif column.kind == 'money' %}{{ value|floatformat:2 }}{% elif column.kind == 'date' %}{{ value|date:'Y-m-d' }}{% elif column.kind == 'datetime' %}{{ value|date:'Y-m-d H:i:s' }}{% else %}{{ value }}{% endif %}
+              </td>
+            {% endfor %}
+          </tr>
+        {% empty %}<tr><td colspan="{{ columns|length }}" class="text-center text-secondary py-4">当前条件下没有数据。</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

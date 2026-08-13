@@ -1,14 +1,16 @@
-from django.contrib.auth.decorators import login_required
-from django.db.utils import OperationalError, ProgrammingError
-from django.shortcuts import render
+from datetime import timedelta
 
-from apps.maintenance.permissions import can_complete_maintenance
-from apps.maintenance.services import due_maintenance_plans
+from django.contrib.auth.decorators import login_required
+from django.shortcuts import render
+from django.utils import timezone
+from django.views.decorators.cache import never_cache
+
 from apps.masterdata.models import InitializationSetting
 from apps.masterdata.permissions import current_company
-from apps.offboarding.permissions import scoped_clearance_items
+from apps.reports.queries import build_dashboard
 
 
+@never_cache
 @login_required
 def home(request):
     company = current_company()
@@ -19,47 +21,44 @@ def home(request):
             initialization_completed=True,
         ).exists()
     )
-    labels = {
-        "upcoming": "即将到期",
-        "due_today": "今日到期",
-        "overdue": "逾期",
-    }
-    maintenance_items = []
-    maintenance_counts = {key: 0 for key in labels}
-    offboarding_unresolved_count = 0
+    dashboard = None
+    dashboard_filters = None
     if initialized:
-        for plan, status in due_maintenance_plans(request.user, company):
-            if status not in labels:
-                continue
-            maintenance_counts[status] += 1
-            maintenance_items.append(
-                {
-                    "plan": plan,
-                    "due_status": status,
-                    "due_label": labels[status],
-                    "can_complete": can_complete_maintenance(request.user, plan),
-                }
-            )
-        try:
-            from apps.offboarding.models import EmployeeAssetClearanceItem
-
-            offboarding_unresolved_count = scoped_clearance_items(
-                request.user,
-                company,
-                EmployeeAssetClearanceItem.objects.filter(
-                    clearance__status__in=("open", "blocked"),
-                    resolution__in=("pending", "disposal_in_progress"),
-                ),
-            ).count()
-        except (ImportError, OperationalError, ProgrammingError):
-            offboarding_unresolved_count = 0
-    return render(
+        dashboard = build_dashboard(actor=request.user, company=company)
+        as_of = timezone.localdate()
+        month_start = as_of.replace(day=1)
+        if month_start.month == 12:
+            next_month = month_start.replace(year=month_start.year + 1, month=1)
+        else:
+            next_month = month_start.replace(month=month_start.month + 1)
+        dashboard_filters = {
+            "as_of_date": as_of.isoformat(),
+            "month_start": month_start.isoformat(),
+            "month_end": (next_month - timedelta(days=1)).isoformat(),
+        }
+    response = render(
         request,
         "core/home.html",
         {
             "initialized": initialized,
-            "maintenance_items": maintenance_items,
-            "maintenance_counts": maintenance_counts,
-            "offboarding_unresolved_count": offboarding_unresolved_count,
+            "dashboard": dashboard,
+            "dashboard_filters": dashboard_filters,
+            # Backward-compatible home context aliases. Values come from the
+            # Dashboard DTO, so there remains a single calculation source.
+            "maintenance_counts": (
+                dashboard.get("maintenance_counts", {})
+                if dashboard
+                else {"upcoming": 0, "due_today": 0, "overdue": 0}
+            ),
+            "maintenance_items": (
+                dashboard.get("maintenance_items", ()) if dashboard else ()
+            ),
+            "offboarding_unresolved_count": (
+                dashboard.get("pending", {}).get("offboarding_unresolved", 0)
+                if dashboard
+                else 0
+            ),
         },
     )
+    response["Cache-Control"] = "private, no-store"
+    return response

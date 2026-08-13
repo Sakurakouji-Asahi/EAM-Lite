@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}T+ 资产卡片编码 | EAM-Lite{% endblock %}
+
+{% block content %}
+<div class="mb-3"><h1 class="h3 mb-1">T+ 资产卡片编码</h1><p class="text-secondary mb-0">仅用于人工对账，不作为 EAM 主键，不触发 T+ 同步或记账。</p></div>
+
+<section class="card shadow-sm">
+  <div class="card-body border-bottom">
+    <form method="get" class="d-flex flex-wrap gap-2">
+      <label class="visually-hidden" for="reference-search">搜索</label>
+      <input class="form-control flex-grow-1" id="reference-search" name="q" value="{{ query }}" placeholder="资产编号、名称或 T+ 卡片编码">
+      <button class="btn btn-primary" type="submit">查询</button>
+      <a class="btn btn-outline-secondary" href="{% url 'reports:external-reference-list' %}">重置</a>
+    </form>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-striped align-middle mb-0"><thead><tr><th>资产编号</th><th>资产名称</th><th>实物分类</th><th>部门</th><th>T+ 资产卡片编码</th><th>更新时间</th>{% if can_manage %}<th></th>{% endif %}</tr></thead><tbody>
+      {% for row in page_obj.object_list %}<tr><td>{{ row.asset.asset_code }}</td><td>{{ row.asset.asset_name }}</td><td>{{ row.asset.category.name }}</td><td>{{ row.asset.department.name }}</td><td>{{ row.reference.reference_value|default:'—' }}</td><td>{{ row.reference.updated_at|date:'Y-m-d H:i:s'|default:'—' }}</td>{% if can_manage %}<td><a class="btn btn-sm btn-outline-primary" href="{% url 'reports:external-reference-edit' row.asset.pk %}">{% if row.reference %}更正{% else %}维护{% endif %}</a></td>{% endif %}</tr>{% empty %}<tr><td colspan="{% if can_manage %}7{% else %}6{% endif %}" class="text-center text-secondary py-4">没有符合条件的正式资产。</td></tr>{% endfor %}
+    </tbody></table>
+  </div>
+  {% if page_obj.paginator.num_pages > 1 %}<div class="card-footer d-flex justify-content-between"><span>第 {{ page_obj.number }} / {{ page_obj.paginator.num_pages }} 页</span><div class="btn-group">{% if page_obj.has_previous %}<a class="btn btn-sm btn-outline-primary" href="?q={{ query|urlencode }}&amp;page={{ page_obj.previous_page_number }}">上一页</a>{% endif %}{% if page_obj.has_next %}<a class="btn btn-sm btn-outline-primary" href="?q={{ query|urlencode }}&amp;page={{ page_obj.next_page_number }}">下一页</a>{% endif %}</div></div>{% endif %}
+</section>
+{% endblock %}

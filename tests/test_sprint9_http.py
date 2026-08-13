@@ -71,6 +71,7 @@ def test_equipment_opens_and_submits_plan_form_without_runtime_hour(client):
     assert plan.cycle_unit == "week" and plan.cycle_value == 2
 
 
+@pytest.mark.django_db(transaction=True)
 def test_home_and_due_list_share_the_same_due_query_and_surface(client):
     ctx = maintenance_context("S9HTTPDUE")
     client.force_login(ctx["responsible_user"])

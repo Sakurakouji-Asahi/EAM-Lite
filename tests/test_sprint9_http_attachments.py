@@ -140,6 +140,7 @@ def test_attachment_targets_a0_a1_download_scope_validation_and_void_history():
     ).count() == 1
 
 
+@pytest.mark.django_db(transaction=True)
 def test_home_due_detail_qr_mobile_completion_and_multipart_upload_http(tmp_path):
     ctx = maintenance_context("S9HTTP")
     client = Client()

@@ -55,6 +55,26 @@ class AuditLog(models.Model):
             models.Index(fields=("action", "created_at")),
             models.Index(fields=("object_type", "object_id")),
             models.Index(fields=("correlation_id",)),
+            models.Index(
+                fields=("company", "created_at"),
+                name="audit_co_created_idx",
+            ),
+            models.Index(
+                fields=("company", "user", "created_at"),
+                name="audit_co_user_at_idx",
+            ),
+            models.Index(
+                fields=("company", "object_type", "object_id", "created_at"),
+                name="audit_co_object_at_idx",
+            ),
+            models.Index(
+                fields=("company", "action", "created_at"),
+                name="audit_co_action_at_idx",
+            ),
+            models.Index(
+                fields=("company", "correlation_id", "created_at"),
+                name="audit_co_corr_at_idx",
+            ),
         ]
 
     def save(self, *args, **kwargs):

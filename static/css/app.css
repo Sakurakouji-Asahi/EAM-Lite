@@ -34,6 +34,36 @@
   gap: .75rem;
 }
 
+.audit-json {
+  max-width: 30rem;
+  max-height: 12rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: .75rem;
+}
+
+.audit-log-table {
+  min-width: 92rem;
+}
+
+.report-preview-table {
+  min-width: 72rem;
+}
+
+.dashboard-card-grid,
+.dashboard-pending-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: .75rem;
+}
+
+.dashboard-pending-grid > a {
+  display: flex;
+  justify-content: space-between;
+  gap: .75rem;
+}
+
 @media (max-width: 767.98px) {
   .min-vh-content {
     min-height: auto;
@@ -48,6 +78,11 @@
   }
 
   .maintenance-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-card-grid,
+  .dashboard-pending-grid {
     grid-template-columns: 1fr;
   }
 

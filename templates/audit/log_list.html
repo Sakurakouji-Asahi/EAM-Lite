@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}操作日志 | EAM-Lite{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <div>
+    <h1 class="h3 mb-1">操作日志</h1>
+    <p class="text-secondary mb-0">只读查询；所有时间按上海时区解释，变更摘要按当前字段权限再次脱敏。</p>
+  </div>
+</div>
+
+<section class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-3" novalidate>
+      {% if form.non_field_errors %}
+        <div class="col-12"><div class="alert alert-danger mb-0">{{ form.non_field_errors }}</div></div>
+      {% endif %}
+      {% for field in form %}
+        <div class="col-12 col-md-6 col-xl-3">
+          <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+          {{ field }}
+          {% for error in field.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+        </div>
+      {% endfor %}
+      <div class="col-12 d-flex gap-2">
+        <button class="btn btn-primary" type="submit">查询</button>
+        <a class="btn btn-outline-secondary" href="{% url 'audit:log-list' %}">恢复最近 7 天</a>
+      </div>
+    </form>
+  </div>
+</section>
+
+{% if page_obj %}
+<section class="card shadow-sm">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>查询结果</span>
+    <span class="text-secondary small">共 {{ page_obj.paginator.count }} 条</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-striped align-middle mb-0 audit-log-table">
+      <thead>
+        <tr>
+          <th>时间</th>
+          <th>操作者</th>
+          <th>动作</th>
+          <th>对象</th>
+          <th>变更前</th>
+          <th>变更后</th>
+          <th>关联 ID</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for log in page_obj.object_list %}
+          <tr>
+            <td class="text-nowrap">{{ log.created_at|date:"Y-m-d H:i:s" }}</td>
+            <td>{{ log.actor }}</td>
+            <td><code>{{ log.action }}</code></td>
+            <td><span class="text-nowrap">{{ log.object_type }}</span><br><small class="text-secondary text-break">{{ log.object_id|default:"—" }}</small></td>
+            <td><pre class="audit-json mb-0">{{ log.old_data }}</pre></td>
+            <td><pre class="audit-json mb-0">{{ log.new_data }}</pre></td>
+            <td><code class="small">{{ log.correlation_id }}</code></td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="7" class="text-center text-secondary py-4">当前条件下没有操作日志。</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if page_obj.paginator.num_pages > 1 %}
+    <div class="card-footer d-flex justify-content-between align-items-center">
+      <span class="text-secondary small">第 {{ page_obj.number }} / {{ page_obj.paginator.num_pages }} 页</span>
+      <div class="btn-group" role="group" aria-label="操作日志分页">
+        {% if page_obj.has_previous %}<a class="btn btn-sm btn-outline-primary" href="?{{ filter_query }}&amp;page={{ page_obj.previous_page_number }}">上一页</a>{% endif %}
+        {% if page_obj.has_next %}<a class="btn btn-sm btn-outline-primary" href="?{{ filter_query }}&amp;page={{ page_obj.next_page_number }}">下一页</a>{% endif %}
+      </div>
+    </div>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

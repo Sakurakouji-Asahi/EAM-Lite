@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block title %}维护 T+ 资产卡片编码 | EAM-Lite{% endblock %}
+
+{% block content %}
+<div class="mb-3"><h1 class="h3 mb-1">维护 T+ 资产卡片编码</h1><p class="text-secondary mb-0">{{ asset.asset_code }} · {{ asset.asset_name }}</p></div>
+<section class="card shadow-sm"><div class="card-body">
+  {% if current %}<div class="alert alert-info">当前编码：<strong>{{ current.reference_value }}</strong>。更正将保留 old/new、原因和操作者审计。</div>{% endif %}
+  <form method="post" novalidate>{% csrf_token %}
+    {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+    {% for field in form %}<div class="mb-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% for error in field.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}</div>{% endfor %}
+    <div class="alert alert-warning">此操作只维护人工核对引用，不会连接、推送或修改 T+。</div>
+    <button class="btn btn-primary" type="submit">保存并记录审计</button>
+    <a class="btn btn-outline-secondary" href="{% url 'reports:external-reference-list' %}">取消</a>
+  </form>
+</div></section>
+{% endblock %}

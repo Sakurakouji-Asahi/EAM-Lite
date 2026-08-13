@@ -456,6 +456,123 @@ class Asset(models.Model):
         return self.asset_code or self.draft_number
 
 
+class AssetExternalReferenceQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        actor_fields = {"created_by", "created_by_id"}
+        if set(kwargs).issubset(actor_fields) and all(
+            value is None for value in kwargs.values()
+        ):
+            return super().update(**kwargs)
+        raise ValidationError("外部引用只能通过受控财务 Service 更正。")
+
+    def delete(self):
+        raise ValidationError("外部引用不可删除。")
+
+
+class AssetExternalReference(models.Model):
+    class ExternalSystem(models.TextChoices):
+        TPLUS = "TPLUS", "用友 T+"
+
+    class ReferenceType(models.TextChoices):
+        ASSET_CARD_CODE = "asset_card_code", "T+ 资产卡片编码"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(
+        Company,
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="asset_external_references",
+    )
+    asset = models.ForeignKey(
+        Asset,
+        verbose_name="资产",
+        on_delete=models.PROTECT,
+        related_name="external_references",
+    )
+    external_system = models.CharField(
+        "外部系统", max_length=32, choices=ExternalSystem.choices
+    )
+    reference_type = models.CharField(
+        "引用类型", max_length=32, choices=ReferenceType.choices
+    )
+    reference_value = models.CharField("外部编码", max_length=128)
+    normalized_value = models.CharField(
+        "规范化外部编码", max_length=128, editable=False
+    )
+    note = models.TextField("备注", blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="创建人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_asset_external_references",
+    )
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+    updated_at = models.DateTimeField("更新时间", auto_now=True)
+
+    objects = AssetExternalReferenceQuerySet.as_manager()
+
+    class Meta:
+        verbose_name = "资产外部引用"
+        verbose_name_plural = "资产外部引用"
+        ordering = ("asset_id", "external_system", "reference_type")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("asset", "external_system", "reference_type"),
+                name="uq_asset_external_ref_asset_type",
+            ),
+            models.UniqueConstraint(
+                fields=(
+                    "company",
+                    "external_system",
+                    "reference_type",
+                    "normalized_value",
+                ),
+                name="uq_asset_external_ref_company_value",
+            ),
+            models.CheckConstraint(
+                condition=Q(external_system="TPLUS"),
+                name="ck_asset_external_ref_system",
+            ),
+            models.CheckConstraint(
+                condition=Q(reference_type="asset_card_code"),
+                name="ck_asset_external_ref_type",
+            ),
+            models.CheckConstraint(
+                condition=~Q(reference_value="") & ~Q(normalized_value=""),
+                name="ck_asset_external_ref_value_nonempty",
+            ),
+        ]
+
+    def _normalize_value(self):
+        self.reference_value = clean_display_identifier(self.reference_value)
+        self.normalized_value = normalize_identifier(self.reference_value)
+
+    def clean(self):
+        super().clean()
+        self._normalize_value()
+        errors = {}
+        if not self.normalized_value:
+            errors["reference_value"] = "T+ 资产卡片编码不能为空。"
+        if self.asset_id and self.asset.company_id != self.company_id:
+            errors["asset"] = "资产与外部引用必须属于同一公司。"
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self._normalize_value()
+        if not self._state.adding:
+            raise ValidationError("外部引用只能通过受控财务 Service 更正。")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("外部引用不可删除。")
+
+    def __str__(self):
+        return f"{self.asset} / {self.reference_value}"
+
+
 class AssetCustomField(models.Model):
     class FieldType(models.TextChoices):
         TEXT = "text", "文本"
