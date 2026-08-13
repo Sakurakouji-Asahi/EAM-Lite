@@ -42,6 +42,7 @@ from apps.assets.permissions import (
     can_withdraw_asset,
     scoped_assets,
 )
+from apps.assets.qr_permissions import can_manage_labels
 from apps.assets.services import (
     FINANCIAL_FIELD_NAMES,
     create_asset_draft,
@@ -486,6 +487,7 @@ def asset_detail(request, pk):
     can_summary_fields = can_view_asset_summary_fields(request.user, asset)
     can_financial = can_view_financial_fields(request.user)
     roles = role_names_for(request.user)
+    current_qr = asset.qr_identities.filter(status="active").first()
     attachment_filter = Q(pk__in=[])
     if can_p1 and "hr" not in roles:
         attachment_filter |= Q(security_class=AttachmentLink.SecurityClass.A0)
@@ -541,6 +543,8 @@ def asset_detail(request, pk):
             "can_set_scheme": can_set_requested_coding_scheme(request.user, asset),
             "can_upload_a0": can_create_attachment_link(request.user, asset, "A0"),
             "can_upload_a1": can_create_attachment_link(request.user, asset, "A1"),
+            "can_manage_labels": can_manage_labels(request.user, asset),
+            "current_qr": current_qr,
         },
     )
 

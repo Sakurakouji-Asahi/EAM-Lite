@@ -1,6 +1,7 @@
 from django.urls import path
 
 from apps.assets import views
+from apps.assets.qr_urls import urlpatterns as qr_urlpatterns
 
 
 app_name = "assets"
@@ -34,3 +35,5 @@ urlpatterns = [
         name="attachment-void",
     ),
 ]
+
+urlpatterns += qr_urlpatterns

@@ -105,7 +105,9 @@ def test_runtime_formatter_redacts_sensitive_assignments():
         lineno=1,
         msg=(
             "request password=plain token:secret-value "
-            "\"authorization\": \"Bearer sensitive value\" safe=value"
+            "\"authorization\": \"Bearer sensitive value\" safe=value "
+            "GET /assets/scan/high-entropy-qr-token/?next=/assets/"
+            " next=%2Fassets%2Fscan%2Fencoded-high-entropy-token%2F"
         ),
         args=(),
         exc_info=None,
@@ -115,8 +117,11 @@ def test_runtime_formatter_redacts_sensitive_assignments():
     assert "plain" not in output
     assert "secret-value" not in output
     assert "Bearer sensitive value" not in output
+    assert "high-entropy-qr-token" not in output
+    assert "encoded-high-entropy-token" not in output
+    assert "/assets/scan/[REDACTED]/?next=/assets/" in output
     assert "safe=value" in output
-    assert output.count("[REDACTED]") == 3
+    assert output.count("[REDACTED]") == 5
 
 
 def test_audit_service_redacts_sensitive_user_agent_assignments():

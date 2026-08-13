@@ -1,0 +1,37 @@
+{% load static %}
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>{{ batch.batch_code }} - A4 标签打印</title>
+  <link rel="stylesheet" href="{% static 'css/qr-labels.css' %}">
+</head>
+<body>
+  <header class="label-print-controls">
+    <h1>{{ batch.batch_code }} · A4 标签预览</h1>
+    <p>请使用浏览器打印（Ctrl+P），纸张选 A4、实际大小/100%、不要“适合页面”。浏览器打印不会自动标记为已打印；完成后请返回批次页确认结果。</p>
+    <p><a href="{% url 'assets:label-batch-detail' batch.pk %}">返回批次确认页</a></p>
+  </header>
+  {% regroup items by page_no as pages %}
+  {% for page in pages %}
+    <section class="label-sheet" aria-label="第 {{ page.grouper }} 页">
+      {% for item in page.list %}
+        <article class="qr-label">
+          <div class="label-copy">
+            <div class="company-name">{{ item.label_snapshot_json.company_short_name }}</div>
+            <div class="asset-name">{{ item.label_snapshot_json.asset_name }}</div>
+            <div class="asset-code">{{ item.label_snapshot_json.asset_code }}</div>
+            <div class="label-line">部门：{{ item.label_snapshot_json.department|default:"—" }}</div>
+            {% if batch.include_responsible_employee %}<div class="label-line">责任人：{{ item.label_snapshot_json.responsible_employee|default:"—" }}</div>{% endif %}
+            {% if batch.include_location %}<div class="label-line">位置：{{ item.label_snapshot_json.location|default:"—" }}</div>{% endif %}
+            {% if batch.include_model %}<div class="label-line">型号：{{ item.label_snapshot_json.model|default:"—" }}</div>{% endif %}
+          </div>
+          <img class="qr-image" src="{% url 'assets:label-item-qr' item.pk %}" width="84" height="84" alt="{{ item.label_snapshot_json.asset_code }} 的二维码">
+        </article>
+      {% endfor %}
+    </section>
+  {% endfor %}
+</body>
+</html>

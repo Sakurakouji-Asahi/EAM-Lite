@@ -45,5 +45,9 @@ def asset_navigation(request):
             "initialized": initialized,
             "can_view": can_view,
             "can_create": can_create,
+            "can_manage_labels": bool(
+                initialized
+                and roles.intersection({"finance", "equipment", "warehouse"})
+            ),
         }
     }

@@ -1,0 +1,5 @@
+{% extends "base.html" %}
+{% block title %}换标 - {{ asset.asset_code }}{% endblock %}
+{% block content %}
+  <div class="mx-auto qr-rotate-card"><h1 class="h3">换标并轮换 Token</h1><p class="text-secondary">{{ asset.asset_code }} · {{ asset.asset_name }} · 当前标签版本 {{ qr_identity.version }}</p><div class="alert alert-danger">确认后旧二维码立即永久失效，新标签回到待打印；资产业务状态保持不变。此操作不可通过普通重印替代。</div><form method="post" class="card shadow-sm"><div class="card-body">{% csrf_token %}{% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}<div class="mb-3"><label class="form-label" for="{{ form.reason.id_for_label }}">{{ form.reason.label }}</label>{{ form.reason }}{{ form.reason.errors }}</div><div class="mb-3"><label class="form-label" for="{{ form.explanation.id_for_label }}">{{ form.explanation.label }}</label>{{ form.explanation }}{{ form.explanation.errors }}</div><button class="btn btn-danger" type="submit">确认换标并使旧标签失效</button> <a class="btn btn-outline-secondary" href="{% url 'assets:asset-detail' asset.pk %}">取消</a></div></form></div>
+{% endblock %}

@@ -1,0 +1,3 @@
+{% extends "base.html" %}
+{% block title %}{% if revoked %}标签已失效{% else %}二维码无效{% endif %} - EAM-Lite{% endblock %}
+{% block content %}<div class="mx-auto qr-message-card"><div class="alert alert-warning"><h1 class="h4">{% if revoked %}此标签已失效{% else %}二维码无效{% endif %}</h1><p class="mb-0">{% if revoked %}请联系资产管理员使用当前有效标签。{% else %}无法识别此二维码，请联系资产管理员。{% endif %}</p></div><a class="btn btn-outline-secondary" href="{% url 'home' %}">返回首页</a></div>{% endblock %}

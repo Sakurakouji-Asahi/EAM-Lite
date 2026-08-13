@@ -6,5 +6,7 @@ openpyxl==3.1.5
 pillow==12.3.0
 psycopg==3.3.4
 psycopg-binary==3.3.4
+qrcode==8.2
+colorama==0.4.6; sys_platform == "win32"
 sqlparse==0.5.5
 tzdata==2026.3; sys_platform == "win32"

@@ -344,8 +344,10 @@ class Asset(models.Model):
             self.AssetStatus.DRAFT,
             self.AssetStatus.PENDING_FINANCE,
             self.AssetStatus.PENDING_LABEL,
+            self.AssetStatus.IN_USE,
+            self.AssetStatus.IDLE,
         }:
-            errors["asset_status"] = "Sprint 4 仅允许资产进入待贴标状态。"
+            errors["asset_status"] = "Sprint 6 尚未启用该资产状态。"
         if self.asset_code == "":
             errors["asset_code"] = "未发号资产必须保存 NULL，不能使用空字符串。"
         if self.category_id:
@@ -780,6 +782,40 @@ class AssetCodeHistory(models.Model):
         return f"{self.asset} - {self.get_event_type_display()}"
 
 
+class AssetQrIdentityQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        protected = {
+            "company",
+            "company_id",
+            "asset",
+            "asset_id",
+            "public_token",
+            "status",
+            "label_status",
+            "issued_at",
+            "version",
+            "revoked_at",
+            "revoke_reason",
+            "attached_at",
+        }.intersection(kwargs)
+        actor_fields = {
+            "issued_by",
+            "issued_by_id",
+            "revoked_by",
+            "revoked_by_id",
+            "attached_by",
+            "attached_by_id",
+        }.intersection(kwargs)
+        if actor_fields and any(kwargs[field] is not None for field in actor_fields):
+            protected.update(actor_fields)
+        if protected:
+            raise ValidationError("二维码身份只能通过受控打印、贴标或换标 Service 修改。")
+        return super().update(**kwargs)
+
+    def delete(self):
+        raise ValidationError("二维码身份历史不可删除。")
+
+
 class AssetQrIdentity(models.Model):
     class Status(models.TextChoices):
         ACTIVE = "active", "有效"
@@ -848,6 +884,8 @@ class AssetQrIdentity(models.Model):
         related_name="attached_asset_qr_identities",
     )
     version = models.PositiveIntegerField("版本", default=1)
+
+    objects = AssetQrIdentityQuerySet.as_manager()
 
     class Meta:
         verbose_name = "资产二维码身份"
@@ -952,6 +990,615 @@ class AssetQrIdentity(models.Model):
 
     def __str__(self):
         return f"{self.asset} / QR v{self.version}"
+
+
+class AssetLabelAttachmentRequestQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        if kwargs and set(kwargs).issubset({"completed_by", "completed_by_id"}) and all(
+            value is None for value in kwargs.values()
+        ):
+            return super().update(**kwargs)
+        raise ValidationError("贴标幂等结果是不可变业务证据。")
+
+    def delete(self):
+        raise ValidationError("贴标幂等结果是不可变业务证据。")
+
+
+class AssetLabelAttachmentRequest(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(
+        Company,
+        on_delete=models.PROTECT,
+        related_name="asset_label_attachment_requests",
+    )
+    asset = models.ForeignKey(
+        Asset,
+        on_delete=models.PROTECT,
+        related_name="label_attachment_requests",
+    )
+    qr_identity = models.ForeignKey(
+        AssetQrIdentity,
+        on_delete=models.PROTECT,
+        related_name="attachment_requests",
+    )
+    idempotency_key = models.CharField(max_length=128)
+    request_hash = models.CharField(max_length=64)
+    target_status = models.CharField(max_length=32, blank=True)
+    completed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="completed_asset_label_attachment_requests",
+    )
+    completed_at = models.DateTimeField(auto_now_add=True)
+
+    objects = AssetLabelAttachmentRequestQuerySet.as_manager()
+
+    class Meta:
+        ordering = ("completed_at", "pk")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "idempotency_key"),
+                name="uq_label_attach_request_company_idem",
+            ),
+            models.CheckConstraint(
+                condition=~Q(idempotency_key="") & ~Q(request_hash=""),
+                name="ck_label_attach_request_values",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if self.asset_id and self.asset.company_id != self.company_id:
+            errors["asset"] = "贴标幂等结果必须与资产属于同一公司。"
+        if self.qr_identity_id:
+            if self.qr_identity.company_id != self.company_id:
+                errors["qr_identity"] = "贴标幂等结果必须与二维码属于同一公司。"
+            elif self.asset_id and self.qr_identity.asset_id != self.asset_id:
+                errors["qr_identity"] = "二维码必须属于该资产。"
+        if not str(self.idempotency_key or "").strip():
+            errors["idempotency_key"] = "幂等键不能为空。"
+        if len(str(self.request_hash or "")) != 64:
+            errors["request_hash"] = "请求摘要必须是 64 位 SHA-256。"
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            previous = type(self).objects.filter(pk=self.pk).values(
+                "company_id",
+                "asset_id",
+                "qr_identity_id",
+                "idempotency_key",
+                "request_hash",
+                "target_status",
+                "completed_by_id",
+                "completed_at",
+            ).first()
+            current = {
+                "company_id": self.company_id,
+                "asset_id": self.asset_id,
+                "qr_identity_id": self.qr_identity_id,
+                "idempotency_key": self.idempotency_key,
+                "request_hash": self.request_hash,
+                "target_status": self.target_status,
+                "completed_by_id": self.completed_by_id,
+                "completed_at": self.completed_at,
+            }
+            actor_cleared = (
+                previous is not None
+                and previous["completed_by_id"] is not None
+                and current["completed_by_id"] is None
+                and all(
+                    previous[field] == current[field]
+                    for field in current
+                    if field != "completed_by_id"
+                )
+            )
+            if previous != current and not actor_cleared:
+                raise ValidationError("贴标幂等结果是不可变业务证据。")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("贴标幂等结果是不可变业务证据。")
+
+
+class AssetLabelPrintBatchQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        protected = {
+            "company",
+            "company_id",
+            "batch_code",
+            "template_version",
+            "status",
+            "include_responsible_employee",
+            "include_location",
+            "include_model",
+            "created_at",
+            "printed_at",
+            "idempotency_key",
+        }.intersection(kwargs)
+        actor_fields = {
+            "created_by",
+            "created_by_id",
+            "printed_by",
+            "printed_by_id",
+        }.intersection(kwargs)
+        if actor_fields and any(kwargs[field] is not None for field in actor_fields):
+            protected.update(actor_fields)
+        if protected:
+            raise ValidationError("打印批次只能通过受控标签 Service 修改。")
+        return super().update(**kwargs)
+
+    def delete(self):
+        raise ValidationError("打印批次是审计历史，不可删除。")
+
+
+class AssetLabelPrintBatch(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "draft", "草稿"
+        GENERATED = "generated", "已生成"
+        PRINTED = "printed", "已打印"
+        CANCELLED = "cancelled", "已取消"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(
+        Company,
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="asset_label_print_batches",
+    )
+    batch_code = models.CharField("批次编号", max_length=64)
+    template_version = models.CharField("模板版本", max_length=32)
+    status = models.CharField(
+        "批次状态",
+        max_length=16,
+        choices=Status.choices,
+        default=Status.DRAFT,
+    )
+    include_responsible_employee = models.BooleanField("显示责任人", default=False)
+    include_location = models.BooleanField("显示位置", default=False)
+    include_model = models.BooleanField("显示型号", default=False)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="创建人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_asset_label_print_batches",
+    )
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+    printed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="打印确认人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="printed_asset_label_print_batches",
+    )
+    printed_at = models.DateTimeField("打印确认时间", null=True, blank=True)
+    idempotency_key = models.CharField("幂等键", max_length=128)
+
+    objects = AssetLabelPrintBatchQuerySet.as_manager()
+
+    class Meta:
+        verbose_name = "资产标签打印批次"
+        verbose_name_plural = "资产标签打印批次"
+        ordering = ("-created_at",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "batch_code"),
+                name="uq_label_batch_company_code",
+            ),
+            models.UniqueConstraint(
+                fields=("company", "idempotency_key"),
+                name="uq_label_batch_company_idem",
+            ),
+            models.CheckConstraint(
+                condition=Q(status__in=("draft", "generated", "printed", "cancelled")),
+                name="ck_label_batch_status",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        status="printed",
+                        printed_at__isnull=False,
+                    )
+                    | Q(
+                        status__in=("draft", "generated", "cancelled"),
+                        printed_by__isnull=True,
+                        printed_at__isnull=True,
+                    )
+                ),
+                name="ck_label_batch_print_fields",
+            ),
+            models.CheckConstraint(
+                condition=~Q(batch_code=""), name="ck_label_batch_code_nonempty"
+            ),
+            models.CheckConstraint(
+                condition=~Q(template_version=""),
+                name="ck_label_batch_template_nonempty",
+            ),
+            models.CheckConstraint(
+                condition=~Q(idempotency_key=""),
+                name="ck_label_batch_idem_nonempty",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if not str(self.batch_code or "").strip():
+            errors["batch_code"] = "批次编号不能为空。"
+        if not str(self.template_version or "").strip():
+            errors["template_version"] = "模板版本不能为空。"
+        if not str(self.idempotency_key or "").strip():
+            errors["idempotency_key"] = "幂等键不能为空。"
+        if self.status == self.Status.PRINTED:
+            if self.printed_at is None:
+                errors["printed_at"] = "已打印批次必须记录打印确认时间。"
+        elif self.printed_by_id is not None or self.printed_at is not None:
+            errors["status"] = "未打印批次不得记录打印确认人或时间。"
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            previous = type(self).objects.filter(pk=self.pk).values(
+                "company_id",
+                "batch_code",
+                "template_version",
+                "status",
+                "include_responsible_employee",
+                "include_location",
+                "include_model",
+                "created_by_id",
+                "created_at",
+                "printed_by_id",
+                "printed_at",
+                "idempotency_key",
+            ).first()
+            current = {
+                "company_id": self.company_id,
+                "batch_code": self.batch_code,
+                "template_version": self.template_version,
+                "status": self.status,
+                "include_responsible_employee": self.include_responsible_employee,
+                "include_location": self.include_location,
+                "include_model": self.include_model,
+                "created_by_id": self.created_by_id,
+                "created_at": self.created_at,
+                "printed_by_id": self.printed_by_id,
+                "printed_at": self.printed_at,
+                "idempotency_key": self.idempotency_key,
+            }
+            actor_cleared = previous is not None and all(
+                current[field] == previous[field]
+                for field in current
+                if field not in {"created_by_id", "printed_by_id"}
+            ) and all(
+                current[field] == previous[field]
+                or (previous[field] is not None and current[field] is None)
+                for field in ("created_by_id", "printed_by_id")
+            )
+            if previous is not None and previous != current and not actor_cleared:
+                raise ValidationError("打印批次只能通过受控标签 Service 修改。")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("打印批次是审计历史，不可删除。")
+
+    def __str__(self):
+        return self.batch_code
+
+
+class AssetLabelPrintItemQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        if kwargs:
+            raise ValidationError("打印明细只能通过受控标签 Service 修改。")
+        return super().update(**kwargs)
+
+    def delete(self):
+        raise ValidationError("打印明细是审计历史，不可删除。")
+
+
+class AssetLabelPrintItem(models.Model):
+    class PrintStatus(models.TextChoices):
+        GENERATED = "generated", "已生成"
+        PRINTED = "printed", "已打印"
+        CANCELLED = "cancelled", "已取消"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    batch = models.ForeignKey(
+        AssetLabelPrintBatch,
+        verbose_name="打印批次",
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+    qr_identity = models.ForeignKey(
+        AssetQrIdentity,
+        verbose_name="二维码身份",
+        on_delete=models.PROTECT,
+        related_name="print_items",
+    )
+    page_no = models.PositiveIntegerField("页码")
+    position_no = models.PositiveIntegerField("页内位置")
+    label_snapshot_json = models.JSONField("标签文字快照", default=dict)
+    print_status = models.CharField(
+        "打印状态",
+        max_length=16,
+        choices=PrintStatus.choices,
+        default=PrintStatus.GENERATED,
+    )
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+
+    objects = AssetLabelPrintItemQuerySet.as_manager()
+
+    class Meta:
+        verbose_name = "资产标签打印明细"
+        verbose_name_plural = "资产标签打印明细"
+        ordering = ("batch_id", "page_no", "position_no")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("batch", "qr_identity"),
+                name="uq_label_item_batch_qr",
+            ),
+            models.UniqueConstraint(
+                fields=("batch", "page_no", "position_no"),
+                name="uq_label_item_batch_position",
+            ),
+            models.CheckConstraint(
+                condition=Q(page_no__gte=1), name="ck_label_item_page_positive"
+            ),
+            models.CheckConstraint(
+                condition=Q(position_no__gte=1),
+                name="ck_label_item_position_positive",
+            ),
+            models.CheckConstraint(
+                condition=Q(print_status__in=("generated", "printed", "cancelled")),
+                name="ck_label_item_status",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.batch_id and self.qr_identity_id:
+            if self.batch.company_id != self.qr_identity.company_id:
+                raise ValidationError(
+                    {"qr_identity": "打印批次与二维码身份必须属于同一公司。"}
+                )
+        if not isinstance(self.label_snapshot_json, dict) or not self.label_snapshot_json:
+            raise ValidationError({"label_snapshot_json": "标签文字快照必须是非空对象。"})
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("打印明细只能通过受控标签 Service 修改。")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("打印明细是审计历史，不可删除。")
+
+    def __str__(self):
+        return f"{self.batch} / {self.page_no}-{self.position_no}"
+
+
+class AssetMovementQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        if set(kwargs).issubset({"operated_by", "operated_by_id"}) and all(
+            value is None for value in kwargs.values()
+        ):
+            if self.filter(operated_by__isnull=True).exists():
+                raise ValidationError("资产变动历史只允许将原操作人清空。")
+            return super().update(**kwargs)
+        raise ValidationError("资产变动历史只允许追加。")
+
+    def delete(self):
+        raise ValidationError("资产变动历史不可删除。")
+
+
+class AssetMovement(models.Model):
+    class MovementType(models.TextChoices):
+        LABEL_ACTIVATION = "label_activation", "首次贴标启用"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(
+        Company,
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="asset_movements",
+    )
+    asset = models.ForeignKey(
+        Asset,
+        verbose_name="资产",
+        on_delete=models.PROTECT,
+        related_name="movements",
+    )
+    movement_type = models.CharField(
+        "变动类型", max_length=32, choices=MovementType.choices
+    )
+    effective_at = models.DateTimeField("生效时间")
+    from_department = models.ForeignKey(
+        Department,
+        verbose_name="原部门",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="asset_movements_from_department",
+    )
+    to_department = models.ForeignKey(
+        Department,
+        verbose_name="新部门",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="asset_movements_to_department",
+    )
+    from_employee = models.ForeignKey(
+        Employee,
+        verbose_name="原责任人",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="asset_movements_from_employee",
+    )
+    to_employee = models.ForeignKey(
+        Employee,
+        verbose_name="新责任人",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="asset_movements_to_employee",
+    )
+    from_location = models.ForeignKey(
+        Location,
+        verbose_name="原位置",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="asset_movements_from_location",
+    )
+    to_location = models.ForeignKey(
+        Location,
+        verbose_name="新位置",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="asset_movements_to_location",
+    )
+    from_status = models.CharField("原状态", max_length=32)
+    to_status = models.CharField("新状态", max_length=32)
+    reason = models.TextField("原因")
+    remark = models.TextField("备注", blank=True)
+    idempotency_key = models.CharField("幂等键", max_length=128)
+    operated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="操作人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="operated_asset_movements",
+    )
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+
+    objects = AssetMovementQuerySet.as_manager()
+
+    class Meta:
+        verbose_name = "资产变动历史"
+        verbose_name_plural = "资产变动历史"
+        ordering = ("asset_id", "effective_at", "created_at")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "idempotency_key"),
+                name="uq_movement_company_idem",
+            ),
+            models.UniqueConstraint(
+                fields=("asset",),
+                condition=Q(movement_type="label_activation"),
+                name="uq_movement_asset_label_activation",
+            ),
+            models.CheckConstraint(
+                condition=Q(movement_type="label_activation"),
+                name="ck_movement_sprint6_type",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    movement_type="label_activation",
+                    from_status="pending_label",
+                    to_status__in=("in_use", "idle"),
+                    from_department__isnull=False,
+                    to_department__isnull=False,
+                    from_employee__isnull=False,
+                    to_employee__isnull=False,
+                    from_location__isnull=False,
+                    to_location__isnull=False,
+                ),
+                name="ck_movement_label_activation_fields",
+            ),
+            models.CheckConstraint(
+                condition=Q(from_department=models.F("to_department")),
+                name="ck_movement_label_same_department",
+            ),
+            models.CheckConstraint(
+                condition=Q(from_employee=models.F("to_employee")),
+                name="ck_movement_label_same_employee",
+            ),
+            models.CheckConstraint(
+                condition=Q(from_location=models.F("to_location")),
+                name="ck_movement_label_same_location",
+            ),
+            models.CheckConstraint(
+                condition=~Q(idempotency_key=""),
+                name="ck_movement_idem_nonempty",
+            ),
+            models.CheckConstraint(
+                condition=~Q(reason=""),
+                name="ck_movement_reason_nonempty",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if self.movement_type != self.MovementType.LABEL_ACTIVATION:
+            errors["movement_type"] = "Sprint 6 只启用首次贴标变动。"
+        if self.from_status != Asset.AssetStatus.PENDING_LABEL:
+            errors["from_status"] = "首次贴标必须从待贴标状态开始。"
+        if self.to_status not in {Asset.AssetStatus.IN_USE, Asset.AssetStatus.IDLE}:
+            errors["to_status"] = "首次贴标只能进入在用或闲置。"
+        if self.asset_id and self.asset.company_id != self.company_id:
+            errors["asset"] = "资产必须属于同一公司。"
+        pairs = (
+            ("from_department", "to_department"),
+            ("from_employee", "to_employee"),
+            ("from_location", "to_location"),
+        )
+        for from_name, to_name in pairs:
+            from_obj = getattr(self, from_name)
+            to_obj = getattr(self, to_name)
+            if from_obj is None or to_obj is None:
+                errors[from_name] = "首次贴标必须保存完整责任与位置快照。"
+            elif from_obj.pk != to_obj.pk:
+                errors[to_name] = "首次贴标不改变部门、责任人或位置。"
+            elif from_obj.company_id != self.company_id:
+                errors[from_name] = "变动快照必须属于同一公司。"
+        if self.effective_at and self.effective_at > timezone.now():
+            errors["effective_at"] = "变动生效时间不得晚于当前时间。"
+        if not str(self.idempotency_key or "").strip():
+            errors["idempotency_key"] = "幂等键不能为空。"
+        if not str(self.reason or "").strip():
+            errors["reason"] = "首次贴标必须记录原因。"
+        if self._state.adding and self.operated_by_id is None:
+            errors["operated_by"] = "首次贴标必须记录操作人。"
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            concrete_fields = list(self._meta.concrete_fields)
+            immutable_fields = [field.attname for field in concrete_fields]
+            previous = type(self).objects.filter(pk=self.pk).values(
+                *immutable_fields
+            ).first()
+            current = {
+                field.attname: getattr(self, field.attname)
+                for field in concrete_fields
+            }
+            actor_cleared = previous is not None and all(
+                current[field] == previous[field]
+                for field in immutable_fields
+                if field != "operated_by_id"
+            ) and previous["operated_by_id"] is not None and self.operated_by_id is None
+            if not actor_cleared:
+                raise ValidationError("资产变动历史只允许追加。")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("资产变动历史不可删除。")
+
+    def __str__(self):
+        return f"{self.asset} / {self.get_movement_type_display()}"
 
 
 class AttachmentLinkQuerySet(models.QuerySet):

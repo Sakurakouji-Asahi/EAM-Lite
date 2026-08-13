@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}标签打印批次 - EAM-Lite{% endblock %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+    <div><h1 class="h3 mb-1">标签打印批次</h1><p class="text-secondary mb-0">批次为追加式打印历史，不显示二维码 Token。</p></div>
+    <a class="btn btn-primary" href="{% url 'assets:label-queue' %}">返回打印队列</a>
+  </div>
+  <div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover align-middle mb-0">
+    <thead class="table-light"><tr><th>批次编号</th><th>模板</th><th>状态</th><th>标签数</th><th>创建时间</th><th>打印确认</th><th>操作</th></tr></thead>
+    <tbody>{% for batch in batches %}<tr><td>{{ batch.batch_code }}</td><td>{{ batch.template_version }}</td><td>{{ batch.get_status_display }}</td><td>{{ batch.item_count|default:0 }}</td><td>{{ batch.created_at|date:"Y-m-d H:i" }}</td><td>{{ batch.printed_at|date:"Y-m-d H:i"|default:"—" }}</td><td><a class="btn btn-sm btn-outline-primary" href="{% url 'assets:label-batch-detail' batch.pk %}">查看</a></td></tr>{% empty %}<tr><td colspan="7" class="text-center text-secondary py-4">尚无打印批次。</td></tr>{% endfor %}</tbody>
+  </table></div></div>
+{% endblock %}

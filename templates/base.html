@@ -38,6 +38,7 @@
               <div class="text-secondary small mt-3 mb-1">资产管理</div>
               <a class="nav-link px-0" href="{% url 'assets:asset-list' %}">资产总账</a>
               {% if asset_nav.can_create %}<a class="nav-link px-0" href="{% url 'assets:asset-create' %}">新增资产</a>{% endif %}
+              {% if asset_nav.can_manage_labels %}<a class="nav-link px-0" href="{% url 'assets:label-queue' %}">标签打印与贴标</a>{% endif %}
               {% if asset_nav.can_create %}<a class="nav-link px-0" href="{% url 'imports:upload' 'asset_initialization' %}">初始化建账</a>{% endif %}
             {% endif %}
             {% if finance_nav.can_view %}

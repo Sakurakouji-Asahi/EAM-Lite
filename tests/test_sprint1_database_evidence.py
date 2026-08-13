@@ -64,6 +64,41 @@ def test_audit_log_rejects_raw_sql_update_and_delete():
     assert audit.action == "masterdata.create"
 
 
+def test_audit_log_allows_only_foreign_key_actor_set_null():
+    if connection.vendor != "postgresql":
+        pytest.skip("audit actor SET_NULL database guard requires PostgreSQL")
+    company = Company.objects.create(
+        code="AUDIT-ACTOR",
+        normalized_code="audit-actor",
+        name="审计操作人公司",
+        short_name="操作人公司",
+    )
+    user = get_user_model().objects.create_user(
+        username="audit-actor",
+        password="Test-Password-2026!",
+        display_name="待删除操作人",
+    )
+    audit = AuditLog.objects.create(
+        company=company,
+        user=user,
+        action="security.example",
+        object_type="Example",
+        object_id="actor-set-null",
+        new_data_json={"safe": True},
+    )
+
+    user.delete()
+
+    audit.refresh_from_db()
+    assert audit.user_id is None
+    assert audit.action == "security.example"
+    with pytest.raises(IntegrityError), transaction.atomic(), connection.cursor() as cursor:
+        cursor.execute(
+            "UPDATE audit_auditlog SET user_id = NULL, action = %s WHERE id = %s",
+            ["tampered", audit.pk],
+        )
+
+
 def test_confirmed_import_evidence_rejects_queryset_and_raw_sql_mutation():
     if connection.vendor != "postgresql":
         pytest.skip("confirmed import evidence guards require PostgreSQL")

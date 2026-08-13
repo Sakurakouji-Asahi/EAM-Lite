@@ -46,6 +46,7 @@ def test_business_locale_timezone_currency_and_selected_database():
     assert settings.TIME_ZONE == "Asia/Shanghai"
     assert settings.USE_TZ is True
     assert settings.BUSINESS_CURRENCY == "CNY"
+    assert settings.QR_BASE_URL.startswith("https://")
     assert connection.vendor == settings.DATABASE_ENGINE
     assert settings.LOGIN_FAILURE_WINDOW_SECONDS > 0
     assert settings.LOGIN_FAILURE_PAIR_LIMIT > 0

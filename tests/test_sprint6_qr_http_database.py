@@ -1,0 +1,272 @@
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+from decimal import Decimal
+
+import pytest
+from django.core.exceptions import ValidationError
+from django.db import DatabaseError, close_old_connections, connection, transaction
+from django.test import Client
+from django.urls import reverse
+
+from apps.assets.models import Asset, AssetMovement, AssetQrIdentity
+from apps.assets.qr_services import (
+    confirm_label_attachment,
+    confirm_print_batch,
+    generate_print_batch,
+    rotate_qr_identity,
+)
+from apps.audit.models import AuditLog
+from tests.test_sprint3_support import make_user
+from tests.test_sprint6_support import formal_asset_context
+
+
+pytestmark = pytest.mark.django_db
+
+
+def _print(context, asset, key):
+    batch = generate_print_batch(
+        actor=context["finance"], assets=[asset], idempotency_key=key
+    )
+    confirm_print_batch(actor=context["finance"], batch=batch)
+    return batch
+
+
+def _attach(context, asset, qr_identity, key, target="in_use"):
+    _print(context, asset, f"{key}-print")
+    qr_identity.refresh_from_db()
+    confirm_label_attachment(
+        actor=context["finance"],
+        asset=asset,
+        scanned_token=qr_identity.public_token,
+        target_status=target,
+        idempotency_key=f"{key}-attach",
+    )
+    asset.refresh_from_db()
+    qr_identity.refresh_from_db()
+
+
+def test_unauthenticated_scan_redirects_to_login_with_security_headers(client):
+    _context, _asset, qr_identity = formal_asset_context("S6LOGIN")
+    response = client.get(reverse("assets:qr-scan", args=[qr_identity.public_token]))
+
+    assert response.status_code == 302
+    assert response.url.startswith("/login/?next=")
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+    assert response.headers["Cache-Control"] == "private, no-store"
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+
+
+def test_unknown_scan_is_generic_404_and_does_not_echo_token(client):
+    context, _asset, _qr = formal_asset_context("S6UNKNOWN")
+    client.force_login(context["equipment"])
+    token = "unknown-opaque-token-12345678901234567890"
+    response = client.get(reverse("assets:qr-scan", args=[token]))
+
+    assert response.status_code == 404
+    assert token.encode() not in response.content
+    assert "二维码无效" in response.content.decode()
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_revoked_scan_is_generic_410_without_asset_details(client):
+    context, asset, old = formal_asset_context("S6REVOKED")
+    _attach(context, asset, old, "S6REVOKED")
+    rotate_qr_identity(
+        actor=context["finance"], asset=asset, reason="测试旧标签失效"
+    )
+    client.force_login(context["equipment"])
+    response = client.get(reverse("assets:qr-scan", args=[old.public_token]))
+    text = response.content.decode()
+
+    assert response.status_code == 410
+    assert "此标签已失效" in text
+    assert old.public_token not in text
+    assert asset.asset_name not in text
+    assert asset.asset_code not in text
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+
+
+def test_logged_in_user_without_object_scope_gets_generic_403_and_audited_denial(client):
+    context, asset, qr_identity = formal_asset_context("S6FORBID")
+    outsider = make_user("s6-forbidden-employee", "employee")
+    client.force_login(outsider)
+    response = client.get(
+        reverse("assets:qr-scan", args=[qr_identity.public_token]),
+        HTTP_USER_AGENT=(
+            f"scanner /assets/scan/{qr_identity.public_token}/ token={qr_identity.public_token}"
+        ),
+    )
+    text = response.content.decode()
+
+    assert response.status_code == 403
+    assert "无权查看" in text
+    assert asset.asset_name not in text
+    assert asset.asset_code not in text
+    assert qr_identity.public_token not in text
+    denied = AuditLog.objects.get(action="asset_qr.scan_denied")
+    assert qr_identity.public_token not in denied.user_agent
+    assert "[REDACTED]" in denied.user_agent
+
+
+def test_equipment_scan_shows_physical_summary_but_not_financial_amount(client):
+    context, asset, qr_identity = formal_asset_context(
+        "S6NOFIN", cost=Decimal("4321.98")
+    )
+    client.force_login(context["equipment"])
+    response = client.get(reverse("assets:qr-scan", args=[qr_identity.public_token]))
+    text = response.content.decode()
+
+    assert response.status_code == 200
+    assert asset.asset_name in text
+    assert asset.asset_code in text
+    assert asset.department.name in text
+    assert asset.responsible_employee.name in text
+    assert "4321.98" not in text
+    assert "财务只读摘要" not in text
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+
+
+def test_print_view_is_local_a4_snapshot_and_browser_get_does_not_confirm(client):
+    context, asset, qr_identity = formal_asset_context("S6A4")
+    batch = generate_print_batch(
+        actor=context["finance"],
+        assets=[asset],
+        idempotency_key="S6A4-batch",
+    )
+    item = batch.items.get()
+    client.force_login(context["finance"])
+    response = client.get(reverse("assets:label-batch-print", args=[batch.pk]))
+    text = response.content.decode()
+
+    assert response.status_code == 200
+    assert context["company"].short_name in text
+    assert asset.asset_name in text
+    assert asset.asset_code in text
+    assert asset.department.name in text
+    assert "原值" not in text and "账面净值" not in text
+    assert "cdn" not in text.casefold()
+    assert "fonts.googleapis" not in text.casefold()
+    assert reverse("assets:label-item-qr", args=[item.pk]) in text
+    batch.refresh_from_db()
+    qr_identity.refresh_from_db()
+    assert batch.status == "generated" and batch.printed_at is None
+    assert qr_identity.label_status == "ready_to_print"
+
+
+def test_qr_svg_endpoint_is_authenticated_scoped_and_noncacheable(client):
+    context, asset, _qr = formal_asset_context("S6SVG")
+    batch = generate_print_batch(
+        actor=context["finance"],
+        assets=[asset],
+        idempotency_key="S6SVG-batch",
+    )
+    item = batch.items.get()
+    url = reverse("assets:label-item-qr", args=[item.pk])
+
+    anonymous = client.get(url)
+    assert anonymous.status_code == 302
+    client.force_login(context["finance"])
+    response = client.get(url)
+    assert response.status_code == 200
+    assert response.headers["Content-Type"].startswith("image/svg+xml")
+    assert response.headers["Cache-Control"] == "private, no-store"
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert b"<svg" in response.content
+
+
+def test_generated_batch_refuses_a_noncurrent_identity(client):
+    context, asset, qr_identity = formal_asset_context("S6STALE")
+    batch = generate_print_batch(
+        actor=context["finance"],
+        assets=[asset],
+        idempotency_key="S6STALE-batch",
+    )
+    item = batch.items.get()
+    client.force_login(context["finance"])
+
+    qr_identity.label_status = "attached"
+    item.qr_identity = qr_identity
+
+    from apps.assets.qr_views import _item_has_current_printable_identity
+
+    assert _item_has_current_printable_identity(item) is False
+
+
+def test_print_css_fixes_a4_geometry_qr_minimum_size_and_360px_layout():
+    css = open("static/css/qr-labels.css", encoding="utf-8").read()
+
+    assert "size: A4 portrait" in css
+    assert "grid-template-columns: repeat(3, 1fr)" in css
+    assert "grid-template-rows: repeat(8, 35mm)" in css
+    assert "width: 22mm" in css
+    assert "height: 22mm" in css
+    assert "@media (max-width: 360px)" in css
+    assert "@media print" in css
+    assert "http://" not in css and "https://" not in css
+
+
+@pytest.mark.django_db(transaction=True)
+def test_postgresql_guards_reject_raw_qr_history_and_movement_mutation():
+    if connection.vendor != "postgresql":
+        pytest.skip("PostgreSQL-specific database guard acceptance")
+    context, asset, qr_identity = formal_asset_context("S6RAW")
+    _attach(context, asset, qr_identity, "S6RAW")
+    movement = AssetMovement.objects.get(asset=asset)
+
+    with pytest.raises(DatabaseError), transaction.atomic():
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE assets_assetqridentity SET public_token = %s WHERE id = %s",
+                ["Z" * 43, qr_identity.pk],
+            )
+    with pytest.raises(DatabaseError), transaction.atomic():
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM assets_assetmovement WHERE id = %s", [movement.pk]
+            )
+
+    qr_identity.refresh_from_db()
+    assert qr_identity.public_token != "Z" * 43
+    assert AssetMovement.objects.filter(pk=movement.pk).exists()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_concurrent_duplicate_attachment_creates_only_one_activation():
+    if connection.vendor != "postgresql":
+        pytest.skip("PostgreSQL row-locking acceptance")
+    context, asset, qr_identity = formal_asset_context("S6CONCUR")
+    _print(context, asset, "S6CONCUR-print")
+    qr_identity.refresh_from_db()
+    actor_id = context["finance"].pk
+    asset_id = asset.pk
+    token = qr_identity.public_token
+
+    def worker():
+        close_old_connections()
+        try:
+            actor = type(context["finance"]).objects.get(pk=actor_id)
+            locked_asset = Asset.objects.get(pk=asset_id)
+            result = confirm_label_attachment(
+                actor=actor,
+                asset=locked_asset,
+                scanned_token=token,
+                target_status="in_use",
+                idempotency_key="S6CONCUR-attach",
+            )
+            return str(result.pk)
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: worker(), range(2)))
+
+    asset.refresh_from_db()
+    qr_identity.refresh_from_db()
+    assert len(set(results)) == 1
+    assert asset.asset_status == "in_use"
+    assert qr_identity.label_status == "attached"
+    assert AssetMovement.objects.filter(asset=asset).count() == 1
+    assert AuditLog.objects.filter(action="asset_label.attached").count() == 1

@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}标签打印队列 - EAM-Lite{% endblock %}
+{% block content %}
+  <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-3">
+    <div>
+      <h1 class="h3 mb-1">标签打印队列</h1>
+      <p class="text-secondary mb-0">生成预览不会改变标签状态；浏览器打印后仍需明确确认结果。</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{% url 'assets:label-batch-list' %}">打印批次</a>
+  </div>
+
+  <nav class="nav nav-pills mb-3" aria-label="标签状态筛选">
+    {% for value, label in status_choices %}
+      <a class="nav-link {% if selected_status == value %}active{% endif %}" href="?status={{ value }}">{{ label }}</a>
+    {% endfor %}
+  </nav>
+
+  <form method="post" class="card shadow-sm">
+    {% csrf_token %}
+    <input type="hidden" name="status" value="{{ selected_status }}">
+    {{ form.idempotency_key }}
+    {% if form.non_field_errors %}<div class="alert alert-danger m-3 mb-0">{{ form.non_field_errors }}</div>{% endif %}
+    {% if form.asset_ids.errors %}<div class="alert alert-danger m-3 mb-0">{{ form.asset_ids.errors }}</div>{% endif %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light"><tr><th>选择</th><th>编号</th><th>名称</th><th>部门</th><th>责任人</th><th>位置</th><th>标签状态</th><th>最近打印</th><th>操作</th></tr></thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>{% if row.selectable %}<input class="form-check-input" type="checkbox" name="asset_ids" value="{{ row.asset.pk }}" aria-label="选择 {{ row.asset.asset_code }}">{% else %}—{% endif %}</td>
+              <td>{{ row.asset.asset_code }}</td>
+              <td>{{ row.asset.asset_name }}</td>
+              <td>{{ row.asset.department.name|default:"—" }}</td>
+              <td>{{ row.asset.responsible_employee.name|default:"—" }}</td>
+              <td>{{ row.location_path }}</td>
+              <td>{{ row.qr_identity.get_label_status_display }}</td>
+              <td>{{ row.last_printed_at|date:"Y-m-d H:i"|default:"尚未打印" }}</td>
+              <td>{% if row.qr_identity.label_status == 'attached' %}<a class="btn btn-sm btn-outline-danger" href="{% url 'assets:qr-rotate' row.asset.pk %}">换标</a>{% else %}<a class="btn btn-sm btn-outline-primary" href="{% url 'assets:asset-detail' row.asset.pk %}">查看资产</a>{% endif %}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="9" class="text-center text-secondary py-4">当前筛选下没有标签。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if selected_status != 'attached' %}
+      <div class="card-body border-top">
+        <div class="row g-3">
+          <div class="col-12"><strong>本批次可选字段</strong>（默认始终包含公司简称、名称、正式编号、部门和二维码）</div>
+          <div class="col-12 col-md-auto form-check ms-2">{{ form.include_responsible_employee }} <label class="form-check-label" for="{{ form.include_responsible_employee.id_for_label }}">{{ form.include_responsible_employee.label }}</label></div>
+          <div class="col-12 col-md-auto form-check ms-2">{{ form.include_location }} <label class="form-check-label" for="{{ form.include_location.id_for_label }}">{{ form.include_location.label }}</label></div>
+          <div class="col-12 col-md-auto form-check ms-2">{{ form.include_model }} <label class="form-check-label" for="{{ form.include_model.id_for_label }}">{{ form.include_model.label }}</label></div>
+          {% if selected_status == 'printed' %}<div class="col-12 form-check ms-2">{{ form.explicit_reprint }} <label class="form-check-label" for="{{ form.explicit_reprint.id_for_label }}">我明确要求重新打印；沿用当前 Token 并新增批次记录</label></div>{% endif %}
+        </div>
+      </div>
+      <div class="card-footer"><button class="btn btn-primary" type="submit">生成 A4 预览</button></div>
+    {% endif %}
+  </form>
+{% endblock %}

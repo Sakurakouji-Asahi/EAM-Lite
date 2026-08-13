@@ -3,10 +3,11 @@
 EAM-Lite 是公司局域网内使用的轻量级企业资产管理系统。本仓库根目录就是包含
 AGENTS.md、docs/、tasks/ 和 manage.py 的当前目录，不存在第二层项目仓库。
 
-当前代码完成到 Sprint 4：除身份、登录、审计、基础资料、导入、资产编码和资产主档外，
+当前代码完成到 Sprint 6：除身份、登录、审计、基础资料、导入、资产编码和资产主档外，
 已提供财务明确认定、永久正式编号原子签发、安全二维码身份、六种折旧方法、版本化折旧
-政策与 Profile、实际折旧分录、计提批次、冲销、调整、理论试算，以及初始化步骤 7/9。
-二维码打印/贴标、资产初始化导入、生命周期、盘点、保养和报表仍按后续 Sprint 接入。
+政策与 Profile、实际折旧分录、计提批次、冲销、调整、理论试算、资产初始化导入、A4 二维码
+标签打印、现场扫码贴标和安全换标，以及初始化步骤 7/9。调拨借用、处置、盘点、保养和报表
+仍按后续 Sprint 接入。
 
 ## 版本与依赖
 
@@ -21,6 +22,7 @@ AGENTS.md、docs/、tasks/ 和 manage.py 的当前目录，不存在第二层项
 - openpyxl：3.1.5，用于生成并解析无宏 XLSX
 - defusedxml：0.7.1，作为 XML 解析安全加固依赖
 - Pillow：12.3.0，用于附件图片真实解码、格式确认和像素上限保护
+- qrcode：8.2，用于本地生成带安静区的 SVG 二维码，不调用外网二维码服务
 
 requirements/production.in 和 requirements/development.in 记录直接依赖的兼容范围；
 production.lock 和 development.lock 记录当前环境实际解析出的全部精确版本。安装和
@@ -75,6 +77,7 @@ $env:STATIC_ROOT = "var/static"
 $env:MEDIA_ROOT = "var/media"
 $env:IMPORT_TEMP_ROOT = "var/tmp"
 $env:BUSINESS_CURRENCY = "CNY"
+$env:QR_BASE_URL = "https://eam.company.lan"
 $env:SECURE_SSL_REDIRECT = "false"
 $env:SESSION_COOKIE_SECURE = "false"
 $env:CSRF_COOKIE_SECURE = "false"
@@ -150,6 +153,13 @@ Sprint 4 的 `masterdata.0006–0008` 增加固定资产会计类别、实物分
 跨公司、确认历史不可变和来源一致性门禁；`assets.0003–0004` 增加随机二维码身份，并
 把唯一受控正式化迁移扩展为 `pending_finance → pending_label`。所有迁移保留 Sprint 3
 数据；SQLite 不能验证发号锁、延迟约束或并发。
+
+Sprint 6 的 `assets.0006_sprint6_qr_labels` 建立打印批次、不可变标签快照、明细和最小
+`label_activation` 变动历史，并扩展 PostgreSQL 门禁以保护打印、贴标、换标和
+二维码状态；`assets.0007_sprint6_label_attachment_idempotency` 保存不可变的贴标请求摘要，
+确保同一幂等键只有相同资产、二维码版本和目标状态才能重放。
+`pending_label → in_use/idle` 的原子状态机；`audit.0004_postgresql_audit_actor_set_null`
+在保持审计其他字段只追加的同时，允许用户外键按模型约定安全 `SET_NULL`。
 
 ## Sprint 1 基础资料与初始化
 
@@ -412,7 +422,7 @@ finance 从“财务与折旧”进入待确认工作台。财务可先保存基
 
 任何一步失败都会连同 Finance/Profile/Schedule、计数器、IssuedCode、编号历史、QR 和审计
 一起回滚；相同幂等键只有同资产同参数才返回既有结果。历史正式编号永久占用，不能删除、
-倒退或复用。二维码打印、换标、现场贴标以及 `in_use` 状态留到 Sprint 6。
+倒退或复用。二维码打印、换标、现场贴标以及 `in_use` 状态由 Sprint 6 的受控流程接通。
 
 折旧默认全部来自版本化 `DepreciationPolicy`，SystemSetting 只保存 finance 可写的
 `fixed_asset_warning_amount`；5,000 CNY 是可配置提示，不自动认定固定资产。政策支持
@@ -433,8 +443,28 @@ UUID、十进制字符串金额和原因，明确 0 也必须有原因。普通�
 条件，全部通过后才原子写 `initialization_completed`、完成者、时间和审计。失败时不产生
 部分完成，页面按每项提供修复链接。
 
-## Sprint 4 之后仍未实现
+## Sprint 6 二维码标签
 
-资产初始化 Excel 导入、二维码打印/贴标、调拨借用、处置、盘点、保养、离职清退、综合
-报表、T+ 对账导出、生产部署和真实备份任务尚未实现。后续功能只能在对应 Sprint 范围内
-接入；EAM-Lite 不读取或写入 T+ 数据库。
+生产或验收环境必须将 `QR_BASE_URL` 配为批准的局域网 HTTPS 应用根地址；它不得包含用户
+凭据、查询参数、片段或额外路径。二维码只保存该根地址下的 `/assets/scan/<随机 Token>/`
+入口，不嵌入资产名称、编号、责任人、位置或财务信息。扫码仍要求登录并按公司、角色和
+部门/本人对象范围鉴权；扫码响应禁止缓存和 Referer，日志格式化器会遮蔽扫码路径中的完整
+Token。
+
+finance、equipment、warehouse 可从“标签打印与贴标”选择待打印资产。生成 A4 预览只建立
+不可变的 `generated` 批次、标签文字快照、页码和位置，不改变二维码状态；每页 24 张，QR
+按 100% 打印为 22 mm，并保留二维码安静区。浏览器打印后必须返回批次页明确点击“已完成
+打印”，才会原子记录打印人/时间并把批次、明细及当前二维码改为 `printed`。取消必须填写
+原因且二维码保持原状态。已打印但未贴标可明确重印并沿用当前 Token；已贴标资产必须先走
+换标，旧 Token 永久失效，新 Token 重新经过打印和现场确认。
+
+现场确认必须从当前二维码扫码页提交并再次匹配 Token。首次贴标在同一 PostgreSQL 事务中
+写入唯一、追加式 `label_activation` Movement，保存当时部门、责任人和位置快照，将资产从
+`pending_label` 转为明确选择的 `in_use` 或 `idle`，并把二维码改为 `attached`；换标确认不
+改变既有业务状态。打印、取消、换标、贴标及越权扫码均记录审计，审计中不保存完整 Token。
+所有页面、SVG 生成和打印样式均由本应用本地提供，不依赖 CDN、远程字体或外网 QR 服务。
+
+## Sprint 6 之后仍未实现
+
+调拨借用、处置、盘点、保养、离职清退、综合报表、T+ 对账导出、生产部署和真实备份任务
+尚未实现。后续功能只能在对应 Sprint 范围内接入；EAM-Lite 不读取或写入 T+ 数据库。

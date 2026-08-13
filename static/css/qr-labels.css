@@ -1,0 +1,160 @@
+@page {
+  size: A4 portrait;
+  margin: 8mm;
+}
+
+.label-print-controls {
+  max-width: 194mm;
+  margin: 1rem auto;
+  padding: 1rem;
+  border: 1px solid #ced4da;
+  font-family: system-ui, sans-serif;
+}
+
+.label-sheet {
+  box-sizing: border-box;
+  width: 194mm;
+  min-height: 280mm;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(8, 35mm);
+  gap: 0;
+  break-after: page;
+  page-break-after: always;
+}
+
+.label-sheet:last-child {
+  break-after: auto;
+  page-break-after: auto;
+}
+
+.qr-label {
+  box-sizing: border-box;
+  min-width: 0;
+  height: 35mm;
+  padding: 2mm;
+  border: 0.2mm dashed #888;
+  display: flex;
+  align-items: center;
+  gap: 1.5mm;
+  overflow: hidden;
+  color: #000;
+  background: #fff;
+  font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+}
+
+.label-copy {
+  min-width: 0;
+  flex: 1;
+  font-size: 7pt;
+  line-height: 1.22;
+  overflow: hidden;
+}
+
+.company-name,
+.asset-name,
+.asset-code,
+.label-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.company-name {
+  font-size: 8pt;
+  font-weight: 700;
+}
+
+.asset-name {
+  margin-top: 0.5mm;
+  font-size: 8pt;
+  font-weight: 700;
+}
+
+.asset-code {
+  margin: 0.6mm 0;
+  font-size: 9pt;
+  font-weight: 700;
+}
+
+.qr-image {
+  box-sizing: border-box;
+  width: 22mm;
+  height: 22mm;
+  flex: 0 0 22mm;
+  object-fit: contain;
+  image-rendering: crisp-edges;
+}
+
+.qr-scan-page {
+  width: 100%;
+  max-width: 42rem;
+  overflow-wrap: anywhere;
+}
+
+.qr-message-card {
+  max-width: 36rem;
+}
+
+.qr-rotate-card {
+  max-width: 44rem;
+}
+
+.scan-cover {
+  display: block;
+  width: 100%;
+  max-height: 18rem;
+  object-fit: contain;
+  border-radius: 0.5rem;
+  background: #fff;
+}
+
+.scan-facts {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, 35%) minmax(0, 1fr);
+  gap: 0.5rem 0.75rem;
+}
+
+.scan-facts dt,
+.scan-facts dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.scan-facts dt {
+  color: #6c757d;
+}
+
+.scan-primary-action {
+  min-height: 44px;
+}
+
+@media (max-width: 360px) {
+  .qr-scan-page {
+    max-width: 100%;
+  }
+
+  .scan-facts {
+    grid-template-columns: 5rem minmax(0, 1fr);
+    font-size: 0.95rem;
+  }
+}
+
+@media print {
+  .label-print-controls {
+    display: none !important;
+  }
+
+  html,
+  body {
+    width: 194mm;
+    margin: 0;
+    padding: 0;
+    background: #fff;
+  }
+
+  .label-sheet {
+    margin: 0;
+  }
+}

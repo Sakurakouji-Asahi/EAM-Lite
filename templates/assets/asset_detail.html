@@ -14,6 +14,9 @@
       {% if can_submit %}<a class="btn btn-success" href="{% url 'assets:asset-submit' asset.pk %}">提交财务确认</a>{% endif %}
       {% if can_withdraw %}<a class="btn btn-outline-warning" href="{% url 'assets:asset-withdraw' asset.pk %}">撤回/退回</a>{% endif %}
       {% if can_set_scheme %}<a class="btn btn-outline-primary" href="{% url 'assets:asset-requested-scheme' asset.pk %}">指定编码方案</a>{% endif %}
+      {% if can_manage_labels %}
+        {% if current_qr and current_qr.label_status == 'attached' %}<a class="btn btn-outline-danger" href="{% url 'assets:qr-rotate' asset.pk %}">换标</a>{% elif current_qr %}<a class="btn btn-outline-primary" href="{% url 'assets:label-queue' %}">打印/确认贴标</a>{% endif %}
+      {% endif %}
       {% if can_financial and asset.asset_status == "pending_finance" %}<a class="btn btn-danger" href="{% url 'finance:finance-confirm' asset.pk %}">财务确认</a>{% endif %}
       {% if can_financial and asset.asset_status != "draft" and asset.asset_status != "pending_finance" %}<a class="btn btn-outline-primary" href="{% url 'finance:asset-finance-detail' asset.pk %}">财务与折旧</a>{% endif %}
       {% if can_delete %}<a class="btn btn-outline-danger" href="{% url 'assets:asset-delete' asset.pk %}">删除草稿</a>{% endif %}
@@ -21,7 +24,7 @@
   </div>
 
   {% if asset.asset_status == "pending_finance" %}
-    <div class="alert alert-warning" role="status">当前等待 finance 明确会计认定。财务确认会在单一事务中生成永久正式编号和安全二维码身份，并进入待贴标；打印和贴标仍留到 Sprint 6。</div>
+    <div class="alert alert-warning" role="status">当前等待 finance 明确会计认定。财务确认会在单一事务中生成永久正式编号和安全二维码身份，并进入待贴标。</div>
   {% endif %}
 
   <div class="row g-3">
@@ -100,7 +103,7 @@
       <section class="card shadow-sm" aria-labelledby="future-tabs-title">
         <div class="card-header"><h2 class="h5 mb-0" id="future-tabs-title">后续业务记录</h2></div>
         <div class="card-body">
-          <p class="text-secondary mb-0">折旧已由财务真源与追加式分录管理；变动、盘点、保养、处置以及二维码打印与贴标属于后续 Sprint，当前不生成伪数据。</p>
+          <p class="text-secondary mb-0">折旧已由财务真源与追加式分录管理；二维码打印、贴标与换标通过受控动作记录，其他生命周期、盘点、保养和处置仍属后续 Sprint。</p>
         </div>
       </section>
     </div>

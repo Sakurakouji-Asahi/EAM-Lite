@@ -1,4 +1,5 @@
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from django.core.exceptions import ImproperlyConfigured
 
@@ -22,8 +23,6 @@ CSRF_TRUSTED_ORIGINS = read_list_env(
 )
 
 if not DEBUG and "*" in ALLOWED_HOSTS:
-    from django.core.exceptions import ImproperlyConfigured
-
     raise ImproperlyConfigured("DEBUG=false 时 ALLOWED_HOSTS 不得包含通配符 *")
 
 INSTALLED_APPS = [
@@ -133,9 +132,26 @@ USE_TZ = True
 
 BUSINESS_CURRENCY = read_env("BUSINESS_CURRENCY", "CNY").upper()
 if BUSINESS_CURRENCY != "CNY":
-    from django.core.exceptions import ImproperlyConfigured
-
     raise ImproperlyConfigured("Sprint 0 的 BUSINESS_CURRENCY 必须为 CNY")
+
+# Printed QR codes are durable identifiers.  The deployment URL therefore
+# comes from configuration rather than the incoming Host header.  Production
+# must point this at the approved LAN HTTPS name; the local default keeps
+# development and automated tests deterministic without an external service.
+QR_BASE_URL = read_env("QR_BASE_URL", "https://localhost").rstrip("/")
+_qr_base = urlsplit(QR_BASE_URL)
+if (
+    _qr_base.scheme != "https"
+    or not _qr_base.hostname
+    or _qr_base.username is not None
+    or _qr_base.password is not None
+    or _qr_base.query
+    or _qr_base.fragment
+    or _qr_base.path not in {"", "/"}
+):
+    raise ImproperlyConfigured(
+        "QR_BASE_URL 必须是无凭据、查询参数和路径的 https:// 内网应用根地址"
+    )
 
 STATIC_URL = "/static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
@@ -211,8 +227,6 @@ X_FRAME_OPTIONS = "DENY"
 
 LOG_LEVEL = read_env("LOG_LEVEL", "INFO").upper()
 if LOG_LEVEL not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
-    from django.core.exceptions import ImproperlyConfigured
-
     raise ImproperlyConfigured(
         "LOG_LEVEL 必须是 DEBUG、INFO、WARNING、ERROR 或 CRITICAL"
     )

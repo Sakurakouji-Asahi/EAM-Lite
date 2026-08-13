@@ -1,0 +1,3 @@
+{% extends "base.html" %}
+{% block title %}无权查看 - EAM-Lite{% endblock %}
+{% block content %}<div class="mx-auto qr-message-card"><div class="alert alert-danger"><h1 class="h4">无权查看</h1><p class="mb-0">当前账号无权查看此二维码对应的资产。</p></div><a class="btn btn-outline-secondary" href="{% url 'home' %}">返回有权页面</a></div>{% endblock %}
