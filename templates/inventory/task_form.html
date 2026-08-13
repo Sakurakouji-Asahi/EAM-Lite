@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{% if task %}编辑{% else %}新建{% endif %}盘点任务 - EAM-Lite{% endblock %}
+{% block content %}
+  <div class="mb-3"><h1 class="h3">{% if task %}编辑盘点任务草稿{% else %}新建盘点任务草稿{% endif %}</h1><p class="text-secondary">保存草稿不会生成应盘快照，也不能接受扫码。任务编号：{{ task_code }}</p></div>
+  <form method="post" class="card shadow-sm"><div class="card-body">
+    {% csrf_token %}{% if not task %}<input type="hidden" name="_draft_token" value="{{ draft_token }}">{% endif %}
+    {% include "inventory/_form_fields.html" %}
+    <section class="border rounded p-3 mb-3">
+      <h2 class="h6">勾选资产范围</h2><p class="small text-secondary">仅当范围选择“勾选资产”时生效；发布时仍会逐项重新校验对象权限和正式状态。</p>
+      <div class="table-responsive" style="max-height: 20rem"><table class="table table-sm align-middle"><thead><tr><th>选择</th><th>编号</th><th>名称</th><th>部门</th><th>责任人</th><th>位置</th></tr></thead><tbody>{% for asset in available_assets %}<tr><td><input class="form-check-input" type="checkbox" name="selected_asset_ids_ui" value="{{ asset.pk }}"{% if asset.pk|stringformat:'s' in selected_ids %} checked{% endif %}></td><td>{{ asset.asset_code }}</td><td>{{ asset.asset_name }}</td><td>{{ asset.department.name }}</td><td>{{ asset.responsible_employee.name }}</td><td>{{ asset.location.name }}</td></tr>{% empty %}<tr><td colspan="6" class="text-secondary">当前范围没有可选正式资产。</td></tr>{% endfor %}</tbody></table></div>
+    </section>
+  </div><div class="card-footer d-flex gap-2"><button class="btn btn-primary" type="submit">保存草稿</button><a class="btn btn-outline-secondary" href="{% if task %}{% url 'inventory:task-detail' task.pk %}{% else %}{% url 'inventory:task-list' %}{% endif %}">取消</a></div></form>
+{% endblock %}

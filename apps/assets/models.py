@@ -2292,6 +2292,12 @@ class AttachmentLinkQuerySet(models.QuerySet):
             "asset_id",
             "asset_disposal",
             "asset_disposal_id",
+            "inventory_surplus",
+            "inventory_surplus_id",
+            "inventory_scan",
+            "inventory_scan_id",
+            "inventory_resolution",
+            "inventory_resolution_id",
             "attachment",
             "attachment_id",
             "role",
@@ -2325,6 +2331,8 @@ class AttachmentLink(models.Model):
         CERTIFICATE = "certificate", "合格证"
         MANUAL = "manual", "说明书"
         DISPOSAL = "disposal", "处置证据"
+        SURPLUS_EVIDENCE = "surplus_evidence", "盘盈证据"
+        INVENTORY_EVIDENCE = "inventory_evidence", "盘点证据"
         OTHER = "other", "其他"
 
     class SecurityClass(models.TextChoices):
@@ -2359,6 +2367,30 @@ class AttachmentLink(models.Model):
     asset_disposal = models.ForeignKey(
         AssetDisposal,
         verbose_name="资产处置",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="attachment_links",
+    )
+    inventory_surplus = models.ForeignKey(
+        "inventory.InventorySurplus",
+        verbose_name="盘盈记录",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="attachment_links",
+    )
+    inventory_scan = models.ForeignKey(
+        "inventory.InventoryScan",
+        verbose_name="盘点扫描",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="attachment_links",
+    )
+    inventory_resolution = models.ForeignKey(
+        "inventory.InventoryResolution",
+        verbose_name="盘点处理结论",
         null=True,
         blank=True,
         on_delete=models.CASCADE,
@@ -2405,8 +2437,41 @@ class AttachmentLink(models.Model):
             ),
             models.CheckConstraint(
                 condition=(
-                    Q(asset__isnull=False, asset_disposal__isnull=True)
-                    | Q(asset__isnull=True, asset_disposal__isnull=False)
+                    Q(
+                        asset__isnull=False,
+                        asset_disposal__isnull=True,
+                        inventory_surplus__isnull=True,
+                        inventory_scan__isnull=True,
+                        inventory_resolution__isnull=True,
+                    )
+                    | Q(
+                        asset__isnull=True,
+                        asset_disposal__isnull=False,
+                        inventory_surplus__isnull=True,
+                        inventory_scan__isnull=True,
+                        inventory_resolution__isnull=True,
+                    )
+                    | Q(
+                        asset__isnull=True,
+                        asset_disposal__isnull=True,
+                        inventory_surplus__isnull=False,
+                        inventory_scan__isnull=True,
+                        inventory_resolution__isnull=True,
+                    )
+                    | Q(
+                        asset__isnull=True,
+                        asset_disposal__isnull=True,
+                        inventory_surplus__isnull=True,
+                        inventory_scan__isnull=False,
+                        inventory_resolution__isnull=True,
+                    )
+                    | Q(
+                        asset__isnull=True,
+                        asset_disposal__isnull=True,
+                        inventory_surplus__isnull=True,
+                        inventory_scan__isnull=True,
+                        inventory_resolution__isnull=False,
+                    )
                 ),
                 name="ck_attachment_link_one_target",
             ),
@@ -2421,6 +2486,8 @@ class AttachmentLink(models.Model):
                         "certificate",
                         "manual",
                         "disposal",
+                        "surplus_evidence",
+                        "inventory_evidence",
                         "other",
                     )
                 ),
@@ -2441,6 +2508,8 @@ class AttachmentLink(models.Model):
                         security_class="A1",
                     )
                     | Q(role="disposal", security_class__in=("A0", "A1"))
+                    | Q(role="surplus_evidence", security_class="A0")
+                    | Q(role="inventory_evidence", security_class="A0")
                     | Q(role="other", security_class__in=("A0", "A1"))
                 ),
                 name="ck_attachment_link_role_security",
@@ -2470,15 +2539,40 @@ class AttachmentLink(models.Model):
             errors["asset"] = "资产必须属于同一公司。"
         if self.asset_disposal_id and self.asset_disposal.company_id != self.company_id:
             errors["asset_disposal"] = "资产处置必须属于同一公司。"
-        if bool(self.asset_id) == bool(self.asset_disposal_id):
+        inventory_targets = (
+            ("inventory_surplus", self.inventory_surplus_id),
+            ("inventory_scan", self.inventory_scan_id),
+            ("inventory_resolution", self.inventory_resolution_id),
+        )
+        for field_name, target_id in inventory_targets:
+            if target_id and getattr(self, field_name).company_id != self.company_id:
+                errors[field_name] = "盘点附件目标必须属于同一公司。"
+        if sum(
+            value is not None
+            for value in (
+                self.asset_id,
+                self.asset_disposal_id,
+                self.inventory_surplus_id,
+                self.inventory_scan_id,
+                self.inventory_resolution_id,
+            )
+        ) != 1:
             errors["asset"] = "附件必须且只能关联一个业务目标。"
         if self.attachment_id and self.attachment.company_id != self.company_id:
             errors["attachment"] = "附件必须属于同一公司。"
+        if (
+            self.role == self.Role.SURPLUS_EVIDENCE
+            and self.attachment_id
+            and not self.attachment.mime_type.startswith("image/")
+        ):
+            errors["attachment"] = "盘盈现场证据必须是图片。"
         a0_roles = {
             self.Role.COVER,
             self.Role.PHOTO,
             self.Role.CERTIFICATE,
             self.Role.MANUAL,
+            self.Role.SURPLUS_EVIDENCE,
+            self.Role.INVENTORY_EVIDENCE,
         }
         a1_roles = {self.Role.INVOICE, self.Role.CONTRACT, self.Role.ACCEPTANCE}
         if self.role in a0_roles and self.security_class != self.SecurityClass.A0:
@@ -2494,6 +2588,9 @@ class AttachmentLink(models.Model):
                 "company_id",
                 "asset_id",
                 "asset_disposal_id",
+                "inventory_surplus_id",
+                "inventory_scan_id",
+                "inventory_resolution_id",
                 "attachment_id",
                 "role",
                 "security_class",
@@ -2506,6 +2603,9 @@ class AttachmentLink(models.Model):
                 "company_id": self.company_id,
                 "asset_id": self.asset_id,
                 "asset_disposal_id": self.asset_disposal_id,
+                "inventory_surplus_id": self.inventory_surplus_id,
+                "inventory_scan_id": self.inventory_scan_id,
+                "inventory_resolution_id": self.inventory_resolution_id,
                 "attachment_id": self.attachment_id,
                 "role": self.role,
                 "security_class": self.security_class,
@@ -2519,6 +2619,9 @@ class AttachmentLink(models.Model):
                     "company_id",
                     "asset_id",
                     "asset_disposal_id",
+                    "inventory_surplus_id",
+                    "inventory_scan_id",
+                    "inventory_resolution_id",
                     "attachment_id",
                     "role",
                     "security_class",
@@ -2534,4 +2637,11 @@ class AttachmentLink(models.Model):
         raise ValidationError("附件业务关联不得物理删除，只能通过受控 Service 作废。")
 
     def __str__(self):
-        return f"{self.asset or self.asset_disposal} - {self.get_role_display()}"
+        target = (
+            self.asset
+            or self.asset_disposal
+            or self.inventory_surplus
+            or self.inventory_scan
+            or self.inventory_resolution
+        )
+        return f"{target} - {self.get_role_display()}"

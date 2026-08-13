@@ -48,6 +48,11 @@
               <a class="nav-link px-0" href="{% url 'finance:fixed-category-list' %}">固定资产类别</a>
               <a class="nav-link px-0" href="{% url 'finance:batch-list' %}">折旧批次</a>
             {% endif %}
+            {% if inventory_nav.can_view %}
+              <div class="text-secondary small mt-3 mb-1">盘点管理</div>
+              <a class="nav-link px-0" href="{% url 'inventory:task-list' %}">盘点任务</a>
+              {% if inventory_nav.can_create %}<a class="nav-link px-0" href="{% url 'inventory:task-create' %}">新建盘点任务</a>{% endif %}
+            {% endif %}
             {% if can_access_setup %}<a class="nav-link px-0" href="{% url 'masterdata:setup' %}">初始化向导</a>{% endif %}
             {% if masterdata_nav.company or masterdata_nav.department or masterdata_nav.employee or masterdata_nav.location or masterdata_nav.asset_category or masterdata_nav.coding_scheme %}
               <div class="text-secondary small mt-3 mb-1">基础资料</div>

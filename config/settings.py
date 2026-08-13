@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     "apps.coding.apps.CodingConfig",
     "apps.assets.apps.AssetsConfig",
     "apps.finance.apps.FinanceConfig",
+    "apps.inventory.apps.InventoryConfig",
     "apps.imports.apps.ImportsConfig",
     "apps.core.apps.CoreConfig",
 ]
@@ -67,6 +68,7 @@ TEMPLATES = [
                 "apps.masterdata.context_processors.masterdata_navigation",
                 "apps.assets.context_processors.asset_navigation",
                 "apps.finance.context_processors.finance_navigation",
+                "apps.inventory.context_processors.inventory_navigation",
             ],
         },
     },

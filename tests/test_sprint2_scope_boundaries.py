@@ -101,9 +101,8 @@ def test_sprint2_services_export_no_issue_or_allocate_primitive():
     assert forbidden == []
 
 
-def test_current_source_has_no_inventory_or_maintenance_domain_model():
+def test_current_source_has_no_maintenance_domain_model_before_sprint9():
     forbidden_model_names = {
-        "inventorytask",
         "maintenanceplan",
     }
     declared = []

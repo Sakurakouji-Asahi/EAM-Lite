@@ -1,0 +1,9 @@
+{% if summary %}
+  <div class="inventory-summary-grid mb-3">
+    <div class="card inventory-summary-card"><div class="card-body"><div class="text-secondary small">应盘</div><div class="h3 mb-0">{{ summary.expected }}</div></div></div>
+    <div class="card inventory-summary-card"><div class="card-body"><div class="text-secondary small">已盘</div><div class="h3 mb-0">{{ summary.scanned }}</div></div></div>
+    <div class="card inventory-summary-card"><div class="card-body"><div class="text-secondary small">异常</div><div class="h3 mb-0 text-danger">{{ summary.exception }}</div></div></div>
+    <div class="card inventory-summary-card"><div class="card-body"><div class="text-secondary small">未盘</div><div class="h3 mb-0">{{ summary.missing }}</div></div></div>
+  </div>
+  <div class="progress mb-3" role="progressbar" aria-label="盘点进度" aria-valuenow="{{ summary.scanned }}" aria-valuemin="0" aria-valuemax="{{ summary.expected }}"><div class="progress-bar"{% if summary.expected %} style="width:{% widthratio summary.scanned summary.expected 100 %}%"{% endif %}>{{ summary.scanned }} / {{ summary.expected }}</div></div>
+{% endif %}

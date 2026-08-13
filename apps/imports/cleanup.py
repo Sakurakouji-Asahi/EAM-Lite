@@ -537,7 +537,11 @@ def cleanup_unreferenced_private_files(
     storage_root = Path(default_storage.location).resolve()
     for prefix in private_prefixes:
         normalized_prefix = PurePosixPath(str(prefix)).as_posix().strip("/")
-        if normalized_prefix not in {"private/imports", "private/assets"}:
+        if normalized_prefix not in {
+            "private/imports",
+            "private/assets",
+            "private/inventory",
+        }:
             raise ValidationError("私有文件清理前缀不在批准白名单中。")
         root = Path(default_storage.path(normalized_prefix)).resolve()
         if not root.exists():
@@ -560,19 +564,23 @@ def cleanup_unreferenced_private_files(
                 continue
             if not dry_run:
                 is_import_file = storage_key.startswith("private/imports/")
+                is_inventory_file = storage_key.startswith("private/inventory/")
+                if is_import_file:
+                    object_type = "PrivateImportFile"
+                    action = "import_private_file_cleanup"
+                elif is_inventory_file:
+                    object_type = "PrivateInventoryFile"
+                    action = "inventory_private_file_cleanup"
+                else:
+                    object_type = "PrivateAssetFile"
+                    action = "asset_private_file_cleanup"
                 with transaction.atomic():
                     _audit_cleanup(
                         company=audit_company,
                         actor=actor,
-                        object_type=(
-                            "PrivateImportFile" if is_import_file else "PrivateAssetFile"
-                        ),
+                        object_type=object_type,
                         object_id=hashlib.sha256(storage_key.encode()).hexdigest(),
-                        action=(
-                            "import_private_file_cleanup"
-                            if is_import_file
-                            else "asset_private_file_cleanup"
-                        ),
+                        action=action,
                         data={
                             "new": {
                                 "delete_requested": True,

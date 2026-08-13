@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}盘点任务 - EAM-Lite{% endblock %}
+{% block content %}
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div><h1 class="h3 mb-1">盘点任务</h1><p class="text-secondary mb-0">任务指派仅授予本任务的非财务快照与扫码权限。</p></div>
+    {% if can_create %}<a class="btn btn-primary" href="{% url 'inventory:task-create' %}">新建盘点任务</a>{% endif %}
+  </div>
+  <form method="get" class="card card-body mb-3">
+    <div class="row g-2 align-items-end">
+      <div class="col-12 col-md-6"><label class="form-label" for="q">任务编号或名称</label><input id="q" class="form-control" type="search" name="q" value="{{ query }}"></div>
+      <div class="col-8 col-md-3"><label class="form-label" for="status">状态</label><select id="status" class="form-select" name="status"><option value="">全部状态</option>{% for value,label in status_choices %}<option value="{{ value }}"{% if status == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+      <div class="col-4 col-md-3"><button class="btn btn-outline-primary w-100" type="submit">筛选</button></div>
+    </div>
+  </form>
+  <div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover align-middle mb-0">
+    <thead><tr><th>任务编号</th><th>名称</th><th>类型</th><th>范围</th><th>计划日期</th><th>状态</th><th>应盘数</th><th></th></tr></thead>
+    <tbody>{% for task in tasks %}<tr><td class="text-nowrap">{{ task.task_code }}</td><td>{{ task.name }}</td><td>{{ task.get_inventory_type_display }}</td><td>{{ task.get_scope_type_display }}{% if task.scope_department %} · {{ task.scope_department.name }}{% elif task.scope_category %} · {{ task.scope_category.name }}{% elif task.scope_location %} · {{ task.scope_location.name }}{% endif %}</td><td class="text-nowrap">{{ task.planned_start|date:'Y-m-d' }} ～ {{ task.planned_end|date:'Y-m-d' }}</td><td><span class="badge text-bg-secondary">{{ task.get_status_display }}</span></td><td>{{ task.expected_asset_count|default:'—' }}</td><td><a class="btn btn-sm btn-outline-primary" href="{% url 'inventory:task-detail' task.pk %}">查看</a></td></tr>{% empty %}<tr><td colspan="8" class="text-center text-secondary py-4">暂无有权查看的盘点任务。</td></tr>{% endfor %}</tbody>
+  </table></div></div>
+{% endblock %}

@@ -79,7 +79,11 @@ class Command(BaseCommand):
                         older_than_days=options["unreferenced_private_days"],
                         dry_run=dry_run,
                         task_id=options["task_id"],
-                        private_prefixes=("private/imports", "private/assets"),
+                        private_prefixes=(
+                            "private/imports",
+                            "private/assets",
+                            "private/inventory",
+                        ),
                     )
                 )
         except (PermissionDenied, ValidationError) as exc:

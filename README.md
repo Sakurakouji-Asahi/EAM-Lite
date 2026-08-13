@@ -399,7 +399,7 @@ boolean/select` 分类动态值。提交 Service 会锁定资产并重新校验�
 AttachmentLink，文件证据和摘要继续保留。
 
 `cleanup_import_staging --unreferenced-private-days <经批准天数>` 现在同时扫描受控白名单下的
-`private/imports` 与 `private/assets` 无元数据文件；命令仍默认为 dry-run，只有显式
+`private/imports`、`private/assets` 与 `private/inventory` 无元数据文件；命令仍默认为 dry-run，只有显式
 `--execute` 才删除，并要求可登录 system_admin、记录审计且重复执行安全。带 Attachment 元数据
 或业务 Link 的资产附件不会被该路径误删；作废附件也继续保留。
 
