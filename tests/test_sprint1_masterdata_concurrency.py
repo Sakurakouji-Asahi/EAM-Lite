@@ -41,6 +41,8 @@ def _raw_update(model, object_id, values, barrier):
         return "ok"
     except IntegrityError:
         return "integrity"
+    except ValidationError:
+        return "validation"
     finally:
         close_old_connections()
 
@@ -116,7 +118,7 @@ def test_concurrent_manager_bind_and_employee_disable_preserve_validity():
         ]
         outcomes = [result.result(timeout=30) for result in results]
 
-    assert sorted(outcomes) == ["integrity", "ok"]
+    assert sorted(outcomes) == ["ok", "validation"]
     managed.refresh_from_db()
     employee.refresh_from_db()
     assert managed.manager_employee_id is None or (

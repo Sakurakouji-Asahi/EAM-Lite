@@ -60,6 +60,11 @@
               <a class="nav-link px-0" href="{% url 'maintenance:record-list' %}">保养记录</a>
               <a class="nav-link px-0" href="{% url 'maintenance:problem-list' %}">问题跟进</a>
             {% endif %}
+            {% if offboarding_nav.can_view %}
+              <div class="text-secondary small mt-3 mb-1">人员资产</div>
+              <a class="nav-link px-0" href="{% url 'offboarding:clearance-list' %}">离职资产清退</a>
+              {% if offboarding_nav.can_initiate %}<a class="nav-link px-0" href="{% url 'offboarding:clearance-initiate' %}">发起离职清退</a>{% endif %}
+            {% endif %}
             {% if can_access_setup %}<a class="nav-link px-0" href="{% url 'masterdata:setup' %}">初始化向导</a>{% endif %}
             {% if masterdata_nav.company or masterdata_nav.department or masterdata_nav.employee or masterdata_nav.location or masterdata_nav.asset_category or masterdata_nav.coding_scheme %}
               <div class="text-secondary small mt-3 mb-1">基础资料</div>

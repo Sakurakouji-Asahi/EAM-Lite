@@ -173,6 +173,22 @@ def _audit(*, actor, action, instance, old=None, new=None, request=None):
     )
 
 
+def _sync_offboarding_clearances(
+    *, actor, asset, movement=None, disposal=None, request=None,
+):
+    """Keep Sprint 10 clearance state inside this lifecycle transaction."""
+
+    from apps.offboarding.services import sync_clearance_items_for_asset
+
+    return sync_clearance_items_for_asset(
+        actor=actor,
+        asset=asset,
+        movement=movement,
+        disposal=disposal,
+        request=request,
+    )
+
+
 def _operation_marker(*, company, operation, key):
     """Return an existing action audit used as the Sprint 7 request ledger."""
 
@@ -220,7 +236,54 @@ def _write_operation_marker(
     )
 
 
-def _validate_target(asset, *, department, employee, location):
+def _lock_employee_targets(asset, **targets):
+    """Reload target employees after Company -> Asset locks, in PK order.
+
+    HTTP forms and callers may retain an Employee instance from before an
+    offboarding transaction committed.  Business mutations must therefore not
+    trust status fields on the supplied instance.
+    """
+
+    from apps.masterdata.models import Employee
+
+    target_ids = {
+        name: getattr(value, "pk", value)
+        for name, value in targets.items()
+        if value is not None
+    }
+    invalid = [name for name, value in target_ids.items() if not value]
+    if invalid:
+        raise ValidationError({name: "员工记录无效。" for name in invalid})
+    ids = sorted(set(target_ids.values()), key=str)
+    queryset = Employee.objects.select_for_update()
+    if connection.vendor == "postgresql":
+        queryset = Employee.objects.select_for_update(of=("self",))
+    current = {
+        employee.pk: employee
+        for employee in queryset.filter(
+            company_id=asset.company_id, pk__in=ids
+        ).order_by("pk")
+    }
+    missing = {
+        name: "员工必须存在且属于当前公司。"
+        for name, employee_id in target_ids.items()
+        if employee_id not in current
+    }
+    if missing:
+        raise ValidationError(missing)
+    return {
+        name: None if value is None else current[target_ids[name]]
+        for name, value in targets.items()
+    }
+
+
+def _validate_target(
+    asset, *, department, employee, location, employee_is_locked=False,
+):
+    if employee is not None and not employee_is_locked:
+        employee = _lock_employee_targets(
+            asset, to_responsible_employee=employee
+        )["to_responsible_employee"]
     errors = {}
     for name, value in (
         ("to_department", department),
@@ -242,6 +305,7 @@ def _validate_target(asset, *, department, employee, location):
         errors["to_location"] = "必须选择叶级具体位置。"
     if errors:
         raise ValidationError(errors)
+    return employee
 
 
 def _ensure_fresh(
@@ -292,7 +356,8 @@ def change_asset_assignment(
     *, actor, asset, to_department, to_responsible_employee, to_location,
     effective_at, reason, idempotency_key, expected_department_id=None,
     expected_responsible_employee_id=None, expected_location_id=None,
-    expected_status=None, remark="", request=None, movement_type="transfer",
+    expected_status=None, to_status=None, remark="", request=None,
+    movement_type="transfer",
 ):
     """Atomically change one asset's department/responsible/location tuple."""
 
@@ -304,6 +369,18 @@ def change_asset_assignment(
     require_lifecycle_action(
         actor, asset, movement_type, target_department=to_department
     )
+    to_responsible_employee = _lock_employee_targets(
+        asset, to_responsible_employee=to_responsible_employee
+    )["to_responsible_employee"]
+    target_status = asset.asset_status if to_status is None else to_status
+    if target_status not in {"in_use", "idle"}:
+        raise ValidationError(
+            {"to_status": "责任归还或转交后的状态只能是在用或闲置。"}
+        )
+    if movement_type != "assignment_return" and target_status != asset.asset_status:
+        raise ValidationError(
+            {"to_status": "只有责任归还动作可以同时明确变更在用/闲置状态。"}
+        )
     payload = {
         "asset_id": asset.pk, "movement_type": movement_type,
         "to_department_id": to_department.pk,
@@ -311,6 +388,8 @@ def change_asset_assignment(
         "to_location_id": to_location.pk, "effective_at": effective_at,
         "reason": str(reason or "").strip(), "remark": str(remark or "").strip(),
     }
+    if to_status is not None:
+        payload["to_status"] = target_status
     key, digest, existing = _check_operation_idempotency(
         company=asset.company, operation="assignment", key=idempotency_key,
         payload=payload, model=AssetMovement,
@@ -327,7 +406,7 @@ def change_asset_assignment(
     )
     _validate_target(
         asset, department=to_department, employee=to_responsible_employee,
-        location=to_location,
+        location=to_location, employee_is_locked=True,
     )
     old = {
         "department_id": asset.department_id,
@@ -347,12 +426,13 @@ def change_asset_assignment(
         from_department=asset.department, to_department=to_department,
         from_employee=asset.responsible_employee, to_employee=to_responsible_employee,
         from_location=asset.location, to_location=to_location,
-        from_status=asset.asset_status, to_status=asset.asset_status, remark=remark,
+        from_status=asset.asset_status, to_status=target_status, remark=remark,
     )
     _base_update(Asset, asset.pk, {
         "department_id": to_department.pk,
         "responsible_employee_id": to_responsible_employee.pk,
         "location_id": to_location.pk,
+        "asset_status": target_status,
         "updated_by_id": actor.pk,
     })
     _audit(
@@ -362,6 +442,9 @@ def change_asset_assignment(
     _write_operation_marker(
         actor=actor, operation="assignment", result=movement, key=key,
         digest=digest, payload=payload, request=request,
+    )
+    _sync_offboarding_clearances(
+        actor=actor, asset=asset, movement=movement, request=request
     )
     return movement
 
@@ -517,6 +600,9 @@ def loan_asset(
     if borrower_type == "internal_employee":
         if borrower_employee is None or borrower_name or borrower_organization:
             raise ValidationError("内部借用必须选择员工，且外部借用字段必须为空。")
+        borrower_employee = _lock_employee_targets(
+            asset, borrower_employee=borrower_employee
+        )["borrower_employee"]
         if (
             borrower_employee.company_id != asset.company_id
             or borrower_employee.employment_status != "active"
@@ -598,7 +684,18 @@ def return_loan(
     require_lifecycle_action(
         actor, asset, "loan_return", target_department=return_department
     )
-    loan = AssetLoan.objects.select_for_update().get(pk=loan.pk, company=asset.company, asset=asset)
+    target_employees = _lock_employee_targets(
+        asset,
+        received_by_employee=received_by_employee,
+        return_responsible_employee=return_responsible_employee,
+    )
+    received_by_employee = target_employees["received_by_employee"]
+    return_responsible_employee = target_employees[
+        "return_responsible_employee"
+    ]
+    loan = AssetLoan.objects.select_for_update().get(
+        pk=loan.pk, company=asset.company, asset=asset
+    )
     returned_at = _business_datetime(returned_at, "returned_at")
     if returned_at > timezone.now():
         raise ValidationError({"returned_at": "实际归还时间不得晚于当前时间。"})
@@ -607,6 +704,7 @@ def return_loan(
     _validate_target(
         asset, department=return_department,
         employee=return_responsible_employee, location=return_location,
+        employee_is_locked=True,
     )
     if (
         received_by_employee is None
@@ -666,6 +764,9 @@ def return_loan(
         digest=digest, payload=payload, request=request,
     )
     loan.refresh_from_db()
+    _sync_offboarding_clearances(
+        actor=actor, asset=asset, movement=movement, request=request
+    )
     return loan
 
 
@@ -895,6 +996,13 @@ def initiate_disposal(
     _write_operation_marker(
         actor=actor, operation="disposal_start", result=disposal, key=key,
         digest=digest, payload=payload, request=request,
+    )
+    _sync_offboarding_clearances(
+        actor=actor,
+        asset=asset,
+        movement=movement,
+        disposal=disposal,
+        request=request,
     )
     return disposal
 
@@ -1144,6 +1252,13 @@ def cancel_disposal(
            new={**payload, "movement_id": str(movement.pk)}, request=request)
     _write_operation_marker(actor=actor, operation="disposal_cancel", result=disposal,
                             key=key, digest=digest, payload=payload, request=request)
+    _sync_offboarding_clearances(
+        actor=actor,
+        asset=asset,
+        movement=movement,
+        disposal=disposal,
+        request=request,
+    )
     return disposal
 
 
@@ -1262,6 +1377,13 @@ def complete_disposal(
                 "ended_maintenance_plans": [str(item.pk) for item in maintenance_plans]}, request=request)
     _write_operation_marker(actor=actor, operation="disposal_complete", result=disposal,
                             key=key, digest=digest, payload=payload, request=request)
+    _sync_offboarding_clearances(
+        actor=actor,
+        asset=asset,
+        movement=movement,
+        disposal=disposal,
+        request=request,
+    )
     return disposal
 
 
@@ -1288,9 +1410,17 @@ def reverse_disposal(
 
     asset = _lock_asset(disposal.asset_id)
     require_lifecycle_action(actor, asset, "disposal_reversal")
+    if replacement_responsible_employee is not None:
+        replacement_responsible_employee = _lock_employee_targets(
+            asset,
+            replacement_responsible_employee=replacement_responsible_employee,
+        )["replacement_responsible_employee"]
     disposal = AssetDisposal.objects.select_for_update().get(
         pk=disposal.pk, company=asset.company, asset=asset
     )
+    from apps.offboarding.services import require_disposal_not_used_by_clearance
+
+    require_disposal_not_used_by_clearance(disposal)
     explanation = _required(reason, "reason", "处置冲销必须填写原因。")
     replacement_id = getattr(replacement_responsible_employee, "pk", None)
     payload = {

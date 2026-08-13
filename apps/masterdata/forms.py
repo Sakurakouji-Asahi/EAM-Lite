@@ -166,8 +166,12 @@ class EmployeeForm(AuthorizedModelForm):
         self.fields["department"].queryset = Department.objects.filter(
             company=self.company, is_active=True
         ).order_by("normalized_code")
-        if self.instance.pk and self.instance.employment_status == "resigned":
+        if self.instance.pk:
             self.fields["employment_status"].disabled = True
+            self.fields["termination_date"].disabled = True
+            self.fields["employment_status"].help_text = (
+                "任职状态只能通过离职资产清退流程变更。"
+            )
 
     def clean_department(self):
         department = self.cleaned_data.get("department")
@@ -179,6 +183,16 @@ class EmployeeForm(AuthorizedModelForm):
         cleaned = super().clean()
         status = cleaned.get("employment_status")
         termination_date = cleaned.get("termination_date")
+        if self.instance.pk:
+            if status != self.instance.employment_status:
+                self.add_error("employment_status", "任职状态只能通过离职资产清退流程变更。")
+            if termination_date != self.instance.termination_date:
+                self.add_error("termination_date", "实际离职日期只能由清退完成动作写入。")
+        else:
+            if status != "active":
+                self.add_error("employment_status", "新建员工必须是正常在职状态。")
+            if termination_date is not None:
+                self.add_error("termination_date", "新建员工不能填写实际离职日期。")
         if status == "resigned" and termination_date is None:
             self.add_error("termination_date", "已离职员工必须填写实际离职日期。")
         elif status in {"active", "leaving"} and termination_date is not None:

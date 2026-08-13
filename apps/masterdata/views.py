@@ -11,6 +11,7 @@ from django.core import signing
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.db.models import Q
+from django.db.utils import OperationalError, ProgrammingError
 from django.http import Http404, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -730,6 +731,37 @@ def employee_detail(request, pk):
     ]
     if can_manage_masterdata(request.user, "employee_user"):
         fields.append("user")
+    clearance_url = None
+    clearance_label = None
+    try:
+        from apps.offboarding.permissions import scoped_clearances
+
+        active_clearance = scoped_clearances(request.user, company).filter(
+            employee=obj, status__in=("open", "blocked")
+        ).first()
+        latest_clearance = (
+            scoped_clearances(request.user, company)
+            .filter(employee=obj)
+            .order_by("-initiated_at")
+            .first()
+        )
+        if active_clearance is not None:
+            clearance_url = reverse(
+                "offboarding:clearance-detail", args=[active_clearance.pk]
+            )
+            clearance_label = "查看活动清退单"
+        elif latest_clearance is not None:
+            clearance_url = reverse(
+                "offboarding:clearance-detail", args=[latest_clearance.pk]
+            )
+            clearance_label = "查看清退历史"
+        elif obj.employment_status == "active" and "hr" in role_names_for(request.user):
+            clearance_url = (
+                reverse("offboarding:clearance-initiate") + f"?employee={obj.pk}"
+            )
+            clearance_label = "发起离职清退"
+    except (ImportError, OperationalError, ProgrammingError):
+        clearance_url = None
     return _render_master_detail(
         request,
         "employee",
@@ -740,6 +772,8 @@ def employee_detail(request, pk):
             if can_manage_masterdata(request.user, "employee_user")
             else None
         ),
+        clearance_url=clearance_url,
+        clearance_label=clearance_label,
     )
 
 
@@ -778,7 +812,15 @@ def category_detail(request, pk):
     )
 
 
-def _render_master_detail(request, resource, obj, fields, technical_link_url=None):
+def _render_master_detail(
+    request,
+    resource,
+    obj,
+    fields,
+    technical_link_url=None,
+    clearance_url=None,
+    clearance_label=None,
+):
     slug = "category" if resource == "asset_category" else resource
     return render(
         request,
@@ -789,10 +831,17 @@ def _render_master_detail(request, resource, obj, fields, technical_link_url=Non
             "object": obj,
             "rows": _detail_rows(obj, fields),
             "can_manage": can_manage_masterdata(request.user, resource),
+            "can_change_status": can_manage_masterdata(request.user, resource)
+            and not (
+                resource == "employee"
+                and obj.employment_status in {"leaving", "resigned"}
+            ),
             "edit_url": reverse(f"masterdata:{slug}-edit", args=[obj.pk]),
             "status_url": reverse(f"masterdata:{slug}-status", args=[obj.pk]),
             "back_url": reverse(f"masterdata:{slug}-list"),
             "technical_link_url": technical_link_url,
+            "clearance_url": clearance_url,
+            "clearance_label": clearance_label,
         },
     )
 

@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}{{ clearance.employee.name }}清退详情 - EAM-Lite{% endblock %}
+{% block content %}
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+      <div class="text-secondary">{{ clearance.employee.employee_no }} · {{ clearance.employee.department.name|default:"—" }}</div>
+      <h1 class="h3 mb-2">{{ clearance.employee.name }}的{% if clearance.is_supplement %}补充{% endif %}离职资产清退</h1>
+      <span class="badge text-bg-{% if clearance.status == 'completed' %}success{% elif clearance.status == 'blocked' %}danger{% elif clearance.status == 'cancelled' %}secondary{% else %}primary{% endif %}">{{ clearance.get_status_display }}</span>
+      {% if clearance.is_supplement %}<span class="badge text-bg-info">补充清退</span>{% endif %}
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-secondary" href="{% url 'offboarding:clearance-list' %}">返回列表</a>
+      {% if can_refresh %}<a class="btn btn-outline-primary" href="{% url 'offboarding:clearance-refresh' clearance.pk %}">刷新/重新核对</a>{% endif %}
+      {% if can_upload_clearance %}<a class="btn btn-outline-primary" href="{% url 'offboarding:attachment-upload' clearance.pk 'clearance' clearance.pk %}">上传整单证据</a>{% endif %}
+      {% if can_complete and clearance.unresolved_assets == 0 %}<a class="btn btn-danger" href="{% url 'offboarding:clearance-complete' clearance.pk %}">完成清退</a>{% endif %}
+      {% if can_create_supplement and not active_for_employee %}<a class="btn btn-warning" href="{% url 'offboarding:clearance-supplement' clearance.pk %}">建立补充清退</a>{% endif %}
+      {% if can_create_supplement and active_for_employee %}<a class="btn btn-warning" href="{% url 'offboarding:clearance-detail' active_for_employee.pk %}">打开活动补充单</a>{% endif %}
+    </div>
+  </div>
+
+  {% if clearance.unresolved_assets %}
+    <div class="alert alert-danger" role="alert">
+      <strong>清退被阻断：</strong>仍有 {{ clearance.unresolved_assets }} 项未解决资产。HR 无权强制清零，必须通过正式归还、转交或处置流程形成证据。
+    </div>
+  {% elif can_complete %}
+    <div class="alert alert-success" role="status">全部项目已形成解决证据。HR 仍需进入“完成清退”执行二次确认{% if not clearance.is_supplement %}并填写实际离职日期{% endif %}。</div>
+  {% endif %}
+  {% if clearance.status == 'completed' %}<div class="alert alert-secondary">本清退单及项目只读，不可重新打开或改写。{% if not clearance.is_supplement %}后续遗漏必须建立独立补充清退。{% endif %}</div>{% endif %}
+
+  <div class="row g-3 mb-3">
+    <div class="col-6 col-xl-3"><div class="card shadow-sm h-100"><div class="card-body"><div class="text-secondary small">资产总数</div><div class="fs-3">{{ clearance.total_assets_snapshot }}</div></div></div></div>
+    <div class="col-6 col-xl-3"><div class="card shadow-sm h-100"><div class="card-body"><div class="text-secondary small">已处理</div><div class="fs-3">{{ processed_assets }}</div></div></div></div>
+    <div class="col-6 col-xl-3"><div class="card shadow-sm h-100"><div class="card-body"><div class="text-secondary small">未处理</div><div class="fs-3 text-{% if clearance.unresolved_assets %}danger{% else %}success{% endif %}">{{ clearance.unresolved_assets }}</div></div></div></div>
+    <div class="col-6 col-xl-3"><div class="card shadow-sm h-100"><div class="card-body"><div class="text-secondary small">发起时间</div><div>{{ clearance.initiated_at|date:"Y-m-d H:i" }}</div></div></div></div>
+  </div>
+
+  <section class="card shadow-sm mb-3" aria-labelledby="clearance-summary-title">
+    <div class="card-header"><h2 class="h5 mb-0" id="clearance-summary-title">清退摘要</h2></div>
+    <div class="card-body">
+      <dl class="row mb-0">
+        <dt class="col-sm-4 col-lg-3 text-secondary">人员任职状态</dt><dd class="col-sm-8 col-lg-9">{{ clearance.employee.get_employment_status_display }}{% if not clearance.employee.is_active %} · 人员主数据已停用{% endif %}</dd>
+        <dt class="col-sm-4 col-lg-3 text-secondary">发起人</dt><dd class="col-sm-8 col-lg-9">{% if clearance.initiated_by %}{{ clearance.initiated_by.display_name|default:clearance.initiated_by.username }}{% else %}历史账号{% endif %}</dd>
+        {% if clearance.is_supplement %}<dt class="col-sm-4 col-lg-3 text-secondary">补充原因</dt><dd class="col-sm-8 col-lg-9">{{ clearance.supplement_reason|linebreaksbr }}</dd><dt class="col-sm-4 col-lg-3 text-secondary">原清退单</dt><dd class="col-sm-8 col-lg-9"><a href="{% url 'offboarding:clearance-detail' clearance.supplements_clearance_id %}">查看已完成原单</a></dd>{% endif %}
+        {% if clearance.remark %}<dt class="col-sm-4 col-lg-3 text-secondary">备注</dt><dd class="col-sm-8 col-lg-9">{{ clearance.remark|linebreaksbr }}</dd>{% endif %}
+        {% if clearance.completed_at %}<dt class="col-sm-4 col-lg-3 text-secondary">完成记录</dt><dd class="col-sm-8 col-lg-9">{{ clearance.completed_at|date:"Y-m-d H:i" }} · {% if clearance.completed_by %}{{ clearance.completed_by.display_name|default:clearance.completed_by.username }}{% else %}历史账号{% endif %}</dd>{% endif %}
+      </dl>
+    </div>
+  </section>
+
+  {% if clearance_attachments %}
+    <section class="card shadow-sm mb-3" aria-labelledby="clearance-attachments-title">
+      <div class="card-header"><h2 class="h5 mb-0" id="clearance-attachments-title">整单证据</h2></div>
+      <div class="card-body"><div class="list-group list-group-flush">
+        {% for row in clearance_attachments %}<div class="list-group-item px-0 d-flex flex-wrap justify-content-between align-items-center gap-2"><div><strong>{{ row.link.attachment.safe_filename }}</strong><div class="small text-secondary">{{ row.link.get_security_class_display }} · {{ row.link.attachment.file_size|filesizeformat }}</div></div><div class="d-flex gap-2"><a class="btn btn-sm btn-outline-primary" href="{% url 'offboarding:attachment-download' clearance.pk row.link.pk %}">下载</a>{% if row.can_void %}<a class="btn btn-sm btn-outline-danger" href="{% url 'offboarding:attachment-void' clearance.pk row.link.pk %}">作废</a>{% endif %}</div></div>{% endfor %}
+      </div></div>
+    </section>
+  {% endif %}
+
+  <h2 class="h4 mb-3">清退项目</h2>
+  {% for row in item_rows %}
+    {% with item=row.item %}
+      <article class="card shadow-sm mb-3" aria-labelledby="clearance-item-{{ item.pk }}">
+        <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+          <div><h3 class="h5 mb-1" id="clearance-item-{{ item.pk }}">{{ item.asset_code_snapshot }} · {{ item.asset_name_snapshot }}</h3><span class="badge text-bg-{% if item.resolution == 'pending' %}danger{% elif item.resolution == 'disposal_in_progress' %}warning{% else %}success{% endif %}">{{ item.get_resolution_display }}</span> <span class="badge text-bg-light">{{ item.get_source_type_display }}</span>{% if item.added_during_clearance %} <span class="badge text-bg-info">后补发现</span>{% endif %}</div>
+          <div class="d-flex flex-wrap gap-2">
+            {% if row.can_return %}<a class="btn btn-sm btn-outline-success" href="{% url 'offboarding:item-return' clearance.pk item.pk %}">办理归还</a>{% endif %}
+            {% if row.can_transfer %}<a class="btn btn-sm btn-outline-primary" href="{% url 'offboarding:item-transfer' clearance.pk item.pk %}">办理转交</a>{% endif %}
+            {% if row.can_dispose %}<a class="btn btn-sm btn-outline-danger" href="{% url 'assets:disposal-start' item.asset_id %}">进入处置流程</a>{% endif %}
+            {% if row.can_upload %}<a class="btn btn-sm btn-outline-secondary" href="{% url 'offboarding:attachment-upload' clearance.pk 'item' item.pk %}">上传证据</a>{% endif %}
+          </div>
+        </div>
+        <div class="card-body">
+          {% if is_hr %}{% if item.resolution == 'pending' or item.resolution == 'disposal_in_progress' %}<div class="alert alert-info py-2">HR 仅查看进度和证据；归还、转交及处置须由资产管理或财务角色执行。</div>{% endif %}{% endif %}
+          {% if item.resolution == 'disposed' %}<div class="alert alert-secondary py-2">该资产已进入处置终态。当前保留的责任人、部门和位置仅供历史显示，不再代表活动领用。</div>{% endif %}
+          {% if item.added_during_clearance %}<div class="alert alert-info py-2"><strong>后补原因：</strong>{{ item.addition_reason }}<br><small>原关联生效：{{ item.association_effective_at|date:"Y-m-d H:i" }}；发现：{{ item.discovered_at|date:"Y-m-d H:i" }}</small></div>{% endif %}
+          <div class="row g-3">
+            <div class="col-12 col-xl-6">
+              <div class="border rounded p-3 h-100">
+                <h4 class="h6">发起时原快照（不可变）</h4>
+                <dl class="row small mb-0">
+                  <dt class="col-4 text-secondary">编号/名称</dt><dd class="col-8">{{ item.asset_code_snapshot }} / {{ item.asset_name_snapshot }}</dd>
+                  <dt class="col-4 text-secondary">部门</dt><dd class="col-8">{{ item.original_department_snapshot }}</dd>
+                  <dt class="col-4 text-secondary">责任人</dt><dd class="col-8">{{ item.original_employee_snapshot }}</dd>
+                  <dt class="col-4 text-secondary">位置</dt><dd class="col-8">{{ item.original_location_path_snapshot }}</dd>
+                  <dt class="col-4 text-secondary">状态</dt><dd class="col-8">{{ row.original_status_label }}</dd>
+                  <dt class="col-4 text-secondary">关联生效</dt><dd class="col-8">{{ item.association_effective_at|date:"Y-m-d H:i" }}</dd>
+                  <dt class="col-4 text-secondary">发现时间</dt><dd class="col-8">{{ item.discovered_at|date:"Y-m-d H:i" }}</dd>
+                </dl>
+              </div>
+            </div>
+            <div class="col-12 col-xl-6">
+              <div class="border rounded p-3 h-100">
+                <h4 class="h6">当前状态（实时）</h4>
+                <dl class="row small mb-0">
+                  <dt class="col-4 text-secondary">资产</dt><dd class="col-8"><a href="{% url 'assets:asset-detail' item.asset_id %}">{{ item.asset.asset_code|default:item.asset.draft_number }} · {{ item.asset.asset_name }}</a></dd>
+                  <dt class="col-4 text-secondary">部门</dt><dd class="col-8">{{ item.asset.department.name|default:"—" }}{% if item.resolution == 'disposed' %}（历史保留）{% endif %}</dd>
+                  <dt class="col-4 text-secondary">责任人</dt><dd class="col-8">{{ item.asset.responsible_employee.name|default:"—" }}{% if item.resolution == 'disposed' %}（历史保留）{% endif %}</dd>
+                  <dt class="col-4 text-secondary">位置</dt><dd class="col-8">{{ row.current_location_path }}{% if item.resolution == 'disposed' %}（历史保留）{% endif %}</dd>
+                  <dt class="col-4 text-secondary">资产状态</dt><dd class="col-8">{{ item.asset.get_asset_status_display }}</dd>
+                  <dt class="col-4 text-secondary">内部借用</dt><dd class="col-8">{% if row.active_loan %}未归还{% else %}无活动借用{% endif %}</dd>
+                  <dt class="col-4 text-secondary">解决证据</dt><dd class="col-8">{% if item.movement_id %}AssetMovement {{ item.movement_id }}{% elif item.disposal_id %}AssetDisposal {{ item.disposal_id }}{% else %}尚未形成{% endif %}</dd>
+                  {% if item.resolved_at %}<dt class="col-4 text-secondary">处理时间</dt><dd class="col-8">{{ item.resolved_at|date:"Y-m-d H:i" }}</dd>{% endif %}
+                </dl>
+              </div>
+            </div>
+          </div>
+          {% if row.attachments %}
+            <div class="mt-3"><h4 class="h6">项目证据</h4><div class="list-group list-group-flush">
+              {% for attachment_row in row.attachments %}<div class="list-group-item px-0 d-flex flex-wrap justify-content-between align-items-center gap-2"><div><strong>{{ attachment_row.link.attachment.safe_filename }}</strong><div class="small text-secondary">{{ attachment_row.link.get_security_class_display }} · {{ attachment_row.link.attachment.file_size|filesizeformat }}</div></div><div class="d-flex gap-2"><a class="btn btn-sm btn-outline-primary" href="{% url 'offboarding:attachment-download' clearance.pk attachment_row.link.pk %}">下载</a>{% if attachment_row.can_void %}<a class="btn btn-sm btn-outline-danger" href="{% url 'offboarding:attachment-void' clearance.pk attachment_row.link.pk %}">作废</a>{% endif %}</div></div>{% endfor %}
+            </div></div>
+          {% endif %}
+        </div>
+      </article>
+    {% endwith %}
+  {% empty %}
+    <div class="card card-body shadow-sm text-secondary">该清退单当前没有项目。</div>
+  {% endfor %}
+{% endblock %}

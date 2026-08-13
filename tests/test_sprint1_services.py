@@ -16,6 +16,7 @@ from apps.masterdata.services import (
     set_user_roles,
     update_employee,
 )
+from apps.offboarding.services import initiate_clearance
 
 
 pytestmark = pytest.mark.django_db
@@ -67,10 +68,17 @@ def test_employee_status_service_clears_manager_and_audits_with_company():
         data={"code": "MANAGED", "name": "被管理部", "manager_employee": manager},
     )
 
-    update_employee(
+    with pytest.raises(ValidationError):
+        update_employee(
+            actor=hr,
+            employee=manager,
+            data={"employment_status": "leaving"},
+        )
+
+    initiate_clearance(
         actor=hr,
         employee=manager,
-        data={"employment_status": "leaving"},
+        idempotency_key="sprint1-manager-offboarding",
     )
     manager.refresh_from_db()
     managed.refresh_from_db()

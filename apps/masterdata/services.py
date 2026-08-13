@@ -530,6 +530,21 @@ def update_employee(*, actor, employee, data, request=None):
     if "user" in data and data["user"] != employee.user and not can_admin:
         raise PermissionDenied("人员登录账号只能由 system_admin 进行技术关联。")
 
+    if (
+        "employment_status" in data
+        and data["employment_status"] != employee.employment_status
+    ):
+        raise ValidationError(
+            {"employment_status": "任职状态只能通过离职资产清退流程变更。"}
+        )
+    if (
+        "termination_date" in data
+        and data["termination_date"] != employee.termination_date
+    ):
+        raise ValidationError(
+            {"termination_date": "实际离职日期只能由清退完成动作写入。"}
+        )
+
     fields = (*sorted(business_fields), "user")
     old = _snapshot(employee, fields)
     old_status = employee.employment_status

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}离职资产清退 - EAM-Lite{% endblock %}
+{% block content %}
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div>
+      <h1 class="h3 mb-1">离职资产清退</h1>
+      <p class="text-secondary mb-0">仅显示当前角色与对象范围内的非财务清退信息。</p>
+    </div>
+    {% if can_initiate %}<a class="btn btn-primary" href="{% url 'offboarding:clearance-initiate' %}">发起离职清退</a>{% endif %}
+  </div>
+
+  <form method="get" class="card card-body shadow-sm mb-3">
+    <div class="row g-2 align-items-end">
+      <div class="col-12 col-lg-6">
+        <label class="form-label" for="clearance-search">员工/工号/部门</label>
+        <input class="form-control" id="clearance-search" name="q" value="{{ filters.q }}">
+      </div>
+      <div class="col-12 col-md-6 col-lg-3">
+        <label class="form-label" for="clearance-status">状态</label>
+        <select class="form-select" id="clearance-status" name="status">
+          <option value="">全部状态</option>
+          {% for value, label in status_choices %}<option value="{{ value }}"{% if filters.status == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="col-12 col-md-6 col-lg-3 d-flex gap-2">
+        <button class="btn btn-outline-primary" type="submit">筛选</button>
+        <a class="btn btn-outline-secondary" href="{% url 'offboarding:clearance-list' %}">重置</a>
+      </div>
+    </div>
+  </form>
+
+  <div class="card shadow-sm">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead><tr><th>员工</th><th>部门</th><th>类型</th><th>发起时间</th><th class="text-end">资产总数</th><th class="text-end">已处理</th><th class="text-end">未处理</th><th>状态</th><th></th></tr></thead>
+        <tbody>
+          {% for clearance in clearances %}
+            <tr>
+              <td><strong>{{ clearance.employee.name }}</strong><br><small class="text-secondary">{{ clearance.employee.employee_no }}</small></td>
+              <td>{{ clearance.employee.department.name|default:"—" }}</td>
+              <td>{% if clearance.is_supplement %}<span class="badge text-bg-info">补充清退</span>{% else %}首次清退{% endif %}</td>
+              <td>{{ clearance.initiated_at|date:"Y-m-d H:i" }}</td>
+              <td class="text-end">{{ clearance.total_assets_snapshot }}</td>
+              <td class="text-end">{{ clearance.processed_assets }}</td>
+              <td class="text-end"><span class="badge text-bg-{% if clearance.unresolved_assets %}danger{% else %}success{% endif %}">{{ clearance.unresolved_assets }}</span></td>
+              <td><span class="badge text-bg-{% if clearance.status == 'completed' %}success{% elif clearance.status == 'blocked' %}danger{% elif clearance.status == 'cancelled' %}secondary{% else %}primary{% endif %}">{{ clearance.get_status_display }}</span></td>
+              <td><a class="btn btn-sm btn-outline-primary" href="{% url 'offboarding:clearance-detail' clearance.pk %}">查看</a></td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="9" class="text-center text-secondary py-4">当前范围没有清退记录。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endblock %}

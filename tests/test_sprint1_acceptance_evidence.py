@@ -40,6 +40,7 @@ from apps.masterdata.services import (
     update_department,
     update_employee,
 )
+from apps.offboarding.services import complete_clearance, initiate_clearance
 
 
 pytestmark = pytest.mark.django_db
@@ -176,10 +177,16 @@ def test_employee_status_candidate_and_user_activation_are_independent():
     assert account.is_active
 
     set_employee_active(actor=hr, employee=employee, is_active=True)
-    update_employee(
+    with pytest.raises(ValidationError):
+        update_employee(
+            actor=hr,
+            employee=employee,
+            data={"employment_status": "leaving"},
+        )
+    clearance = initiate_clearance(
         actor=hr,
         employee=employee,
-        data={"employment_status": "leaving"},
+        idempotency_key="sprint1-evidence-clearance",
     )
     employee.refresh_from_db()
     account.refresh_from_db()
@@ -192,17 +199,14 @@ def test_employee_status_candidate_and_user_activation_are_independent():
         set_employee_active(actor=hr, employee=employee, is_active=True)
 
     termination_date = date(2026, 8, 12)
-    update_employee(
+    complete_clearance(
         actor=hr,
-        employee=employee,
-        data={
-            "employment_status": "resigned",
-            "termination_date": termination_date,
-        },
+        clearance=clearance,
+        termination_date=termination_date,
     )
     employee.refresh_from_db()
     assert employee.termination_date == termination_date
-    with pytest.raises(ValidationError, match="不允许.*恢复为在职"):
+    with pytest.raises(ValidationError):
         update_employee(
             actor=hr,
             employee=employee,

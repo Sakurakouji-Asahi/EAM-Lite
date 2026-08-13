@@ -13,6 +13,23 @@
     {% endif %}
   </div>
 </section>
+{% if initialized and offboarding_nav.can_view %}
+<section class="card shadow-sm mt-3">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>离职资产未清</span>
+    <a href="{% url 'offboarding:clearance-list' %}">查看清退单</a>
+  </div>
+  <div class="card-body">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+      <div>
+        <div class="display-6 text-{% if offboarding_unresolved_count %}danger{% else %}success{% endif %}">{{ offboarding_unresolved_count }}</div>
+        <div class="text-secondary">当前数据范围内所有活动清退单的未完成项目数</div>
+      </div>
+      {% if offboarding_nav.can_initiate %}<a class="btn btn-primary" href="{% url 'offboarding:clearance-initiate' %}">发起离职清退</a>{% endif %}
+    </div>
+  </div>
+</section>
+{% endif %}
 {% if initialized and maintenance_nav.can_view %}
 <section class="card shadow-sm mt-3">
   <div class="card-header d-flex justify-content-between align-items-center">

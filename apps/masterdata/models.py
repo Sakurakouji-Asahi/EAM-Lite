@@ -177,6 +177,17 @@ class Department(NormalizedCodeModel, TimeStampedModel):
         return self.name
 
 
+class EmployeeQuerySet(models.QuerySet):
+    """Keep employment transitions behind the offboarding domain service."""
+
+    def update(self, **kwargs):
+        if {"employment_status", "termination_date"}.intersection(kwargs):
+            raise ValidationError(
+                "任职状态和实际离职日期只能通过受控离职清退 Service 修改。"
+            )
+        return super().update(**kwargs)
+
+
 class Employee(TimeStampedModel):
     class EmploymentStatus(models.TextChoices):
         ACTIVE = "active", "在职"
@@ -219,6 +230,8 @@ class Employee(TimeStampedModel):
     mobile = models.CharField("手机号码", max_length=32, blank=True)
     remark = models.TextField("备注", blank=True)
     is_active = models.BooleanField("启用", default=True)
+
+    objects = EmployeeQuerySet.as_manager()
 
     class Meta:
         verbose_name = "员工"
@@ -315,6 +328,17 @@ class Employee(TimeStampedModel):
             )
 
     def save(self, *args, **kwargs):
+        if not self._state.adding:
+            previous = type(self)._base_manager.filter(pk=self.pk).values(
+                "employment_status", "termination_date"
+            ).first()
+            if previous is not None and (
+                previous["employment_status"] != self.employment_status
+                or previous["termination_date"] != self.termination_date
+            ):
+                raise ValidationError(
+                    "任职状态和实际离职日期只能通过受控离职清退 Service 修改。"
+                )
         self._normalize_employee_no()
         update_fields = kwargs.get("update_fields")
         if update_fields is not None and "employee_no" in update_fields:

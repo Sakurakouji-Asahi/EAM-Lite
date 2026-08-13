@@ -11,11 +11,12 @@
     <div class="d-flex flex-wrap gap-2">
       <a class="btn btn-outline-secondary" href="{{ back_url }}">返回列表</a>
       {% if technical_link_url %}<a class="btn btn-outline-primary" href="{{ technical_link_url }}">关联登录账号</a>{% endif %}
+      {% if clearance_url %}<a class="btn btn-outline-warning" href="{{ clearance_url }}">{{ clearance_label }}</a>{% endif %}
       {% if can_manage %}
         <a class="btn btn-primary" href="{{ edit_url }}">编辑</a>
-        <button class="btn btn-{% if object.is_active %}outline-danger{% else %}outline-success{% endif %}" type="button" data-bs-toggle="modal" data-bs-target="#status-confirm">
+        {% if can_change_status %}<button class="btn btn-{% if object.is_active %}outline-danger{% else %}outline-success{% endif %}" type="button" data-bs-toggle="modal" data-bs-target="#status-confirm">
           {% if object.is_active %}停用{% else %}启用{% endif %}
-        </button>
+        </button>{% endif %}
       {% endif %}
     </div>
   </div>
@@ -29,7 +30,7 @@
       </dl>
     </div>
   </div>
-  {% if can_manage %}
+  {% if can_change_status %}
     <div class="modal fade" id="status-confirm" tabindex="-1" aria-labelledby="status-confirm-title" aria-hidden="true">
       <div class="modal-dialog">
         <div class="modal-content">

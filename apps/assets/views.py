@@ -510,6 +510,7 @@ def asset_detail(request, pk):
     )
     maintenance_plans = []
     can_create_maintenance_plan = False
+    clearance_items = []
     if can_p1 and "hr" not in roles:
         try:
             from apps.maintenance.permissions import (
@@ -529,6 +530,18 @@ def asset_detail(request, pk):
             )
         except (ImportError, OperationalError, ProgrammingError):
             maintenance_plans = []
+    try:
+        from apps.offboarding.permissions import scoped_clearance_items
+
+        clearance_items = scoped_clearance_items(
+            request.user,
+            company,
+            asset.clearance_items.select_related(
+                "clearance__employee", "clearance__supplements_clearance"
+            ),
+        ).order_by("-clearance__initiated_at")
+    except (ImportError, OperationalError, ProgrammingError):
+        clearance_items = []
     attachment_filter = Q(pk__in=[])
     if can_p1 and "hr" not in roles:
         attachment_filter |= Q(security_class=AttachmentLink.SecurityClass.A0)
@@ -592,6 +605,7 @@ def asset_detail(request, pk):
             "latest_disposal": latest_disposal,
             "maintenance_plans": maintenance_plans,
             "can_create_maintenance_plan": can_create_maintenance_plan,
+            "clearance_items": clearance_items,
             "movements": (
                 asset.movements.select_related(
                     "from_department", "to_department", "from_employee", "to_employee",

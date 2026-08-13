@@ -2302,6 +2302,10 @@ class AttachmentLinkQuerySet(models.QuerySet):
             "maintenance_record_id",
             "maintenance_problem",
             "maintenance_problem_id",
+            "clearance",
+            "clearance_id",
+            "clearance_item",
+            "clearance_item_id",
             "attachment",
             "attachment_id",
             "role",
@@ -2338,6 +2342,7 @@ class AttachmentLink(models.Model):
         SURPLUS_EVIDENCE = "surplus_evidence", "盘盈证据"
         INVENTORY_EVIDENCE = "inventory_evidence", "盘点证据"
         MAINTENANCE = "maintenance", "保养附件"
+        CLEARANCE = "clearance", "清退证据"
         OTHER = "other", "其他"
 
     class SecurityClass(models.TextChoices):
@@ -2417,6 +2422,22 @@ class AttachmentLink(models.Model):
         on_delete=models.CASCADE,
         related_name="attachment_links",
     )
+    clearance = models.ForeignKey(
+        "offboarding.EmployeeAssetClearance",
+        verbose_name="离职清退单",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="attachment_links",
+    )
+    clearance_item = models.ForeignKey(
+        "offboarding.EmployeeAssetClearanceItem",
+        verbose_name="离职清退项目",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="attachment_links",
+    )
     role = models.CharField("附件用途", max_length=32, choices=Role.choices)
     security_class = models.CharField(
         "安全分类", max_length=2, choices=SecurityClass.choices
@@ -2466,6 +2487,8 @@ class AttachmentLink(models.Model):
                         inventory_resolution__isnull=True,
                         maintenance_record__isnull=True,
                         maintenance_problem__isnull=True,
+                        clearance__isnull=True,
+                        clearance_item__isnull=True,
                     )
                     | Q(
                         asset__isnull=True,
@@ -2475,6 +2498,8 @@ class AttachmentLink(models.Model):
                         inventory_resolution__isnull=True,
                         maintenance_record__isnull=True,
                         maintenance_problem__isnull=True,
+                        clearance__isnull=True,
+                        clearance_item__isnull=True,
                     )
                     | Q(
                         asset__isnull=True,
@@ -2484,6 +2509,8 @@ class AttachmentLink(models.Model):
                         inventory_resolution__isnull=True,
                         maintenance_record__isnull=True,
                         maintenance_problem__isnull=True,
+                        clearance__isnull=True,
+                        clearance_item__isnull=True,
                     )
                     | Q(
                         asset__isnull=True,
@@ -2493,6 +2520,8 @@ class AttachmentLink(models.Model):
                         inventory_resolution__isnull=True,
                         maintenance_record__isnull=True,
                         maintenance_problem__isnull=True,
+                        clearance__isnull=True,
+                        clearance_item__isnull=True,
                     )
                     | Q(
                         asset__isnull=True,
@@ -2502,6 +2531,8 @@ class AttachmentLink(models.Model):
                         inventory_resolution__isnull=False,
                         maintenance_record__isnull=True,
                         maintenance_problem__isnull=True,
+                        clearance__isnull=True,
+                        clearance_item__isnull=True,
                     )
                     | Q(
                         asset__isnull=True,
@@ -2511,6 +2542,8 @@ class AttachmentLink(models.Model):
                         inventory_resolution__isnull=True,
                         maintenance_record__isnull=False,
                         maintenance_problem__isnull=True,
+                        clearance__isnull=True,
+                        clearance_item__isnull=True,
                     )
                     | Q(
                         asset__isnull=True,
@@ -2520,6 +2553,30 @@ class AttachmentLink(models.Model):
                         inventory_resolution__isnull=True,
                         maintenance_record__isnull=True,
                         maintenance_problem__isnull=False,
+                        clearance__isnull=True,
+                        clearance_item__isnull=True,
+                    )
+                    | Q(
+                        asset__isnull=True,
+                        asset_disposal__isnull=True,
+                        inventory_surplus__isnull=True,
+                        inventory_scan__isnull=True,
+                        inventory_resolution__isnull=True,
+                        maintenance_record__isnull=True,
+                        maintenance_problem__isnull=True,
+                        clearance__isnull=False,
+                        clearance_item__isnull=True,
+                    )
+                    | Q(
+                        asset__isnull=True,
+                        asset_disposal__isnull=True,
+                        inventory_surplus__isnull=True,
+                        inventory_scan__isnull=True,
+                        inventory_resolution__isnull=True,
+                        maintenance_record__isnull=True,
+                        maintenance_problem__isnull=True,
+                        clearance__isnull=True,
+                        clearance_item__isnull=False,
                     )
                 ),
                 name="ck_attachment_link_one_target",
@@ -2538,6 +2595,7 @@ class AttachmentLink(models.Model):
                         "surplus_evidence",
                         "inventory_evidence",
                         "maintenance",
+                        "clearance",
                         "other",
                     )
                 ),
@@ -2561,6 +2619,7 @@ class AttachmentLink(models.Model):
                     | Q(role="surplus_evidence", security_class="A0")
                     | Q(role="inventory_evidence", security_class="A0")
                     | Q(role="maintenance", security_class__in=("A0", "A1"))
+                    | Q(role="clearance", security_class__in=("A0", "A1"))
                     | Q(role="other", security_class__in=("A0", "A1"))
                 ),
                 name="ck_attachment_link_role_security",
@@ -2605,6 +2664,18 @@ class AttachmentLink(models.Model):
         for field_name, target_id in maintenance_targets:
             if target_id and getattr(self, field_name).company_id != self.company_id:
                 errors[field_name] = "保养附件目标必须属于同一公司。"
+        clearance_targets = (
+            ("clearance", self.clearance_id),
+            ("clearance_item", self.clearance_item_id),
+        )
+        for field_name, target_id in clearance_targets:
+            if target_id and getattr(self, field_name).company_id != self.company_id:
+                errors[field_name] = "清退附件目标必须属于同一公司。"
+        if any(target_id for _, target_id in clearance_targets):
+            if self.role != self.Role.CLEARANCE:
+                errors["role"] = "清退单或清退项目附件必须使用 clearance 用途。"
+        elif self.role == self.Role.CLEARANCE:
+            errors["role"] = "clearance 用途只能关联清退单或清退项目。"
         if sum(
             value is not None
             for value in (
@@ -2615,6 +2686,8 @@ class AttachmentLink(models.Model):
                 self.inventory_resolution_id,
                 self.maintenance_record_id,
                 self.maintenance_problem_id,
+                self.clearance_id,
+                self.clearance_item_id,
             )
         ) != 1:
             errors["asset"] = "附件必须且只能关联一个业务目标。"
@@ -2653,6 +2726,8 @@ class AttachmentLink(models.Model):
                 "inventory_resolution_id",
                 "maintenance_record_id",
                 "maintenance_problem_id",
+                "clearance_id",
+                "clearance_item_id",
                 "attachment_id",
                 "role",
                 "security_class",
@@ -2670,6 +2745,8 @@ class AttachmentLink(models.Model):
                 "inventory_resolution_id": self.inventory_resolution_id,
                 "maintenance_record_id": self.maintenance_record_id,
                 "maintenance_problem_id": self.maintenance_problem_id,
+                "clearance_id": self.clearance_id,
+                "clearance_item_id": self.clearance_item_id,
                 "attachment_id": self.attachment_id,
                 "role": self.role,
                 "security_class": self.security_class,
@@ -2688,6 +2765,8 @@ class AttachmentLink(models.Model):
                     "inventory_resolution_id",
                     "maintenance_record_id",
                     "maintenance_problem_id",
+                    "clearance_id",
+                    "clearance_item_id",
                     "attachment_id",
                     "role",
                     "security_class",
@@ -2711,5 +2790,7 @@ class AttachmentLink(models.Model):
             or self.inventory_resolution
             or self.maintenance_record
             or self.maintenance_problem
+            or self.clearance
+            or self.clearance_item
         )
         return f"{target} - {self.get_role_display()}"

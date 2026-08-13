@@ -106,11 +106,23 @@ def test_manager_rule_and_employee_status_constraints():
     target.manager_employee = manager
     target.full_clean()
 
+    # Sprint 10 makes active -> leaving a clearance-only transition.  The
+    # original Sprint 1 model boundary now verifies that ordinary instance
+    # writes cannot bypass that workflow; a historically-created leaving row
+    # still exercises the department-manager validity rule below.
     manager.employment_status = "leaving"
     manager.is_active = False
     manager.full_clean()
-    manager.save()
-    target.manager_employee = manager
+    with pytest.raises(ValidationError):
+        manager.save()
+    leaving = employee(
+        c1,
+        d1,
+        "LEAVING",
+        employment_status="leaving",
+        is_active=False,
+    )
+    target.manager_employee = leaving
     with pytest.raises(ValidationError):
         target.full_clean()
 

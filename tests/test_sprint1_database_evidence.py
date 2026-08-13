@@ -1,6 +1,6 @@
 import pytest
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError, connection, transaction
+from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.utils import timezone
 
 from apps.audit.models import AuditLog
@@ -221,8 +221,13 @@ def test_database_rejects_values_outside_fixed_enums():
         description="附件上限",
     )
 
+    with pytest.raises(DatabaseError), transaction.atomic(), connection.cursor() as cursor:
+        cursor.execute(
+            "UPDATE masterdata_employee SET employment_status = %s WHERE id = %s",
+            ["unknown", employee.pk],
+        )
+
     invalid_updates = (
-        (Employee, employee.pk, {"employment_status": "unknown"}),
         (Location, location.pk, {"location_type": "unknown"}),
         (AssetCategory, category.pk, {"category_type": "unknown"}),
         (Attachment, attachment.pk, {"malware_scan_status": "unknown"}),
