@@ -101,9 +101,9 @@ def test_sprint2_services_export_no_issue_or_allocate_primitive():
     assert forbidden == []
 
 
-def test_current_source_has_no_maintenance_domain_model_before_sprint9():
+def test_current_source_has_no_full_repair_order_model():
     forbidden_model_names = {
-        "maintenanceplan",
+        "repairorder",
     }
     declared = []
     for path in _python_files_under_apps():

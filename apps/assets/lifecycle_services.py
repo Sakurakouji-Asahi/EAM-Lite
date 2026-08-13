@@ -1158,6 +1158,7 @@ def complete_disposal(
     from apps.assets.models import Asset, AssetDisposal, AttachmentLink
     from apps.finance.domain import resolve_stop_date
     from apps.finance.models import AssetDepreciationProfile, DepreciationProfileEvent
+    from apps.maintenance.models import MaintenancePlan
 
     asset = _lock_asset(disposal.asset_id)
     require_lifecycle_action(actor, asset, "disposal_complete")
@@ -1190,6 +1191,11 @@ def complete_disposal(
     profiles = list(AssetDepreciationProfile.objects.select_for_update().filter(
         asset=asset, status__in=("active", "suspended")
     ))
+    maintenance_plans = list(
+        MaintenancePlan._base_manager.select_for_update().filter(
+            asset=asset, status__in=("active", "suspended")
+        )
+    )
     for profile in profiles:
         stop_date = resolve_stop_date(
             event_date=disposal.actual_disposal_date,
@@ -1220,12 +1226,40 @@ def complete_disposal(
         "status": "confirmed", "confirmed_by_id": actor.pk,
         "confirmed_at": now,
     }, "eam_lite.controlled_asset_disposal_mutation")
+    for plan in maintenance_plans:
+        previous_status = plan.status
+        _base_update(
+            MaintenancePlan,
+            plan.pk,
+            {
+                "status": "ended",
+                "ended_reason": "asset_disposal",
+                "ended_by_disposal_id": disposal.pk,
+                "status_before_disposal": plan.status,
+                "ended_at": now,
+            },
+            "eam_lite.controlled_maintenance_plan_mutation",
+        )
+        plan.refresh_from_db()
+        _audit(
+            actor=actor,
+            action="maintenance.plan_ended_by_disposal",
+            instance=plan,
+            old={"status": previous_status},
+            new={
+                "status": "ended",
+                "ended_reason": "asset_disposal",
+                "ended_by_disposal_id": str(disposal.pk),
+            },
+            request=request,
+        )
     _base_update(Asset, asset.pk, {"asset_status": target, "updated_by_id": actor.pk})
     disposal.refresh_from_db()
     _audit(actor=actor, action="asset_disposal.completed", instance=disposal,
            old={"asset_status": "pending_disposal"},
            new={**payload, "movement_id": str(movement.pk),
-                "stopped_profiles": [str(item.pk) for item in profiles]}, request=request)
+                "stopped_profiles": [str(item.pk) for item in profiles],
+                "ended_maintenance_plans": [str(item.pk) for item in maintenance_plans]}, request=request)
     _write_operation_marker(actor=actor, operation="disposal_complete", result=disposal,
                             key=key, digest=digest, payload=payload, request=request)
     return disposal
@@ -1249,6 +1283,8 @@ def reverse_disposal(
         DepreciationEntry,
         DepreciationProfileEvent,
     )
+    from apps.maintenance.models import MaintenancePlan
+    from apps.masterdata.models import Employee
 
     asset = _lock_asset(disposal.asset_id)
     require_lifecycle_action(actor, asset, "disposal_reversal")
@@ -1286,6 +1322,11 @@ def reverse_disposal(
     stops = list(DepreciationProfileEvent.objects.select_for_update().filter(
         source_disposal=disposal, event_type="disposal_stop"
     ).select_related("depreciation_profile"))
+    maintenance_plans = list(
+        MaintenancePlan._base_manager.select_for_update().filter(
+            ended_by_disposal=disposal,
+        )
+    )
     if disposal.confirmed_at is None:
         raise ValidationError("处置完成时间缺失，不能安全判断后续业务。")
     later_movements = AssetMovement.objects.select_for_update().filter(
@@ -1310,6 +1351,23 @@ def reverse_disposal(
             raise ValidationError("处置停止后已有确认折旧分录，不能直接冲销。")
         if profile.status != "stopped":
             raise ValidationError("处置停止后的折旧 Profile 状态已变化，不能猜测恢复。")
+    for plan in maintenance_plans:
+        if (
+            plan.status != "ended"
+            or plan.ended_reason != "asset_disposal"
+            or plan.status_before_disposal not in {"active", "suspended"}
+        ):
+            raise ValidationError("处置自动终止的保养计划来源状态不完整，不能猜测恢复。")
+        plan_responsible = Employee.objects.select_for_update().select_related(
+            "department"
+        ).get(pk=plan.responsible_employee_id)
+        if (
+            plan_responsible.company_id != plan.company_id
+            or plan_responsible.employment_status != "active"
+            or not plan_responsible.is_active
+            or not plan_responsible.department.is_active
+        ):
+            raise ValidationError("保养计划责任人已失效，不能猜测恢复处置前计划状态。")
 
     responsible = asset.responsible_employee
     responsible_valid = bool(
@@ -1401,6 +1459,53 @@ def reverse_disposal(
         {"status": "reversed"},
         "eam_lite.controlled_asset_disposal_mutation",
     )
+    restored_maintenance_plan_ids = []
+    for plan in maintenance_plans:
+        restored_status = plan.status_before_disposal
+        latest = plan.records.filter(status="confirmed").order_by(
+            "-completed_date", "-created_at", "-pk"
+        ).first()
+        last_date = latest.completed_date if latest else None
+        if latest:
+            from apps.maintenance.domain import add_calendar_cycle
+
+            next_date = add_calendar_cycle(
+                latest.completed_date, plan.cycle_value, plan.cycle_unit
+            )
+        else:
+            next_date = plan.first_due_date
+        _base_update(
+            MaintenancePlan,
+            plan.pk,
+            {
+                "status": restored_status,
+                "ended_reason": None,
+                "ended_by_disposal_id": None,
+                "status_before_disposal": None,
+                "ended_at": None,
+                "last_maintenance_date": last_date,
+                "next_maintenance_date": next_date,
+            },
+            "eam_lite.controlled_maintenance_plan_mutation",
+        )
+        plan.refresh_from_db()
+        _audit(
+            actor=actor,
+            action="maintenance.plan_restored_by_disposal",
+            instance=plan,
+            old={
+                "status": "ended",
+                "ended_reason": "asset_disposal",
+                "ended_by_disposal_id": str(disposal.pk),
+            },
+            new={
+                "status": restored_status,
+                "last_maintenance_date": last_date.isoformat() if last_date else None,
+                "next_maintenance_date": next_date.isoformat(),
+            },
+            request=request,
+        )
+        restored_maintenance_plan_ids.append(str(plan.pk))
     _base_update(Asset, asset.pk, {
         "asset_status": disposal.previous_asset_status,
         "responsible_employee_id": responsible.pk,
@@ -1415,6 +1520,7 @@ def reverse_disposal(
             **payload,
             "movement_id": str(movement.pk),
             "restored_event_ids": [str(event.pk) for event in restored_events],
+            "restored_maintenance_plan_ids": restored_maintenance_plan_ids,
         },
         request=request,
     )

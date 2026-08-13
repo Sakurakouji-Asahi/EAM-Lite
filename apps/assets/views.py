@@ -12,6 +12,7 @@ from django.core.files.storage import default_storage
 from django.core.paginator import Paginator
 from django.db.models import CharField, Q
 from django.db.models.functions import Cast
+from django.db.utils import OperationalError, ProgrammingError
 from django.http import FileResponse, Http404, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.encoding import escape_uri_path
@@ -507,6 +508,27 @@ def asset_detail(request, pk):
     latest_disposal = (
         asset.disposals.order_by("-created_at").first() if can_p1 else None
     )
+    maintenance_plans = []
+    can_create_maintenance_plan = False
+    if can_p1 and "hr" not in roles:
+        try:
+            from apps.maintenance.permissions import (
+                can_manage_maintenance_plan,
+                scoped_maintenance_plans,
+            )
+
+            maintenance_plans = scoped_maintenance_plans(
+                request.user,
+                company,
+                asset.maintenance_plans.select_related("responsible_employee"),
+            )
+            can_create_maintenance_plan = (
+                asset.is_maintenance_required
+                and not terminal
+                and can_manage_maintenance_plan(request.user, asset)
+            )
+        except (ImportError, OperationalError, ProgrammingError):
+            maintenance_plans = []
     attachment_filter = Q(pk__in=[])
     if can_p1 and "hr" not in roles:
         attachment_filter |= Q(security_class=AttachmentLink.SecurityClass.A0)
@@ -568,6 +590,8 @@ def asset_detail(request, pk):
             "terminal": terminal,
             "active_loan": active_loan,
             "latest_disposal": latest_disposal,
+            "maintenance_plans": maintenance_plans,
+            "can_create_maintenance_plan": can_create_maintenance_plan,
             "movements": (
                 asset.movements.select_related(
                     "from_department", "to_department", "from_employee", "to_employee",

@@ -230,7 +230,9 @@ def test_idle_activate_and_repair_restore_exact_prior_status_without_work_order(
         ("repair_complete", "under_repair", "idle"),
         ("activate", "idle", "in_use"),
     ]
-    assert not any(model.__name__.startswith("Maintenance") for model in Asset._meta.apps.get_models())
+    assert "RepairOrder" not in {
+        model.__name__ for model in Asset._meta.apps.get_models()
+    }
 
 
 def test_forbidden_status_transition_does_not_create_history_or_audit():

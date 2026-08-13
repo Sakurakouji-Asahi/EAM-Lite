@@ -21,6 +21,7 @@ from apps.assets.models import (
     AssetQrIdentity,
 )
 from apps.assets.permissions import (
+    can_view_asset,
     can_view_asset_p1,
     can_view_asset_summary_fields,
     can_view_attachment,
@@ -48,6 +49,11 @@ from apps.assets.qr_services import (
     rotate_qr_identity,
 )
 from apps.audit.services import request_audit_context, write_business_audit_log
+from apps.maintenance.permissions import (
+    can_complete_maintenance,
+    can_view_maintenance_asset_summary,
+)
+from apps.maintenance.services import due_maintenance_plans
 from apps.masterdata.permissions import current_company, role_names_for
 
 
@@ -118,6 +124,52 @@ def _location_path(location):
         names.append(location.name)
         location = location.parent
     return " / ".join(reversed(names)) or "—"
+
+
+def _maintenance_context(user, asset):
+    from apps.maintenance.models import MaintenancePlan, MaintenanceRecord
+
+    if not can_view_maintenance_asset_summary(user, asset):
+        return {"show_maintenance": False}
+
+    status_labels = {
+        "upcoming": "即将到期",
+        "due_today": "今日到期",
+        "overdue": "逾期",
+        "not_due": "未到提醒期",
+    }
+    plans = []
+    queryset = MaintenancePlan.objects.select_related(
+        "asset", "responsible_employee"
+    ).filter(asset=asset, status="active")
+    for plan, status in due_maintenance_plans(
+        user,
+        asset.company,
+        queryset=queryset,
+    ):
+        plans.append(
+            {
+                "plan": plan,
+                "due_status": status,
+                "due_label": status_labels.get(status, "数据不足"),
+                "can_complete": can_complete_maintenance(user, plan),
+            }
+        )
+    latest_record = (
+        MaintenanceRecord.objects.filter(
+            asset=asset,
+            status="confirmed",
+            maintenance_plan__in=[item["plan"] for item in plans],
+        )
+        .select_related("maintenance_plan")
+        .order_by("-completed_date", "-created_at", "-pk")
+        .first()
+    )
+    return {
+        "show_maintenance": bool(plans),
+        "maintenance_plans": plans,
+        "latest_maintenance": latest_record,
+    }
 
 
 def _queue_assets(user, company):
@@ -455,6 +507,9 @@ def qr_scan(request, token):
             first_attachment=first_attachment,
             initial={"scanned_token": token},
         )
+    maintenance_context = (
+        _maintenance_context(request.user, asset) if not archived else {}
+    )
     response = render(
         request,
         "assets/qr_scan.html",
@@ -463,6 +518,7 @@ def qr_scan(request, token):
             "qr_identity": qr_identity,
             "can_p1": can_p1,
             "can_summary": can_summary,
+            "can_view_full_asset": can_view_asset(request.user, asset),
             "can_manage_labels": (
                 not archived and can_manage_labels(request.user, asset)
             ),
@@ -471,6 +527,7 @@ def qr_scan(request, token):
             "location_path": _location_path(asset.location),
             "attachment_form": attachment_form,
             "first_attachment": first_attachment,
+            **maintenance_context,
         },
     )
     return _scan_response(response)
@@ -561,12 +618,14 @@ def qr_attach(request, token):
             "qr_identity": qr_identity,
             "can_p1": can_view_asset_p1(request.user, asset),
             "can_summary": can_view_asset_summary_fields(request.user, asset),
+            "can_view_full_asset": can_view_asset(request.user, asset),
             "can_manage_labels": can_manage_labels(request.user, asset),
             "finance_summary": finance_summary,
             "cover_link": cover_link,
             "location_path": _location_path(asset.location),
             "attachment_form": form,
             "first_attachment": first_attachment,
+            **(_maintenance_context(request.user, asset) if asset.record_status != Asset.RecordStatus.ARCHIVED else {}),
         },
         status=400,
     )

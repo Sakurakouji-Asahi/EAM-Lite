@@ -1,5 +1,6 @@
 """Sprint 6 QR/label permissions and asset scope helpers."""
 from django.core.exceptions import PermissionDenied
+from django.db.models import Q
 
 from apps.assets.permissions import scoped_assets
 from apps.masterdata.permissions import role_names_for
@@ -32,5 +33,23 @@ def scoped_printable_assets(user, company, queryset=None):
 
 
 def scoped_scannable_assets(user, company, queryset=None):
-    """Scanning reuses the single company/department/person asset scope."""
-    return scoped_assets(user, company, queryset)
+    """Add only current maintenance assignments to the normal asset scope.
+
+    A maintenance assignee needs the QR landing page to perform the assigned
+    action, but this does not grant ordinary asset-ledger or financial access.
+    """
+
+    from apps.assets.models import Asset
+    from apps.maintenance.models import MaintenancePlan
+    from apps.maintenance.permissions import scoped_maintenance_plans
+
+    source = queryset if queryset is not None else Asset.objects.all()
+    ordinary_ids = scoped_assets(user, company, source).values("pk")
+    assigned_asset_ids = scoped_maintenance_plans(
+        user,
+        company,
+        MaintenancePlan.objects.filter(status=MaintenancePlan.Status.ACTIVE),
+    ).values("asset_id")
+    return source.filter(company=company).filter(
+        Q(pk__in=ordinary_ids) | Q(pk__in=assigned_asset_ids)
+    ).distinct()

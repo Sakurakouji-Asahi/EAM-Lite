@@ -2298,6 +2298,10 @@ class AttachmentLinkQuerySet(models.QuerySet):
             "inventory_scan_id",
             "inventory_resolution",
             "inventory_resolution_id",
+            "maintenance_record",
+            "maintenance_record_id",
+            "maintenance_problem",
+            "maintenance_problem_id",
             "attachment",
             "attachment_id",
             "role",
@@ -2333,6 +2337,7 @@ class AttachmentLink(models.Model):
         DISPOSAL = "disposal", "处置证据"
         SURPLUS_EVIDENCE = "surplus_evidence", "盘盈证据"
         INVENTORY_EVIDENCE = "inventory_evidence", "盘点证据"
+        MAINTENANCE = "maintenance", "保养附件"
         OTHER = "other", "其他"
 
     class SecurityClass(models.TextChoices):
@@ -2396,6 +2401,22 @@ class AttachmentLink(models.Model):
         on_delete=models.CASCADE,
         related_name="attachment_links",
     )
+    maintenance_record = models.ForeignKey(
+        "maintenance.MaintenanceRecord",
+        verbose_name="保养记录",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="attachment_links",
+    )
+    maintenance_problem = models.ForeignKey(
+        "maintenance.MaintenanceProblem",
+        verbose_name="保养问题",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="attachment_links",
+    )
     role = models.CharField("附件用途", max_length=32, choices=Role.choices)
     security_class = models.CharField(
         "安全分类", max_length=2, choices=SecurityClass.choices
@@ -2443,6 +2464,8 @@ class AttachmentLink(models.Model):
                         inventory_surplus__isnull=True,
                         inventory_scan__isnull=True,
                         inventory_resolution__isnull=True,
+                        maintenance_record__isnull=True,
+                        maintenance_problem__isnull=True,
                     )
                     | Q(
                         asset__isnull=True,
@@ -2450,6 +2473,8 @@ class AttachmentLink(models.Model):
                         inventory_surplus__isnull=True,
                         inventory_scan__isnull=True,
                         inventory_resolution__isnull=True,
+                        maintenance_record__isnull=True,
+                        maintenance_problem__isnull=True,
                     )
                     | Q(
                         asset__isnull=True,
@@ -2457,6 +2482,8 @@ class AttachmentLink(models.Model):
                         inventory_surplus__isnull=False,
                         inventory_scan__isnull=True,
                         inventory_resolution__isnull=True,
+                        maintenance_record__isnull=True,
+                        maintenance_problem__isnull=True,
                     )
                     | Q(
                         asset__isnull=True,
@@ -2464,6 +2491,8 @@ class AttachmentLink(models.Model):
                         inventory_surplus__isnull=True,
                         inventory_scan__isnull=False,
                         inventory_resolution__isnull=True,
+                        maintenance_record__isnull=True,
+                        maintenance_problem__isnull=True,
                     )
                     | Q(
                         asset__isnull=True,
@@ -2471,6 +2500,26 @@ class AttachmentLink(models.Model):
                         inventory_surplus__isnull=True,
                         inventory_scan__isnull=True,
                         inventory_resolution__isnull=False,
+                        maintenance_record__isnull=True,
+                        maintenance_problem__isnull=True,
+                    )
+                    | Q(
+                        asset__isnull=True,
+                        asset_disposal__isnull=True,
+                        inventory_surplus__isnull=True,
+                        inventory_scan__isnull=True,
+                        inventory_resolution__isnull=True,
+                        maintenance_record__isnull=False,
+                        maintenance_problem__isnull=True,
+                    )
+                    | Q(
+                        asset__isnull=True,
+                        asset_disposal__isnull=True,
+                        inventory_surplus__isnull=True,
+                        inventory_scan__isnull=True,
+                        inventory_resolution__isnull=True,
+                        maintenance_record__isnull=True,
+                        maintenance_problem__isnull=False,
                     )
                 ),
                 name="ck_attachment_link_one_target",
@@ -2488,6 +2537,7 @@ class AttachmentLink(models.Model):
                         "disposal",
                         "surplus_evidence",
                         "inventory_evidence",
+                        "maintenance",
                         "other",
                     )
                 ),
@@ -2510,6 +2560,7 @@ class AttachmentLink(models.Model):
                     | Q(role="disposal", security_class__in=("A0", "A1"))
                     | Q(role="surplus_evidence", security_class="A0")
                     | Q(role="inventory_evidence", security_class="A0")
+                    | Q(role="maintenance", security_class__in=("A0", "A1"))
                     | Q(role="other", security_class__in=("A0", "A1"))
                 ),
                 name="ck_attachment_link_role_security",
@@ -2547,6 +2598,13 @@ class AttachmentLink(models.Model):
         for field_name, target_id in inventory_targets:
             if target_id and getattr(self, field_name).company_id != self.company_id:
                 errors[field_name] = "盘点附件目标必须属于同一公司。"
+        maintenance_targets = (
+            ("maintenance_record", self.maintenance_record_id),
+            ("maintenance_problem", self.maintenance_problem_id),
+        )
+        for field_name, target_id in maintenance_targets:
+            if target_id and getattr(self, field_name).company_id != self.company_id:
+                errors[field_name] = "保养附件目标必须属于同一公司。"
         if sum(
             value is not None
             for value in (
@@ -2555,6 +2613,8 @@ class AttachmentLink(models.Model):
                 self.inventory_surplus_id,
                 self.inventory_scan_id,
                 self.inventory_resolution_id,
+                self.maintenance_record_id,
+                self.maintenance_problem_id,
             )
         ) != 1:
             errors["asset"] = "附件必须且只能关联一个业务目标。"
@@ -2591,6 +2651,8 @@ class AttachmentLink(models.Model):
                 "inventory_surplus_id",
                 "inventory_scan_id",
                 "inventory_resolution_id",
+                "maintenance_record_id",
+                "maintenance_problem_id",
                 "attachment_id",
                 "role",
                 "security_class",
@@ -2606,6 +2668,8 @@ class AttachmentLink(models.Model):
                 "inventory_surplus_id": self.inventory_surplus_id,
                 "inventory_scan_id": self.inventory_scan_id,
                 "inventory_resolution_id": self.inventory_resolution_id,
+                "maintenance_record_id": self.maintenance_record_id,
+                "maintenance_problem_id": self.maintenance_problem_id,
                 "attachment_id": self.attachment_id,
                 "role": self.role,
                 "security_class": self.security_class,
@@ -2622,6 +2686,8 @@ class AttachmentLink(models.Model):
                     "inventory_surplus_id",
                     "inventory_scan_id",
                     "inventory_resolution_id",
+                    "maintenance_record_id",
+                    "maintenance_problem_id",
                     "attachment_id",
                     "role",
                     "security_class",
@@ -2643,5 +2709,7 @@ class AttachmentLink(models.Model):
             or self.inventory_surplus
             or self.inventory_scan
             or self.inventory_resolution
+            or self.maintenance_record
+            or self.maintenance_problem
         )
         return f"{target} - {self.get_role_display()}"
