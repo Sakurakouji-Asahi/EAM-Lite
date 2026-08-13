@@ -6,11 +6,14 @@ from apps.masterdata.permissions import role_names_for
 
 
 QR_ACTION_ROLES = frozenset({"finance", "equipment", "warehouse"})
+QR_TERMINAL_ASSET_STATUSES = frozenset({"disposed", "sold", "other_disposed"})
 
 
 def can_manage_labels(user, asset) -> bool:
     return bool(
-        role_names_for(user).intersection(QR_ACTION_ROLES)
+        getattr(asset, "record_status", None) == "active"
+        and getattr(asset, "asset_status", None) not in QR_TERMINAL_ASSET_STATUSES
+        and role_names_for(user).intersection(QR_ACTION_ROLES)
         and scoped_assets(user, asset.company).filter(pk=asset.pk).exists()
     )
 
@@ -23,7 +26,9 @@ def require_label_action(user, asset) -> None:
 def scoped_printable_assets(user, company, queryset=None):
     if not role_names_for(user).intersection(QR_ACTION_ROLES):
         return scoped_assets(user, company, queryset).none()
-    return scoped_assets(user, company, queryset)
+    return scoped_assets(user, company, queryset).filter(
+        record_status="active"
+    ).exclude(asset_status__in=QR_TERMINAL_ASSET_STATUSES)
 
 
 def scoped_scannable_assets(user, company, queryset=None):

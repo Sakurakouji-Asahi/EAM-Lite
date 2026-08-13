@@ -536,6 +536,8 @@ class DepreciationProfileEvent(models.Model):
         SUSPEND = "suspend", "暂停"
         RESUME = "resume", "恢复"
         STOP = "stop", "停止"
+        DISPOSAL_STOP = "disposal_stop", "处置停止"
+        DISPOSAL_RESTORE = "disposal_restore", "处置恢复"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey(
@@ -554,6 +556,21 @@ class DepreciationProfileEvent(models.Model):
     event_type = models.CharField(max_length=16, choices=EventType.choices)
     effective_date = models.DateField()
     reason = models.TextField()
+    source_disposal = models.ForeignKey(
+        "assets.AssetDisposal",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="depreciation_profile_events",
+    )
+    previous_profile_status = models.CharField(max_length=16, blank=True)
+    reverses_event = models.OneToOneField(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="restored_by_event",
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -570,8 +587,44 @@ class DepreciationProfileEvent(models.Model):
                 condition=~Q(reason=""), name="ck_depr_event_reason"
             ),
             models.CheckConstraint(
-                condition=Q(event_type__in=("suspend", "resume", "stop")),
+                condition=Q(
+                    event_type__in=(
+                        "suspend",
+                        "resume",
+                        "stop",
+                        "disposal_stop",
+                        "disposal_restore",
+                    )
+                ),
                 name="ck_depr_event_type_valid",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        event_type__in=("suspend", "resume", "stop"),
+                        source_disposal__isnull=True,
+                        previous_profile_status="",
+                        reverses_event__isnull=True,
+                    )
+                    | Q(
+                        event_type="disposal_stop",
+                        source_disposal__isnull=False,
+                        previous_profile_status__in=("active", "suspended"),
+                        reverses_event__isnull=True,
+                    )
+                    | Q(
+                        event_type="disposal_restore",
+                        source_disposal__isnull=False,
+                        previous_profile_status="",
+                        reverses_event__isnull=False,
+                    )
+                ),
+                name="ck_depr_event_disposal_fields",
+            ),
+            models.UniqueConstraint(
+                fields=("source_disposal", "depreciation_profile"),
+                condition=Q(event_type="disposal_stop"),
+                name="uq_depr_event_disposal_profile_stop",
             ),
         ]
 

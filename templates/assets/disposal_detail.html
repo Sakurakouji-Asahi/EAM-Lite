@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}处置记录 - {{ asset.asset_code }}{% endblock %}
+{% block content %}
+  <div class="d-flex flex-wrap align-items-start justify-content-between gap-2 mb-3">
+    <div><div class="text-secondary">{{ asset.asset_code }} · {{ asset.asset_name }}</div><h1 class="h3 mb-1">{{ disposal.get_disposal_type_display }}处置</h1><span class="badge text-bg-secondary">{{ disposal.get_status_display }}</span></div>
+    <div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-secondary" href="{% url 'assets:asset-detail' asset.pk %}">返回资产详情</a>{% if actions.actual %}<a class="btn btn-outline-primary" href="{% url 'assets:disposal-actual' disposal.pk %}">登记实际信息</a>{% endif %}{% if actions.finance_lock %}<a class="btn btn-danger" href="{% url 'assets:disposal-finance-lock' disposal.pk %}">锁定财务快照</a>{% endif %}{% if actions.cancel %}<a class="btn btn-outline-danger" href="{% url 'assets:disposal-cancel' disposal.pk %}">取消处置</a>{% endif %}{% if actions.complete %}<a class="btn btn-danger" href="{% url 'assets:disposal-complete' disposal.pk %}">完成处置</a>{% endif %}{% if actions.reverse %}<a class="btn btn-danger" href="{% url 'assets:disposal-reverse' disposal.pk %}">处置冲销</a>{% endif %}</div>
+  </div>
+  <div class="row g-3">
+    <div class="col-12 col-xl-8">
+      <section class="card shadow-sm mb-3"><div class="card-header"><h2 class="h5 mb-0">处置业务信息</h2></div><div class="card-body"><dl class="row mb-0">
+        <dt class="col-sm-4">申请日期</dt><dd class="col-sm-8">{{ disposal.application_date|date:"Y-m-d" }}</dd>
+        <dt class="col-sm-4">拟处置日期</dt><dd class="col-sm-8">{{ disposal.planned_disposal_date|date:"Y-m-d" }} <span class="text-secondary">（仅计划，不触发财务或完成）</span></dd>
+        <dt class="col-sm-4">实际处置日期</dt><dd class="col-sm-8">{{ disposal.actual_disposal_date|date:"Y-m-d"|default:"未登记" }}</dd>
+        <dt class="col-sm-4">原因</dt><dd class="col-sm-8">{{ disposal.reason|linebreaksbr }}</dd>
+        <dt class="col-sm-4">说明</dt><dd class="col-sm-8">{{ disposal.description|default:"—"|linebreaksbr }}</dd>
+        <dt class="col-sm-4">接收方/去向</dt><dd class="col-sm-8">{{ disposal.recipient_name|default:"—" }}</dd>
+        <dt class="col-sm-4">财务核对</dt><dd class="col-sm-8">{% if disposal.finance_locked_at %}<span class="badge text-bg-success">已核对</span> {{ disposal.finance_locked_at|date:"Y-m-d H:i" }}{% else %}<span class="badge text-bg-danger">未核对</span>{% endif %}</dd>
+      </dl></div></section>
+      {% if can_financial %}<section class="card border-danger shadow-sm mb-3"><div class="card-header"><h2 class="h5 mb-0">F1 财务快照</h2></div><div class="card-body"><dl class="row mb-0"><dt class="col-sm-4">原值</dt><dd class="col-sm-8">{{ disposal.original_cost_snapshot|default:"—" }}</dd><dt class="col-sm-4">累计折旧</dt><dd class="col-sm-8">{{ disposal.actual_accumulated_depreciation_snapshot|default:"—" }}</dd><dt class="col-sm-4">减值</dt><dd class="col-sm-8">{{ disposal.impairment_snapshot|default:"—" }}</dd><dt class="col-sm-4">账面净值</dt><dd class="col-sm-8">{{ disposal.book_value_snapshot|default:"—" }}</dd><dt class="col-sm-4">处置收入</dt><dd class="col-sm-8">{{ disposal.disposal_income|default:"—" }}</dd></dl></div></section>{% endif %}
+    </div>
+    <div class="col-12 col-xl-4"><section class="card shadow-sm"><div class="card-header d-flex justify-content-between"><h2 class="h5 mb-0">处置证据</h2>{% if actions.upload_a0 or actions.upload_a1 %}<a class="btn btn-sm btn-primary" href="{% url 'assets:disposal-attachment-upload' disposal.pk %}">上传</a>{% endif %}</div><div class="card-body">
+      {% for row in attachments %}<div class="border-bottom pb-2 mb-2"><div class="fw-semibold text-break">{{ row.link.attachment.safe_filename }}</div><div class="small text-secondary">{{ row.link.get_security_class_display }} · {{ row.link.get_status_display }}</div>{% if row.link.status == 'active' %}<div class="d-flex gap-2 mt-2"><a class="btn btn-sm btn-outline-primary" href="{% url 'assets:disposal-attachment-download' disposal.pk row.link.pk %}">下载</a>{% if row.can_void %}<a class="btn btn-sm btn-outline-danger" href="{% url 'assets:disposal-attachment-void' disposal.pk row.link.pk %}">作废</a>{% endif %}</div>{% endif %}</div>{% empty %}<p class="text-secondary mb-0">暂无有权查看的处置证据。</p>{% endfor %}
+    </div></section></div>
+  </div>
+{% endblock %}

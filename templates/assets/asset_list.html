@@ -30,6 +30,13 @@
           </select>
         </div>
         <div class="col-12 col-sm-6 col-lg-2">
+          <label class="form-label" for="filter-record-status">显示范围</label>
+          <select class="form-select" id="filter-record-status" name="record_status">
+            <option value="" {% if not filters.record_status %}selected{% endif %}>当前业务资产</option>
+            <option value="archived" {% if filters.record_status == 'archived' %}selected{% endif %}>仅归档资产</option>
+          </select>
+        </div>
+        <div class="col-12 col-sm-6 col-lg-2">
           <label class="form-label" for="filter-department">部门</label>
           <select class="form-select" id="filter-department" name="department">
             <option value="">全部</option>
@@ -95,7 +102,7 @@
               <td>{{ asset.responsible_employee.name|default:"—" }}</td>
               <td>{{ asset.location.name|default:"—" }}</td>
               {% if list_has_p1 %}<td>1</td>{% endif %}
-              <td><span class="badge text-bg-{% if asset.asset_status == 'draft' %}secondary{% elif asset.asset_status == 'pending_finance' %}warning{% else %}info{% endif %}">{{ asset.get_asset_status_display }}</span></td>
+              <td><span class="badge text-bg-{% if asset.record_status == 'archived' %}dark{% elif asset.asset_status == 'draft' %}secondary{% elif asset.asset_status == 'pending_finance' %}warning{% else %}info{% endif %}">{% if asset.record_status == 'archived' %}已归档 · {% endif %}{{ asset.get_asset_status_display }}</span></td>
               <td><a class="btn btn-sm btn-outline-primary" href="{% url 'assets:asset-detail' asset.pk %}">查看</a></td>
             </tr>
           {% empty %}
@@ -108,8 +115,8 @@
       <div class="card-footer d-flex align-items-center justify-content-between">
         <span class="text-secondary">第 {{ page.number }} / {{ page.paginator.num_pages }} 页，共 {{ page.paginator.count }} 条</span>
         <div class="btn-group" role="group" aria-label="分页">
-          {% if page.has_previous %}<a class="btn btn-sm btn-outline-secondary" href="?page={{ page.previous_page_number }}&q={{ query|urlencode }}&category={{ filters.category|urlencode }}&department={{ filters.department|urlencode }}&employee={{ filters.employee|urlencode }}&location={{ filters.location|urlencode }}&asset_status={{ filters.asset_status|urlencode }}">上一页</a>{% endif %}
-          {% if page.has_next %}<a class="btn btn-sm btn-outline-secondary" href="?page={{ page.next_page_number }}&q={{ query|urlencode }}&category={{ filters.category|urlencode }}&department={{ filters.department|urlencode }}&employee={{ filters.employee|urlencode }}&location={{ filters.location|urlencode }}&asset_status={{ filters.asset_status|urlencode }}">下一页</a>{% endif %}
+          {% if page.has_previous %}<a class="btn btn-sm btn-outline-secondary" href="?page={{ page.previous_page_number }}&q={{ query|urlencode }}&category={{ filters.category|urlencode }}&department={{ filters.department|urlencode }}&employee={{ filters.employee|urlencode }}&location={{ filters.location|urlencode }}&asset_status={{ filters.asset_status|urlencode }}&record_status={{ filters.record_status|urlencode }}">上一页</a>{% endif %}
+          {% if page.has_next %}<a class="btn btn-sm btn-outline-secondary" href="?page={{ page.next_page_number }}&q={{ query|urlencode }}&category={{ filters.category|urlencode }}&department={{ filters.department|urlencode }}&employee={{ filters.employee|urlencode }}&location={{ filters.location|urlencode }}&asset_status={{ filters.asset_status|urlencode }}&record_status={{ filters.record_status|urlencode }}">下一页</a>{% endif %}
         </div>
       </div>
     {% endif %}

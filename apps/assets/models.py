@@ -34,6 +34,12 @@ class AssetQuerySet(models.QuerySet):
             "requested_coding_scheme",
             "requested_coding_scheme_id",
             "submitted_at",
+            "department",
+            "department_id",
+            "responsible_employee",
+            "responsible_employee_id",
+            "location",
+            "location_id",
         }.intersection(kwargs)
         submitted_actor_keys = {"submitted_by", "submitted_by_id"}.intersection(kwargs)
         if submitted_actor_keys and any(kwargs[key] is not None for key in submitted_actor_keys):
@@ -340,14 +346,6 @@ class Asset(models.Model):
     def clean(self):
         super().clean()
         errors = {}
-        if self.asset_status not in {
-            self.AssetStatus.DRAFT,
-            self.AssetStatus.PENDING_FINANCE,
-            self.AssetStatus.PENDING_LABEL,
-            self.AssetStatus.IN_USE,
-            self.AssetStatus.IDLE,
-        }:
-            errors["asset_status"] = "Sprint 6 尚未启用该资产状态。"
         if self.asset_code == "":
             errors["asset_code"] = "未发号资产必须保存 NULL，不能使用空字符串。"
         if self.category_id:
@@ -412,6 +410,9 @@ class Asset(models.Model):
                 "requested_coding_scheme_id",
                 "submitted_by_id",
                 "submitted_at",
+                "department_id",
+                "responsible_employee_id",
+                "location_id",
             ).first()
             if previous is not None:
                 current = {
@@ -422,6 +423,9 @@ class Asset(models.Model):
                     "requested_coding_scheme_id": self.requested_coding_scheme_id,
                     "submitted_by_id": self.submitted_by_id,
                     "submitted_at": self.submitted_at,
+                    "department_id": self.department_id,
+                    "responsible_employee_id": self.responsible_employee_id,
+                    "location_id": self.location_id,
                 }
                 if previous != current:
                     raise ValidationError(
@@ -1400,7 +1404,20 @@ class AssetMovementQuerySet(models.QuerySet):
 
 class AssetMovement(models.Model):
     class MovementType(models.TextChoices):
+        ASSIGNMENT = "assignment", "领用"
+        ASSIGNMENT_RETURN = "assignment_return", "领用归还"
+        TRANSFER = "transfer", "调拨/责任位置变更"
+        LOAN = "loan", "借出"
+        LOAN_RETURN = "loan_return", "借出归还"
+        IDLE = "idle", "闲置"
+        ACTIVATE = "activate", "启用"
+        REPAIR_START = "repair_start", "送修"
+        REPAIR_COMPLETE = "repair_complete", "维修完成"
         LABEL_ACTIVATION = "label_activation", "首次贴标启用"
+        DISPOSAL_START = "disposal_start", "发起处置"
+        DISPOSAL_CANCEL = "disposal_cancel", "取消处置"
+        DISPOSAL_COMPLETE = "disposal_complete", "完成处置"
+        DISPOSAL_REVERSAL = "disposal_reversal", "处置冲销"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey(
@@ -1499,34 +1516,51 @@ class AssetMovement(models.Model):
                 name="uq_movement_asset_label_activation",
             ),
             models.CheckConstraint(
-                condition=Q(movement_type="label_activation"),
-                name="ck_movement_sprint6_type",
+                condition=Q(
+                    movement_type__in=(
+                        "assignment",
+                        "assignment_return",
+                        "transfer",
+                        "loan",
+                        "loan_return",
+                        "idle",
+                        "activate",
+                        "repair_start",
+                        "repair_complete",
+                        "label_activation",
+                        "disposal_start",
+                        "disposal_cancel",
+                        "disposal_complete",
+                        "disposal_reversal",
+                    )
+                ),
+                name="ck_movement_type_valid",
             ),
             models.CheckConstraint(
-                condition=Q(
-                    movement_type="label_activation",
-                    from_status="pending_label",
-                    to_status__in=("in_use", "idle"),
-                    from_department__isnull=False,
-                    to_department__isnull=False,
-                    from_employee__isnull=False,
-                    to_employee__isnull=False,
-                    from_location__isnull=False,
-                    to_location__isnull=False,
+                condition=(
+                    ~Q(movement_type="label_activation")
+                    | Q(
+                        movement_type="label_activation",
+                        from_status="pending_label",
+                        to_status__in=("in_use", "idle"),
+                        from_department__isnull=False,
+                        to_department__isnull=False,
+                        from_employee__isnull=False,
+                        to_employee__isnull=False,
+                        from_location__isnull=False,
+                        to_location__isnull=False,
+                    )
                 ),
                 name="ck_movement_label_activation_fields",
             ),
             models.CheckConstraint(
-                condition=Q(from_department=models.F("to_department")),
-                name="ck_movement_label_same_department",
-            ),
-            models.CheckConstraint(
-                condition=Q(from_employee=models.F("to_employee")),
-                name="ck_movement_label_same_employee",
-            ),
-            models.CheckConstraint(
-                condition=Q(from_location=models.F("to_location")),
-                name="ck_movement_label_same_location",
+                condition=(
+                    ~Q(from_department=models.F("to_department"))
+                    | ~Q(from_employee=models.F("to_employee"))
+                    | ~Q(from_location=models.F("to_location"))
+                    | ~Q(from_status=models.F("to_status"))
+                ),
+                name="ck_movement_has_change",
             ),
             models.CheckConstraint(
                 condition=~Q(idempotency_key=""),
@@ -1541,12 +1575,13 @@ class AssetMovement(models.Model):
     def clean(self):
         super().clean()
         errors = {}
-        if self.movement_type != self.MovementType.LABEL_ACTIVATION:
-            errors["movement_type"] = "Sprint 6 只启用首次贴标变动。"
-        if self.from_status != Asset.AssetStatus.PENDING_LABEL:
-            errors["from_status"] = "首次贴标必须从待贴标状态开始。"
-        if self.to_status not in {Asset.AssetStatus.IN_USE, Asset.AssetStatus.IDLE}:
-            errors["to_status"] = "首次贴标只能进入在用或闲置。"
+        if self.movement_type not in self.MovementType.values:
+            errors["movement_type"] = "资产变动类型无效。"
+        valid_statuses = set(Asset.AssetStatus.values)
+        if self.from_status not in valid_statuses:
+            errors["from_status"] = "原资产状态无效。"
+        if self.to_status not in valid_statuses:
+            errors["to_status"] = "新资产状态无效。"
         if self.asset_id and self.asset.company_id != self.company_id:
             errors["asset"] = "资产必须属于同一公司。"
         pairs = (
@@ -1557,20 +1592,39 @@ class AssetMovement(models.Model):
         for from_name, to_name in pairs:
             from_obj = getattr(self, from_name)
             to_obj = getattr(self, to_name)
-            if from_obj is None or to_obj is None:
-                errors[from_name] = "首次贴标必须保存完整责任与位置快照。"
-            elif from_obj.pk != to_obj.pk:
-                errors[to_name] = "首次贴标不改变部门、责任人或位置。"
-            elif from_obj.company_id != self.company_id:
-                errors[from_name] = "变动快照必须属于同一公司。"
+            for field_name, obj in ((from_name, from_obj), (to_name, to_obj)):
+                if obj is not None and obj.company_id != self.company_id:
+                    errors[field_name] = "变动快照必须属于同一公司。"
+        if self.movement_type == self.MovementType.LABEL_ACTIVATION:
+            if self.from_status != Asset.AssetStatus.PENDING_LABEL:
+                errors["from_status"] = "首次贴标必须从待贴标状态开始。"
+            if self.to_status not in {Asset.AssetStatus.IN_USE, Asset.AssetStatus.IDLE}:
+                errors["to_status"] = "首次贴标只能进入在用或闲置。"
+            for from_name, to_name in pairs:
+                from_obj = getattr(self, from_name)
+                to_obj = getattr(self, to_name)
+                if from_obj is None or to_obj is None:
+                    errors[from_name] = "首次贴标必须保存完整责任与位置快照。"
+                elif from_obj.pk != to_obj.pk:
+                    errors[to_name] = "首次贴标不改变部门、责任人或位置。"
+        has_change = any(
+            getattr(self, from_name + "_id") != getattr(self, to_name + "_id")
+            for from_name, to_name in (
+                ("from_department", "to_department"),
+                ("from_employee", "to_employee"),
+                ("from_location", "to_location"),
+            )
+        ) or self.from_status != self.to_status
+        if not has_change:
+            errors["movement_type"] = "资产变动必须至少改变一个当前维度。"
         if self.effective_at and self.effective_at > timezone.now():
             errors["effective_at"] = "变动生效时间不得晚于当前时间。"
         if not str(self.idempotency_key or "").strip():
             errors["idempotency_key"] = "幂等键不能为空。"
         if not str(self.reason or "").strip():
-            errors["reason"] = "首次贴标必须记录原因。"
+            errors["reason"] = "资产变动必须记录原因。"
         if self._state.adding and self.operated_by_id is None:
-            errors["operated_by"] = "首次贴标必须记录操作人。"
+            errors["operated_by"] = "资产变动必须记录操作人。"
         if errors:
             raise ValidationError(errors)
 
@@ -1601,6 +1655,634 @@ class AssetMovement(models.Model):
         return f"{self.asset} / {self.get_movement_type_display()}"
 
 
+class AssetLoanQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        actor_fields = {
+            "handled_by",
+            "handled_by_id",
+            "created_by",
+            "created_by_id",
+        }
+        if set(kwargs).issubset(actor_fields) and all(
+            value is None for value in kwargs.values()
+        ):
+            return super().update(**kwargs)
+        raise ValidationError("借用记录只能通过受控借还 Service 修改。")
+
+    def delete(self):
+        raise ValidationError("借用记录是业务历史，不可删除。")
+
+
+class AssetLoan(models.Model):
+    class BorrowerType(models.TextChoices):
+        INTERNAL_EMPLOYEE = "internal_employee", "内部员工"
+        EXTERNAL = "external", "外部借用方"
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "借出中"
+        RETURNED = "returned", "已归还"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(
+        Company, on_delete=models.PROTECT, related_name="asset_loans", verbose_name="公司"
+    )
+    asset = models.ForeignKey(
+        Asset, on_delete=models.PROTECT, related_name="loans", verbose_name="资产"
+    )
+    borrower_type = models.CharField(
+        "借用方类型", max_length=32, choices=BorrowerType.choices
+    )
+    borrower_employee = models.ForeignKey(
+        Employee,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="borrowed_asset_loans",
+        verbose_name="内部借用员工",
+    )
+    borrower_name_snapshot = models.CharField("内部借用人姓名快照", max_length=200, blank=True)
+    borrower_name = models.CharField("外部借用人", max_length=200, blank=True)
+    borrower_organization = models.CharField("外部借用单位", max_length=200, blank=True)
+    loan_date = models.DateField("借出日期")
+    expected_return_date = models.DateField("预计归还日期")
+    handled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="handled_asset_loans",
+        verbose_name="借出经办人",
+    )
+    previous_asset_status = models.CharField("借出前状态", max_length=32)
+    reason = models.TextField("借出原因")
+    status = models.CharField(
+        "借用状态", max_length=16, choices=Status.choices, default=Status.ACTIVE
+    )
+    returned_at = models.DateTimeField("实际归还时间", null=True, blank=True)
+    received_by_employee = models.ForeignKey(
+        Employee,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="received_asset_loan_returns",
+        verbose_name="归还接收人",
+    )
+    return_department = models.ForeignKey(
+        Department,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="asset_loan_returns",
+        verbose_name="归还部门",
+    )
+    return_responsible_employee = models.ForeignKey(
+        Employee,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="responsible_asset_loan_returns",
+        verbose_name="归还后责任人",
+    )
+    return_location = models.ForeignKey(
+        Location,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="asset_loan_returns",
+        verbose_name="归还位置",
+    )
+    return_asset_status = models.CharField("归还后状态", max_length=32, blank=True)
+    return_remark = models.TextField("归还备注", blank=True)
+    loan_movement = models.OneToOneField(
+        AssetMovement,
+        on_delete=models.PROTECT,
+        related_name="loan_record",
+        verbose_name="借出变动",
+    )
+    return_movement = models.OneToOneField(
+        AssetMovement,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="loan_return_record",
+        verbose_name="归还变动",
+    )
+    loan_idempotency_key = models.CharField("借出幂等键", max_length=128)
+    return_idempotency_key = models.CharField(
+        "归还幂等键", max_length=128, null=True, blank=True
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_asset_loans",
+        verbose_name="创建人",
+    )
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+    updated_at = models.DateTimeField("更新时间", auto_now=True)
+
+    objects = AssetLoanQuerySet.as_manager()
+
+    class Meta:
+        verbose_name = "资产借用"
+        verbose_name_plural = "资产借用"
+        ordering = ("-loan_date", "-created_at")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("asset",),
+                condition=Q(status="active"),
+                name="uq_asset_loan_active_asset",
+            ),
+            models.UniqueConstraint(
+                fields=("company", "loan_idempotency_key"),
+                name="uq_asset_loan_company_loan_idem",
+            ),
+            models.UniqueConstraint(
+                fields=("company", "return_idempotency_key"),
+                condition=Q(return_idempotency_key__isnull=False),
+                name="uq_asset_loan_company_return_idem",
+            ),
+            models.CheckConstraint(
+                condition=Q(borrower_type__in=("internal_employee", "external")),
+                name="ck_asset_loan_borrower_type",
+            ),
+            models.CheckConstraint(
+                condition=Q(status__in=("active", "returned")),
+                name="ck_asset_loan_status",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        borrower_type="internal_employee",
+                        borrower_employee__isnull=False,
+                        borrower_name_snapshot__gt="",
+                        borrower_name="",
+                        borrower_organization="",
+                    )
+                    | Q(
+                        borrower_type="external",
+                        borrower_employee__isnull=True,
+                        borrower_name_snapshot="",
+                        borrower_name__gt="",
+                    )
+                ),
+                name="ck_asset_loan_borrower_fields",
+            ),
+            models.CheckConstraint(
+                condition=Q(expected_return_date__gte=models.F("loan_date")),
+                name="ck_asset_loan_expected_date",
+            ),
+            models.CheckConstraint(
+                condition=Q(previous_asset_status__in=("in_use", "idle")),
+                name="ck_asset_loan_previous_status",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        status="active",
+                        returned_at__isnull=True,
+                        received_by_employee__isnull=True,
+                        return_department__isnull=True,
+                        return_responsible_employee__isnull=True,
+                        return_location__isnull=True,
+                        return_asset_status="",
+                        return_movement__isnull=True,
+                        return_idempotency_key__isnull=True,
+                    )
+                    | Q(
+                        status="returned",
+                        returned_at__isnull=False,
+                        received_by_employee__isnull=False,
+                        return_department__isnull=False,
+                        return_responsible_employee__isnull=False,
+                        return_location__isnull=False,
+                        return_asset_status__in=("in_use", "idle"),
+                        return_movement__isnull=False,
+                        return_idempotency_key__isnull=False,
+                    )
+                ),
+                name="ck_asset_loan_return_fields",
+            ),
+            models.CheckConstraint(
+                condition=Q(return_movement__isnull=True)
+                | ~Q(loan_movement=models.F("return_movement")),
+                name="ck_asset_loan_movements_different",
+            ),
+            models.CheckConstraint(
+                condition=~Q(loan_idempotency_key="") & ~Q(reason=""),
+                name="ck_asset_loan_required_text",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if self.asset_id and self.asset.company_id != self.company_id:
+            errors["asset"] = "借用资产必须属于同一公司。"
+        if self.borrower_type == self.BorrowerType.INTERNAL_EMPLOYEE:
+            employee = self.borrower_employee
+            if employee is None:
+                errors["borrower_employee"] = "内部借用必须选择员工。"
+            elif employee.company_id != self.company_id:
+                errors["borrower_employee"] = "内部借用员工必须属于同一公司。"
+            elif employee.employment_status != "active" or not employee.is_active:
+                errors["borrower_employee"] = "内部借用员工必须在职且启用。"
+        for field_name in (
+            "received_by_employee",
+            "return_department",
+            "return_responsible_employee",
+            "return_location",
+        ):
+            obj = getattr(self, field_name)
+            if obj is not None and obj.company_id != self.company_id:
+                errors[field_name] = "归还目标必须属于同一公司。"
+        if self.handled_by_id is None and self._state.adding:
+            errors["handled_by"] = "借出经办人必填。"
+        if self.created_by_id is None and self._state.adding:
+            errors["created_by"] = "借出创建人必填。"
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("借用记录只能通过受控借还 Service 修改。")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("借用记录是业务历史，不可删除。")
+
+    def __str__(self):
+        return f"{self.asset} / {self.get_borrower_type_display()}"
+
+
+class AssetDisposalQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        raise ValidationError("处置记录只能通过受控处置 Service 修改。")
+
+    def delete(self):
+        raise ValidationError("处置记录和财务快照不可删除。")
+
+
+class AssetDisposal(models.Model):
+    class DisposalType(models.TextChoices):
+        SCRAP = "scrap", "报废"
+        SALE = "sale", "出售"
+        OTHER = "other", "其他处置"
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "处理中"
+        FINANCE_LOCKED = "finance_locked", "财务已锁定"
+        CONFIRMED = "confirmed", "已完成"
+        CANCELLED = "cancelled", "已取消"
+        REVERSED = "reversed", "已冲销"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(
+        Company, on_delete=models.PROTECT, related_name="asset_disposals", verbose_name="公司"
+    )
+    asset = models.ForeignKey(
+        Asset, on_delete=models.PROTECT, related_name="disposals", verbose_name="资产"
+    )
+    disposal_type = models.CharField(
+        "处置类型", max_length=16, choices=DisposalType.choices
+    )
+    application_date = models.DateField("申请日期")
+    planned_disposal_date = models.DateField("拟处置日期")
+    actual_disposal_date = models.DateField("实际处置日期", null=True, blank=True)
+    reason = models.TextField("处置原因")
+    description = models.TextField("处置说明", blank=True)
+    recipient_name = models.CharField("接收方/去向", max_length=200, blank=True)
+    disposal_income = models.DecimalField(
+        "处置收入", max_digits=18, decimal_places=2, null=True, blank=True
+    )
+    original_cost_snapshot = models.DecimalField(
+        "原值快照", max_digits=18, decimal_places=2, null=True, blank=True
+    )
+    actual_accumulated_depreciation_snapshot = models.DecimalField(
+        "实际累计折旧快照", max_digits=18, decimal_places=2, null=True, blank=True
+    )
+    impairment_snapshot = models.DecimalField(
+        "减值快照", max_digits=18, decimal_places=2, null=True, blank=True
+    )
+    book_value_snapshot = models.DecimalField(
+        "账面净值快照", max_digits=18, decimal_places=2, null=True, blank=True
+    )
+    previous_asset_status = models.CharField("处置前资产状态", max_length=32)
+    status = models.CharField(
+        "处置状态", max_length=16, choices=Status.choices, default=Status.DRAFT
+    )
+    initiated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="initiated_asset_disposals",
+        verbose_name="发起人",
+    )
+    finance_locked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="finance_locked_asset_disposals",
+        verbose_name="财务锁定人",
+    )
+    finance_locked_at = models.DateTimeField("财务锁定时间", null=True, blank=True)
+    handled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="handled_asset_disposals",
+        verbose_name="处置经办人",
+    )
+    confirmed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="confirmed_asset_disposals",
+        verbose_name="完成人",
+    )
+    confirmed_at = models.DateTimeField("完成时间", null=True, blank=True)
+    cancelled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="cancelled_asset_disposals",
+        verbose_name="取消人",
+    )
+    cancelled_at = models.DateTimeField("取消时间", null=True, blank=True)
+    cancellation_reason = models.TextField("取消原因", blank=True)
+    idempotency_key = models.CharField("发起幂等键", max_length=128)
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+
+    objects = AssetDisposalQuerySet.as_manager()
+
+    class Meta:
+        verbose_name = "资产处置"
+        verbose_name_plural = "资产处置"
+        ordering = ("-created_at",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "idempotency_key"),
+                name="uq_disposal_company_idem",
+            ),
+            models.UniqueConstraint(
+                fields=("asset",),
+                condition=Q(status__in=("draft", "finance_locked")),
+                name="uq_disposal_asset_open",
+            ),
+            models.UniqueConstraint(
+                fields=("asset",),
+                condition=Q(status="confirmed"),
+                name="uq_disposal_asset_confirmed",
+            ),
+            models.CheckConstraint(
+                condition=Q(disposal_type__in=("scrap", "sale", "other")),
+                name="ck_disposal_type",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    status__in=(
+                        "draft",
+                        "finance_locked",
+                        "confirmed",
+                        "cancelled",
+                        "reversed",
+                    )
+                ),
+                name="ck_disposal_status",
+            ),
+            models.CheckConstraint(
+                condition=Q(planned_disposal_date__gte=models.F("application_date")),
+                name="ck_disposal_planned_date",
+            ),
+            models.CheckConstraint(
+                condition=Q(actual_disposal_date__isnull=True)
+                | Q(actual_disposal_date__gte=models.F("application_date")),
+                name="ck_disposal_actual_date",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    (Q(disposal_income__isnull=True) | Q(disposal_income__gte=0))
+                    & (
+                        Q(original_cost_snapshot__isnull=True)
+                        | Q(original_cost_snapshot__gte=0)
+                    )
+                    & (
+                        Q(actual_accumulated_depreciation_snapshot__isnull=True)
+                        | Q(actual_accumulated_depreciation_snapshot__gte=0)
+                    )
+                    & (
+                        Q(impairment_snapshot__isnull=True)
+                        | Q(impairment_snapshot__gte=0)
+                    )
+                    & (
+                        Q(book_value_snapshot__isnull=True)
+                        | Q(book_value_snapshot__gte=0)
+                    )
+                ),
+                name="ck_disposal_amounts_nonnegative",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        original_cost_snapshot__isnull=True,
+                        actual_accumulated_depreciation_snapshot__isnull=True,
+                        impairment_snapshot__isnull=True,
+                        book_value_snapshot__isnull=True,
+                    )
+                    | Q(
+                        original_cost_snapshot=models.F(
+                            "actual_accumulated_depreciation_snapshot"
+                        )
+                        + models.F("impairment_snapshot")
+                        + models.F("book_value_snapshot")
+                    )
+                ),
+                name="ck_disposal_snapshot_reconciles",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        status="draft",
+                        finance_locked_at__isnull=True,
+                        finance_locked_by__isnull=True,
+                        original_cost_snapshot__isnull=True,
+                        actual_accumulated_depreciation_snapshot__isnull=True,
+                        impairment_snapshot__isnull=True,
+                        book_value_snapshot__isnull=True,
+                        confirmed_at__isnull=True,
+                        confirmed_by__isnull=True,
+                        cancelled_at__isnull=True,
+                        cancelled_by__isnull=True,
+                        cancellation_reason="",
+                    )
+                    | Q(
+                        status="finance_locked",
+                        actual_disposal_date__isnull=False,
+                        finance_locked_at__isnull=False,
+                        original_cost_snapshot__isnull=False,
+                        actual_accumulated_depreciation_snapshot__isnull=False,
+                        impairment_snapshot__isnull=False,
+                        book_value_snapshot__isnull=False,
+                        disposal_income__isnull=False,
+                        confirmed_at__isnull=True,
+                        confirmed_by__isnull=True,
+                        cancelled_at__isnull=True,
+                        cancelled_by__isnull=True,
+                        cancellation_reason="",
+                    )
+                    | Q(
+                        status__in=("confirmed", "reversed"),
+                        actual_disposal_date__isnull=False,
+                        finance_locked_at__isnull=False,
+                        original_cost_snapshot__isnull=False,
+                        actual_accumulated_depreciation_snapshot__isnull=False,
+                        impairment_snapshot__isnull=False,
+                        book_value_snapshot__isnull=False,
+                        disposal_income__isnull=False,
+                        confirmed_at__isnull=False,
+                        cancelled_at__isnull=True,
+                        cancelled_by__isnull=True,
+                        cancellation_reason="",
+                    )
+                    | (
+                        Q(
+                            status="cancelled",
+                            confirmed_at__isnull=True,
+                            confirmed_by__isnull=True,
+                            cancelled_at__isnull=False,
+                        )
+                        & ~Q(cancellation_reason="")
+                    )
+                ),
+                name="ck_disposal_status_fields",
+            ),
+            models.CheckConstraint(
+                condition=Q(previous_asset_status__in=("in_use", "idle", "under_repair")),
+                name="ck_disposal_previous_status",
+            ),
+            models.CheckConstraint(
+                condition=~Q(reason="") & ~Q(idempotency_key=""),
+                name="ck_disposal_required_text",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if self.asset_id and self.asset.company_id != self.company_id:
+            errors["asset"] = "处置资产必须属于同一公司。"
+        if self._state.adding and self.actual_disposal_date is not None:
+            errors["actual_disposal_date"] = "发起处置时实际处置日期必须为空。"
+        if self.actual_disposal_date and self.actual_disposal_date > timezone.localdate():
+            errors["actual_disposal_date"] = "实际处置日期不得晚于当前上海业务日。"
+        if self._state.adding and self.initiated_by_id is None:
+            errors["initiated_by"] = "处置发起人必填。"
+        if self._state.adding and self.handled_by_id is None:
+            errors["handled_by"] = "处置经办人必填。"
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("处置记录只能通过受控处置 Service 修改。")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("处置记录和财务快照不可删除。")
+
+    def __str__(self):
+        return f"{self.asset} / {self.get_disposal_type_display()}"
+
+
+class AssetDisposalReversalQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        if set(kwargs).issubset({"reversed_by", "reversed_by_id"}) and all(
+            value is None for value in kwargs.values()
+        ):
+            return super().update(**kwargs)
+        raise ValidationError("处置冲销记录只允许追加。")
+
+    def delete(self):
+        raise ValidationError("处置冲销记录不可删除。")
+
+
+class AssetDisposalReversal(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(
+        Company,
+        on_delete=models.PROTECT,
+        related_name="asset_disposal_reversals",
+        verbose_name="公司",
+    )
+    asset_disposal = models.OneToOneField(
+        AssetDisposal,
+        on_delete=models.PROTECT,
+        related_name="reversal",
+        verbose_name="原处置",
+    )
+    reason = models.TextField("冲销原因")
+    restored_asset_status = models.CharField("恢复资产状态", max_length=32)
+    idempotency_key = models.CharField("冲销幂等键", max_length=128)
+    reversed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="reversed_asset_disposals",
+        verbose_name="冲销人",
+    )
+    reversed_at = models.DateTimeField("冲销时间")
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+
+    objects = AssetDisposalReversalQuerySet.as_manager()
+
+    class Meta:
+        verbose_name = "资产处置冲销"
+        verbose_name_plural = "资产处置冲销"
+        ordering = ("-reversed_at",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "idempotency_key"),
+                name="uq_disposal_reversal_company_idem",
+            ),
+            models.CheckConstraint(
+                condition=Q(restored_asset_status__in=("in_use", "idle", "under_repair")),
+                name="ck_disposal_reversal_status",
+            ),
+            models.CheckConstraint(
+                condition=~Q(reason="") & ~Q(idempotency_key=""),
+                name="ck_disposal_reversal_required_text",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if self.asset_disposal_id and self.asset_disposal.company_id != self.company_id:
+            errors["asset_disposal"] = "冲销的处置必须属于同一公司。"
+        if self._state.adding and self.reversed_by_id is None:
+            errors["reversed_by"] = "处置冲销必须记录操作人。"
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("处置冲销记录只允许追加。")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("处置冲销记录不可删除。")
+
+    def __str__(self):
+        return f"{self.asset_disposal} / 冲销"
+
+
 class AttachmentLinkQuerySet(models.QuerySet):
     def update(self, **kwargs):
         immutable = {
@@ -1608,6 +2290,8 @@ class AttachmentLinkQuerySet(models.QuerySet):
             "company_id",
             "asset",
             "asset_id",
+            "asset_disposal",
+            "asset_disposal_id",
             "attachment",
             "attachment_id",
             "role",
@@ -1640,6 +2324,7 @@ class AttachmentLink(models.Model):
         ACCEPTANCE = "acceptance", "验收单"
         CERTIFICATE = "certificate", "合格证"
         MANUAL = "manual", "说明书"
+        DISPOSAL = "disposal", "处置证据"
         OTHER = "other", "其他"
 
     class SecurityClass(models.TextChoices):
@@ -1666,7 +2351,17 @@ class AttachmentLink(models.Model):
     asset = models.ForeignKey(
         Asset,
         verbose_name="资产",
-        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="attachment_links",
+    )
+    asset_disposal = models.ForeignKey(
+        AssetDisposal,
+        verbose_name="资产处置",
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
         related_name="attachment_links",
     )
     role = models.CharField("附件用途", max_length=32, choices=Role.choices)
@@ -1709,6 +2404,13 @@ class AttachmentLink(models.Model):
                 name="uq_attachment_link_active_cover",
             ),
             models.CheckConstraint(
+                condition=(
+                    Q(asset__isnull=False, asset_disposal__isnull=True)
+                    | Q(asset__isnull=True, asset_disposal__isnull=False)
+                ),
+                name="ck_attachment_link_one_target",
+            ),
+            models.CheckConstraint(
                 condition=Q(
                     role__in=(
                         "cover",
@@ -1718,6 +2420,7 @@ class AttachmentLink(models.Model):
                         "acceptance",
                         "certificate",
                         "manual",
+                        "disposal",
                         "other",
                     )
                 ),
@@ -1737,6 +2440,7 @@ class AttachmentLink(models.Model):
                         role__in=("invoice", "contract", "acceptance"),
                         security_class="A1",
                     )
+                    | Q(role="disposal", security_class__in=("A0", "A1"))
                     | Q(role="other", security_class__in=("A0", "A1"))
                 ),
                 name="ck_attachment_link_role_security",
@@ -1764,6 +2468,10 @@ class AttachmentLink(models.Model):
         errors = {}
         if self.asset_id and self.asset.company_id != self.company_id:
             errors["asset"] = "资产必须属于同一公司。"
+        if self.asset_disposal_id and self.asset_disposal.company_id != self.company_id:
+            errors["asset_disposal"] = "资产处置必须属于同一公司。"
+        if bool(self.asset_id) == bool(self.asset_disposal_id):
+            errors["asset"] = "附件必须且只能关联一个业务目标。"
         if self.attachment_id and self.attachment.company_id != self.company_id:
             errors["attachment"] = "附件必须属于同一公司。"
         a0_roles = {
@@ -1785,6 +2493,7 @@ class AttachmentLink(models.Model):
             previous = type(self).objects.filter(pk=self.pk).values(
                 "company_id",
                 "asset_id",
+                "asset_disposal_id",
                 "attachment_id",
                 "role",
                 "security_class",
@@ -1796,6 +2505,7 @@ class AttachmentLink(models.Model):
             current = {
                 "company_id": self.company_id,
                 "asset_id": self.asset_id,
+                "asset_disposal_id": self.asset_disposal_id,
                 "attachment_id": self.attachment_id,
                 "role": self.role,
                 "security_class": self.security_class,
@@ -1808,6 +2518,7 @@ class AttachmentLink(models.Model):
                 identity_fields = (
                     "company_id",
                     "asset_id",
+                    "asset_disposal_id",
                     "attachment_id",
                     "role",
                     "security_class",
@@ -1823,4 +2534,4 @@ class AttachmentLink(models.Model):
         raise ValidationError("附件业务关联不得物理删除，只能通过受控 Service 作废。")
 
     def __str__(self):
-        return f"{self.asset} - {self.get_role_display()}"
+        return f"{self.asset or self.asset_disposal} - {self.get_role_display()}"

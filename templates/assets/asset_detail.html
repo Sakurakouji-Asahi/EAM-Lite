@@ -7,6 +7,7 @@
       <h1 class="h3 mb-2">{{ asset.asset_name }}</h1>
       <span class="badge text-bg-{% if asset.asset_status == 'draft' %}secondary{% elif asset.asset_status == 'pending_finance' %}warning{% else %}info{% endif %}">{{ asset.get_asset_status_display }}</span>
       <span class="badge text-bg-light">{{ asset.category.name }}</span>
+      {% if archived %}<span class="badge text-bg-dark">已归档</span>{% endif %}
     </div>
     <div class="d-flex flex-wrap gap-2">
       <a class="btn btn-outline-secondary" href="{% url 'assets:asset-list' %}">返回总账</a>
@@ -20,8 +21,12 @@
       {% if can_financial and asset.asset_status == "pending_finance" %}<a class="btn btn-danger" href="{% url 'finance:finance-confirm' asset.pk %}">财务确认</a>{% endif %}
       {% if can_financial and asset.asset_status != "draft" and asset.asset_status != "pending_finance" %}<a class="btn btn-outline-primary" href="{% url 'finance:asset-finance-detail' asset.pk %}">财务与折旧</a>{% endif %}
       {% if can_delete %}<a class="btn btn-outline-danger" href="{% url 'assets:asset-delete' asset.pk %}">删除草稿</a>{% endif %}
+      {% if lifecycle_actions.archive %}<a class="btn btn-outline-dark" href="{% url 'assets:lifecycle-archive' asset.pk %}">归档</a>{% endif %}
+      {% if lifecycle_actions.restore %}<a class="btn btn-outline-primary" href="{% url 'assets:lifecycle-restore' asset.pk %}">恢复显示</a>{% endif %}
     </div>
   </div>
+
+  {% if archived %}<div class="alert alert-secondary">此资产已归档。终态、正式编号、二维码、财务、处置和全部历史均保持不变；当前页面只提供有权用户只读摘要及恢复显示动作。</div>{% endif %}
 
   {% if asset.asset_status == "pending_finance" %}
     <div class="alert alert-warning" role="status">当前等待 finance 明确会计认定。财务确认会在单一事务中生成永久正式编号和安全二维码身份，并进入待贴标。</div>
@@ -100,12 +105,25 @@
         </section>
       {% endif %}
 
-      <section class="card shadow-sm" aria-labelledby="future-tabs-title">
-        <div class="card-header"><h2 class="h5 mb-0" id="future-tabs-title">后续业务记录</h2></div>
+      {% if can_p1 %}<section class="card shadow-sm mb-3" aria-labelledby="lifecycle-title">
+        <div class="card-header"><h2 class="h5 mb-0" id="lifecycle-title">生命周期动作与记录</h2></div>
         <div class="card-body">
-          <p class="text-secondary mb-0">折旧已由财务真源与追加式分录管理；二维码打印、贴标与换标通过受控动作记录，其他生命周期、盘点、保养和处置仍属后续 Sprint。</p>
+          {% if not archived %}<div class="d-flex flex-wrap gap-2 mb-3">
+            {% if lifecycle_actions.transfer %}<a class="btn btn-sm btn-outline-primary" href="{% url 'assets:lifecycle-transfer' asset.pk %}">调拨/责任位置变更</a>{% endif %}
+            {% if lifecycle_actions.idle %}<a class="btn btn-sm btn-outline-secondary" href="{% url 'assets:lifecycle-idle' asset.pk %}">转为闲置</a>{% endif %}
+            {% if lifecycle_actions.activate %}<a class="btn btn-sm btn-outline-success" href="{% url 'assets:lifecycle-activate' asset.pk %}">启用</a>{% endif %}
+            {% if lifecycle_actions.repair_start %}<a class="btn btn-sm btn-outline-warning" href="{% url 'assets:lifecycle-repair-start' asset.pk %}">送修</a>{% endif %}
+            {% if lifecycle_actions.repair_complete %}<a class="btn btn-sm btn-outline-success" href="{% url 'assets:lifecycle-repair-complete' asset.pk %}">维修完成</a>{% endif %}
+            {% if lifecycle_actions.loan %}<a class="btn btn-sm btn-outline-primary" href="{% url 'assets:lifecycle-loan' asset.pk %}">借出</a>{% endif %}
+            {% if lifecycle_actions.loan_return %}<a class="btn btn-sm btn-outline-primary" href="{% url 'assets:lifecycle-loan-return' asset.pk %}">归还</a>{% endif %}
+            {% if lifecycle_actions.disposal_start %}<a class="btn btn-sm btn-outline-danger" href="{% url 'assets:disposal-start' asset.pk %}">发起处置</a>{% endif %}
+            {% if lifecycle_actions.code_correction %}<a class="btn btn-sm btn-outline-danger" href="{% url 'assets:lifecycle-code-correct' asset.pk %}">正式编号修正</a>{% endif %}
+          </div>{% endif %}
+          {% if active_loan %}<div class="alert alert-warning"><strong>借出中：</strong>{% if active_loan.borrower_type == 'internal_employee' %}内部员工 {{ active_loan.borrower_name_snapshot }}{% else %}{{ active_loan.borrower_name }}{% if active_loan.borrower_organization %}（{{ active_loan.borrower_organization }}）{% endif %}{% endif %}；预计归还 {{ active_loan.expected_return_date|date:"Y-m-d" }}。</div>{% endif %}
+          {% if latest_disposal %}<p><a href="{% url 'assets:disposal-detail' latest_disposal.pk %}">查看最新处置记录：{{ latest_disposal.get_disposal_type_display }} / {{ latest_disposal.get_status_display }}</a></p>{% endif %}
+          <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>生效时间</th><th>类型</th><th>状态</th><th>责任归属</th><th>原因</th></tr></thead><tbody>{% for movement in movements %}<tr><td>{{ movement.effective_at|date:"Y-m-d H:i" }}</td><td>{{ movement.get_movement_type_display }}</td><td>{{ movement.from_status }} → {{ movement.to_status }}</td><td>{{ movement.from_department.name|default:"—" }} / {{ movement.from_employee.name|default:"—" }} / {{ movement.from_location.name|default:"—" }}<br><span class="text-secondary">→ {{ movement.to_department.name|default:"—" }} / {{ movement.to_employee.name|default:"—" }} / {{ movement.to_location.name|default:"—" }}</span></td><td>{{ movement.reason }}</td></tr>{% empty %}<tr><td colspan="5" class="text-secondary">暂无生命周期变动。</td></tr>{% endfor %}</tbody></table></div>
         </div>
-      </section>
+      </section>{% endif %}
     </div>
 
     <div class="col-12 col-xl-4">

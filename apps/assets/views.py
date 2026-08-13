@@ -43,6 +43,10 @@ from apps.assets.permissions import (
     scoped_assets,
 )
 from apps.assets.qr_permissions import can_manage_labels
+from apps.assets.lifecycle_permissions import (
+    TERMINAL_STATUSES,
+    can_lifecycle_action,
+)
 from apps.assets.services import (
     FINANCIAL_FIELD_NAMES,
     create_asset_draft,
@@ -275,7 +279,15 @@ def _safe_filter(queryset, *, field, value, model, company):
 @login_required
 def asset_list(request):
     company = _company_and_gate()
-    base_queryset = _object_queryset(request.user, company)
+    scoped_queryset = _object_queryset(request.user, company)
+    include_archived = request.GET.get("record_status") == "archived"
+    base_queryset = scoped_queryset.filter(
+        record_status=(
+            Asset.RecordStatus.ARCHIVED
+            if include_archived
+            else Asset.RecordStatus.ACTIVE
+        )
+    )
     queryset = base_queryset
     query = request.GET.get("q", "").strip()
     if query:
@@ -301,6 +313,7 @@ def asset_list(request):
         "employee": request.GET.get("employee", ""),
         "location": request.GET.get("location", ""),
         "asset_status": request.GET.get("asset_status", ""),
+        "record_status": request.GET.get("record_status", ""),
     }
     queryset = _safe_filter(
         queryset,
@@ -488,6 +501,12 @@ def asset_detail(request, pk):
     can_financial = can_view_financial_fields(request.user)
     roles = role_names_for(request.user)
     current_qr = asset.qr_identities.filter(status="active").first()
+    archived = asset.record_status == Asset.RecordStatus.ARCHIVED
+    terminal = asset.asset_status in TERMINAL_STATUSES
+    active_loan = asset.loans.filter(status="active").first() if can_p1 else None
+    latest_disposal = (
+        asset.disposals.order_by("-created_at").first() if can_p1 else None
+    )
     attachment_filter = Q(pk__in=[])
     if can_p1 and "hr" not in roles:
         attachment_filter |= Q(security_class=AttachmentLink.SecurityClass.A0)
@@ -545,6 +564,31 @@ def asset_detail(request, pk):
             "can_upload_a1": can_create_attachment_link(request.user, asset, "A1"),
             "can_manage_labels": can_manage_labels(request.user, asset),
             "current_qr": current_qr,
+            "archived": archived,
+            "terminal": terminal,
+            "active_loan": active_loan,
+            "latest_disposal": latest_disposal,
+            "movements": (
+                asset.movements.select_related(
+                    "from_department", "to_department", "from_employee", "to_employee",
+                    "from_location", "to_location", "operated_by",
+                ).order_by("-effective_at", "-created_at")[:25]
+                if can_p1
+                else []
+            ),
+            "lifecycle_actions": {
+                "transfer": not archived and can_lifecycle_action(request.user, asset, "transfer") and asset.asset_status in {"in_use", "idle"},
+                "idle": not archived and can_lifecycle_action(request.user, asset, "idle") and asset.asset_status == "in_use",
+                "activate": not archived and can_lifecycle_action(request.user, asset, "activate") and asset.asset_status == "idle",
+                "repair_start": not archived and can_lifecycle_action(request.user, asset, "repair_start") and asset.asset_status in {"in_use", "idle"},
+                "repair_complete": not archived and can_lifecycle_action(request.user, asset, "repair_complete") and asset.asset_status == "under_repair",
+                "loan": not archived and can_lifecycle_action(request.user, asset, "loan") and asset.asset_status in {"in_use", "idle"},
+                "loan_return": not archived and can_lifecycle_action(request.user, asset, "loan_return") and asset.asset_status == "loaned" and active_loan is not None,
+                "disposal_start": not archived and can_lifecycle_action(request.user, asset, "disposal_start") and asset.asset_status in {"in_use", "idle", "under_repair"},
+                "code_correction": not archived and not terminal and can_lifecycle_action(request.user, asset, "code_correction") and asset.current_issued_code_id is not None,
+                "archive": not archived and terminal and can_lifecycle_action(request.user, asset, "archive"),
+                "restore": archived and terminal and can_lifecycle_action(request.user, asset, "restore_visibility"),
+            },
         },
     )
 

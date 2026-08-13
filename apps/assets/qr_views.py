@@ -421,11 +421,12 @@ def qr_scan(request, token):
     can_p1 = can_view_asset_p1(request.user, asset)
     can_summary = can_view_asset_summary_fields(request.user, asset)
     can_financial = can_view_financial_fields(request.user)
-    cover_link = asset.cover_attachment_link if can_p1 else None
+    archived = asset.record_status == Asset.RecordStatus.ARCHIVED
+    cover_link = asset.cover_attachment_link if can_p1 and not archived else None
     if cover_link is not None and not can_view_attachment(request.user, cover_link):
         cover_link = None
     finance_summary = None
-    if can_financial:
+    if can_financial and not archived:
         finance = getattr(asset, "finance", None)
         if finance is not None:
             actual_depreciation = (
@@ -445,7 +446,11 @@ def qr_scan(request, token):
             }
     first_attachment = asset.asset_status == Asset.AssetStatus.PENDING_LABEL
     attachment_form = None
-    if can_manage_labels(request.user, asset) and qr_identity.label_status == "printed":
+    if (
+        not archived
+        and can_manage_labels(request.user, asset)
+        and qr_identity.label_status == "printed"
+    ):
         attachment_form = LabelAttachmentForm(
             first_attachment=first_attachment,
             initial={"scanned_token": token},
@@ -458,7 +463,9 @@ def qr_scan(request, token):
             "qr_identity": qr_identity,
             "can_p1": can_p1,
             "can_summary": can_summary,
-            "can_manage_labels": can_manage_labels(request.user, asset),
+            "can_manage_labels": (
+                not archived and can_manage_labels(request.user, asset)
+            ),
             "finance_summary": finance_summary,
             "cover_link": cover_link,
             "location_path": _location_path(asset.location),

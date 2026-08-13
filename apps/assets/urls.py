@@ -1,6 +1,7 @@
 from django.urls import path
 
 from apps.assets import views
+from apps.assets.lifecycle_urls import urlpatterns as lifecycle_urlpatterns
 from apps.assets.qr_urls import urlpatterns as qr_urlpatterns
 
 
@@ -37,3 +38,4 @@ urlpatterns = [
 ]
 
 urlpatterns += qr_urlpatterns
+urlpatterns += lifecycle_urlpatterns

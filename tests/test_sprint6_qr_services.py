@@ -6,6 +6,7 @@ from decimal import Decimal
 
 import pytest
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.db import connection
 
 from apps.assets.models import (
     Asset,
@@ -364,7 +365,15 @@ def test_first_attachment_can_explicitly_choose_idle():
 def test_missing_responsibility_prevents_activation_and_rolls_back():
     context, asset, qr_identity = formal_asset_context("S6MISSING")
     _printed(context, asset, "S6MISSING-print")
-    Asset.objects.filter(pk=asset.pk).update(location=None)
+    # Deliberately create a legacy-incomplete pending-label fixture without
+    # weakening the public QuerySet or PostgreSQL lifecycle guards.
+    if connection.vendor == "postgresql":
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT set_config(%s, %s, true)",
+                ["eam_lite.controlled_asset_mutation", "on"],
+            )
+    Asset._base_manager.filter(pk=asset.pk).update(location=None)
     asset.refresh_from_db()
     qr_identity.refresh_from_db()
 
