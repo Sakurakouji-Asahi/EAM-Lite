@@ -87,6 +87,15 @@
   image-rendering: crisp-edges;
 }
 
+.qr-preview-link {
+  display: block;
+  width: 22mm;
+  height: 22mm;
+  flex: 0 0 22mm;
+  line-height: 0;
+  text-decoration: none;
+}
+
 .qr-scan-page {
   width: 100%;
   max-width: 42rem;
@@ -142,8 +151,17 @@
 }
 
 @media print {
-  .label-print-controls {
+  .label-print-controls,
+  .screen-scan-hint {
     display: none !important;
+  }
+
+  .qr-preview-link {
+    text-decoration: none !important;
+  }
+
+  .qr-preview-link::after {
+    content: none !important;
   }
 
   html,

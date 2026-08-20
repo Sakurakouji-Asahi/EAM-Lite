@@ -12,7 +12,7 @@ import uuid
 import warnings
 import zipfile
 from collections.abc import Mapping
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.base import ContentFile
@@ -772,8 +772,8 @@ def _detect_mime(extension, data):
 
 
 def _validate_filename(filename):
-    name = Path(str(filename or "")).name
-    if not name or name != str(filename) or "\x00" in name:
+    name = str(filename or "")
+    if not name or "/" in name or "\\" in name or "\x00" in name or PureWindowsPath(name).drive:
         raise ValidationError("文件名包含危险路径或空字符。")
     suffixes = [part.lower() for part in Path(name).suffixes]
     if len(suffixes) != 1:

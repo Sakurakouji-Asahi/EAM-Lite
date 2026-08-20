@@ -148,7 +148,11 @@ def test_print_view_is_local_a4_snapshot_and_browser_get_does_not_confirm(client
     assert "原值" not in text and "账面净值" not in text
     assert "cdn" not in text.casefold()
     assert "fonts.googleapis" not in text.casefold()
-    assert reverse("assets:label-item-qr", args=[item.pk]) in text
+    qr_url = reverse("assets:label-item-qr", args=[item.pk])
+    assert f'href="{qr_url}"' in text
+    assert f'src="{qr_url}"' in text
+    assert 'target="_blank"' in text and 'rel="noopener"' in text
+    assert "点击标签内的二维码，在新窗口放大后再扫码" in text
     batch.refresh_from_db()
     qr_identity.refresh_from_db()
     assert batch.status == "generated" and batch.printed_at is None
@@ -205,6 +209,9 @@ def test_print_css_fixes_a4_geometry_qr_minimum_size_and_360px_layout():
     assert "height: 22mm" in css
     assert "@media (max-width: 360px)" in css
     assert "@media print" in css
+    assert ".qr-preview-link" in css
+    assert ".screen-scan-hint" in css
+    assert "content: none !important" in css
     assert "http://" not in css and "https://" not in css
 
 

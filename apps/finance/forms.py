@@ -167,6 +167,12 @@ class FinanceDraftForm(FinanceBoundForm):
         label="指定起算日期", required=False,
         widget=forms.DateInput(attrs={"type": "date"}),
     )
+    actual_continuation_date = forms.DateField(
+        label="实际接续日",
+        required=False,
+        widget=forms.DateInput(attrs={"type": "date"}),
+        help_text="旧资产期初余额截至后的实际接续起点；新资产留空时等于折旧起算日。",
+    )
     expected_total_units = forms.DecimalField(
         label="预计总工作量", min_value=Decimal("0.000001"),
         max_digits=24, decimal_places=6, required=False,
@@ -232,8 +238,13 @@ class FinanceDraftForm(FinanceBoundForm):
                 "useful_life_months", "salvage_mode", "salvage_rate", "salvage_amount",
                 "method", "posting_period", "start_rule", "stop_rule",
                 "specified_start_date", "expected_total_units", "work_unit",
-                "annual_posting_month",
+                "annual_posting_month", "actual_continuation_date",
             ):
+                if (
+                    field not in {"fixed_asset_category", "capitalization_date"}
+                    and cleaned.get(field) not in (None, "")
+                ):
+                    self.add_error(field, "受控非固定资产不得填写折旧配置。")
                 cleaned[field] = None
             if cleaned.get("opening_actual_accumulated_depreciation") not in (None, Decimal("0")):
                 self.add_error("opening_actual_accumulated_depreciation", "受控非固定资产必须为 0。")
@@ -267,7 +278,7 @@ class FinanceDraftForm(FinanceBoundForm):
             "salvage_rate", "salvage_amount", "method", "posting_period",
             "start_rule", "stop_rule", "expected_total_units", "work_unit",
             "annual_posting_month", "opening_actual_accumulated_depreciation",
-            "opening_impairment",
+            "opening_impairment", "actual_continuation_date",
         ):
             value = self.cleaned_data.get(key)
             # Blank form controls mean “use the selected policy/default”.
@@ -467,7 +478,12 @@ class TheoreticalRunForm(FinanceBoundForm):
             raise ValidationError("计算参数必须是合法 JSON。") from exc
         if not isinstance(value, dict):
             raise ValidationError("计算参数最外层必须是对象。")
-        for field in ("commissioning_date", "specified_start", "stop_date"):
+        for field in (
+            "commissioning_date",
+            "specified_start",
+            "actual_continuation_date",
+            "stop_date",
+        ):
             if field in value and value[field] is not None:
                 try:
                     value[field] = forms.DateField().to_python(value[field])
@@ -500,6 +516,12 @@ class ReasonForm(FinanceBoundForm):
 class ProfileEventForm(ReasonForm):
     event_type = forms.ChoiceField(label="事件类型", choices=DepreciationProfileEvent.EventType.choices)
     effective_date = forms.DateField(label="生效日期", widget=forms.DateInput(attrs={"type": "date"}))
+
+
+class ProfileContinuationReviewForm(ReasonForm):
+    actual_continuation_date = forms.DateField(
+        label="实际接续日", widget=forms.DateInput(attrs={"type": "date"})
+    )
 
 
 class ValueAdjustmentForm(ReasonForm):

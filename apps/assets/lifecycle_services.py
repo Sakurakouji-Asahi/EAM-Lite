@@ -332,12 +332,25 @@ def _create_movement(
     *, actor, asset, movement_type, effective_at, reason, idempotency_key,
     from_department, to_department, from_employee, to_employee,
     from_location, to_location, from_status, to_status, remark="",
+    date_granularity=False,
 ):
     from apps.assets.models import AssetMovement
 
     effective_at = _business_datetime(effective_at)
     if effective_at > timezone.now():
         raise ValidationError({"effective_at": "生效时间不得晚于当前时间。"})
+    latest_effective_at = AssetMovement.objects.filter(asset=asset).order_by(
+        "-effective_at", "-created_at", "-pk"
+    ).values_list("effective_at", flat=True).first()
+    if latest_effective_at is not None and (
+        effective_at.date() < timezone.localtime(latest_effective_at).date()
+        if date_granularity
+        else effective_at.replace(second=0, microsecond=0)
+        < latest_effective_at.replace(second=0, microsecond=0)
+    ):
+        raise ValidationError({"effective_at": "生效时间不得早于资产最近一次生命周期变动。"})
+    if latest_effective_at is not None and effective_at < latest_effective_at:
+        effective_at = latest_effective_at
     movement = AssetMovement(
         company=asset.company, asset=asset, movement_type=movement_type,
         effective_at=effective_at, from_department=from_department,
@@ -645,6 +658,7 @@ def loan_asset(
         from_employee=asset.responsible_employee, to_employee=asset.responsible_employee,
         from_location=asset.location, to_location=asset.location,
         from_status=asset.asset_status, to_status="loaned", remark=remark,
+        date_granularity=True,
     )
     loan = AssetLoan(
         company=asset.company, asset=asset, borrower_type=borrower_type,
@@ -985,6 +999,7 @@ def initiate_disposal(
         from_location=asset.location, to_location=asset.location,
         from_status=asset.asset_status, to_status="pending_disposal",
         remark=f"处置记录：{disposal.pk}",
+        date_granularity=True,
     )
     _base_update(Asset, asset.pk, {"asset_status": "pending_disposal", "updated_by_id": actor.pk})
     _audit(
@@ -1335,6 +1350,7 @@ def complete_disposal(
         from_location=asset.location, to_location=asset.location,
         from_status="pending_disposal", to_status=target,
         remark=f"处置记录：{disposal.pk}",
+        date_granularity=True,
     )
     now = timezone.now()
     _base_update(AssetDisposal, disposal.pk, {

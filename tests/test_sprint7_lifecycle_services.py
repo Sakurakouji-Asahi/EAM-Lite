@@ -36,7 +36,7 @@ pytestmark = pytest.mark.django_db
 
 
 def _now():
-    return timezone.now() - timedelta(seconds=1)
+    return timezone.now()
 
 
 def _loan(context, asset, key, **overrides):

@@ -66,6 +66,7 @@ PROFILE_INPUT_FIELDS = frozenset(
         "stop_rule",
         "specified_start",
         "start_date",
+        "actual_continuation_date",
         "useful_life_months",
         "salvage_mode",
         "salvage_rate",
@@ -200,6 +201,21 @@ def _required_reason(value, *, field_name="reason") -> str:
     if not reason:
         raise ValidationError({field_name: "该受控业务动作必须填写原因。"})
     return reason
+
+
+def _require_profile_continuation_reviewed(profile):
+    if (
+        profile.actual_continuation_review_required
+        or profile.actual_continuation_date is None
+    ):
+        raise ValidationError(
+            {
+                "actual_continuation_date": (
+                    f"Profile v{profile.version} 的实际接续日尚待财务复核；"
+                    "请先在资产财务详情完成一次性复核。"
+                )
+            }
+        )
 
 
 def _for_update_self(queryset):
@@ -769,6 +785,33 @@ def _profile_spec(*, asset, finance_data, profile_data, policy):
     start_rule = values.get("start_rule", policy.start_rule)
     specified = values.get("specified_start", values.get("start_date"))
     allow_historical = bool(values.pop("allow_historical_start", False))
+    resolved_start = domain.resolve_start_date(
+        commissioning_date=asset.commissioning_date,
+        start_rule=start_rule,
+        specified_start=specified,
+        allow_historical_override=allow_historical,
+    )
+    supplied_continuation = values.get("actual_continuation_date")
+    has_opening_balance = opening_ad != ZERO_MONEY or opening_impairment != ZERO_MONEY
+    requires_explicit_continuation = has_opening_balance or allow_historical
+    if requires_explicit_continuation and supplied_continuation is None:
+        raise ValidationError(
+            {"actual_continuation_date": "旧资产初始化必须填写独立的实际接续日。"}
+        )
+    actual_continuation_date = (
+        _business_date(
+            supplied_continuation, field_name="actual_continuation_date"
+        )
+        if supplied_continuation is not None
+        else resolved_start
+    )
+    if (
+        not requires_explicit_continuation
+        and actual_continuation_date != resolved_start
+    ):
+        raise ValidationError(
+            {"actual_continuation_date": "无期初余额的新资产实际接续日必须等于折旧起算日。"}
+        )
     method = values.get("method", policy.method)
     work_unit = values.get("work_unit", policy.work_unit)
     expected_total_units = values.get("expected_total_units")
@@ -790,6 +833,7 @@ def _profile_spec(*, asset, finance_data, profile_data, policy):
         opening_actual_accumulated_depreciation=opening_ad,
         opening_impairment=opening_impairment,
         opening_book_value=opening_bv,
+        actual_continuation_date=actual_continuation_date,
         expected_total_units=expected_total_units,
         work_unit=work_unit,
         allow_historical_start=allow_historical,
@@ -804,12 +848,26 @@ def _profile_spec(*, asset, finance_data, profile_data, policy):
             salvage_rate=spec.salvage_rate,
             salvage_amount=spec.salvage_amount,
         )
-        start_date = domain.resolve_start_date(
-            commissioning_date=spec.commissioning_date,
-            start_rule=spec.start_rule,
-            specified_start=spec.specified_start,
-            allow_historical_override=spec.allow_historical_start,
+        start_date = resolved_start
+        natural_end_date = domain.calculate_life_end(
+            start_date=start_date, useful_life_months=useful_life
         )
+        if actual_continuation_date < start_date:
+            raise ValidationError(
+                {"actual_continuation_date": "实际接续日不得早于原折旧起算日。"}
+            )
+        if actual_continuation_date > natural_end_date:
+            raise ValidationError(
+                {"actual_continuation_date": "实际接续日不得晚于原预计寿命终点。"}
+            )
+        if actual_continuation_date == natural_end_date and opening_bv > salvage:
+            raise ValidationError(
+                {
+                    "actual_continuation_date": (
+                        "实际接续日已到预计寿命终点，但账面价值尚未降至残值。"
+                    )
+                }
+            )
         if method == "units_of_production":
             expected = _decimal(
                 spec.expected_total_units,
@@ -830,24 +888,31 @@ def _profile_spec(*, asset, finance_data, profile_data, policy):
                 field_name="depreciable_amount",
             ),
             "start_date": start_date,
-            "natural_end_date": domain.calculate_life_end(
-                start_date=start_date, useful_life_months=useful_life
-            ),
+            "actual_continuation_date": actual_continuation_date,
+            "natural_end_date": natural_end_date,
             "lines": (),
             "requires_period_input": (
                 "work_usage" if method == "units_of_production" else "manual_amount"
             ),
         }
         resolved_start = start_date
+        resolved_continuation = actual_continuation_date
     else:
         result = domain.generate_schedule(spec)
         resolved_start = result.start_date
+        resolved_continuation = result.actual_continuation_date
+    effective_from = values.get("effective_from", resolved_continuation)
+    if effective_from != resolved_continuation:
+        raise ValidationError(
+            {"effective_from": "首版 Profile 生效日必须等于实际接续日。"}
+        )
     resolved = {
         "method": spec.method,
         "posting_period": spec.posting_period,
         "start_rule": spec.start_rule,
         "stop_rule": values.get("stop_rule", policy.stop_rule),
         "start_date": resolved_start,
+        "actual_continuation_date": resolved_continuation,
         "useful_life_months": useful_life,
         "salvage_mode": spec.salvage_mode,
         "salvage_rate": spec.salvage_rate,
@@ -858,7 +923,7 @@ def _profile_spec(*, asset, finance_data, profile_data, policy):
         "expected_total_units": spec.expected_total_units,
         "work_unit": str(spec.work_unit or "") if method == "units_of_production" else "",
         "annual_posting_month": spec.annual_posting_month,
-        "effective_from": values.get("effective_from", resolved_start),
+        "effective_from": effective_from,
         "effective_to": values.get("effective_to"),
         "change_reason": values.get("change_reason", ""),
     }
@@ -1043,6 +1108,8 @@ def _create_profile_and_schedule(
     profile.start_rule = resolved["start_rule"]
     profile.stop_rule = resolved["stop_rule"]
     profile.start_date = resolved["start_date"]
+    profile.actual_continuation_date = resolved["actual_continuation_date"]
+    profile.actual_continuation_review_required = False
     profile.useful_life_months = resolved["useful_life_months"]
     profile.salvage_mode = resolved["salvage_mode"]
     profile.salvage_rate = resolved["salvage_rate"]
@@ -1113,6 +1180,7 @@ def clone_asset_depreciation_profile(
     profile.asset = asset
     profile.company = company
     finance = Finance.objects.select_for_update().get(asset=asset, company=company)
+    _require_profile_continuation_reviewed(profile)
     if profile.status not in {"active", "suspended"}:
         raise ValidationError("只有当前 active/suspended Profile 可以克隆新版本。")
     effective_from = _business_date(effective_from, field_name="effective_from")
@@ -1150,6 +1218,7 @@ def clone_asset_depreciation_profile(
         "opening_actual_accumulated_depreciation",
         "opening_impairment",
         "start_date",
+        "actual_continuation_date",
         "specified_start",
         "effective_from",
         "effective_to",
@@ -1219,6 +1288,7 @@ def clone_asset_depreciation_profile(
         "start_rule": profile.start_rule,
         "stop_rule": profile.stop_rule,
         "start_date": profile.start_date,
+        "actual_continuation_date": effective_from,
         "useful_life_months": remaining_life,
         "salvage_mode": profile.salvage_mode,
         "salvage_rate": profile.salvage_rate,
@@ -1289,6 +1359,102 @@ def clone_asset_depreciation_profile(
     return new_profile
 
 
+@transaction.atomic
+def review_profile_actual_continuation_date(
+    *, actor, profile, actual_continuation_date, reason, request=None
+):
+    require_manage_finance(actor)
+    models = _models()
+    Profile = models["AssetDepreciationProfile"]
+    Company = models["Company"]
+    Asset = models["Asset"]
+    Finance = models["AssetFinance"]
+    Entry = models["DepreciationEntry"]
+    Item = models["DepreciationBatchItem"]
+    identity = Profile.objects.values("company_id", "asset_id").get(pk=profile.pk)
+    company = Company.objects.select_for_update().get(pk=identity["company_id"])
+    _require_current_company(company)
+    asset = _for_update_self(Asset.objects.all()).get(
+        pk=identity["asset_id"], company=company
+    )
+    profile = _for_update_self(Profile.objects.all()).get(
+        pk=profile.pk, company=company, asset=asset
+    )
+    finance = Finance.objects.select_for_update().get(asset=asset, company=company)
+    if (
+        not profile.actual_continuation_review_required
+        or profile.actual_continuation_date is not None
+    ):
+        raise ValidationError("该 Profile 的实际接续日已经完成复核。")
+    continuation = _business_date(
+        actual_continuation_date, field_name="actual_continuation_date"
+    )
+    if continuation < profile.start_date:
+        raise ValidationError(
+            {"actual_continuation_date": "实际接续日不得早于原折旧起算日。"}
+        )
+    natural_end = _domain().calculate_life_end(
+        start_date=profile.start_date,
+        useful_life_months=profile.useful_life_months,
+    )
+    if continuation > natural_end:
+        raise ValidationError(
+            {"actual_continuation_date": "实际接续日不得晚于原预计寿命终点。"}
+        )
+    salvage = _calculate_profile_salvage(profile, finance.original_cost)
+    if continuation == natural_end and profile.opening_book_value > salvage:
+        raise ValidationError(
+            {
+                "actual_continuation_date": (
+                    "实际接续日已到预计寿命终点，但账面价值尚未降至残值。"
+                )
+            }
+        )
+    prior_batch_items = _for_update_self(
+        Item.objects.filter(
+            asset=asset,
+            batch__status__in=("confirmed", "reversed"),
+            batch__period_start__lt=continuation,
+        )
+    )
+    prior_batch_entries = _for_update_self(
+        Entry.objects.filter(
+            asset=asset,
+            source_type="batch",
+            batch_item__batch__status__in=("confirmed", "reversed"),
+            period_start__lt=continuation,
+        )
+    )
+    if prior_batch_items.exists() or prior_batch_entries.exists():
+        raise ValidationError(
+            "存在起始早于实际接续日的已确认或已冲销折旧期间；"
+            "请先按完整历史更正方案处理后再复核。"
+        )
+    reason = _required_reason(reason)
+    profile.actual_continuation_date = continuation
+    profile.actual_continuation_review_required = False
+    _save(
+        profile,
+        update_fields=(
+            "actual_continuation_date",
+            "actual_continuation_review_required",
+        ),
+    )
+    _audit(
+        actor=actor,
+        action="depreciation_profile_continuation_review",
+        instance=profile,
+        old={"actual_continuation_date": None, "review_required": True},
+        new={
+            "actual_continuation_date": continuation,
+            "review_required": False,
+            "reason": reason,
+        },
+        request=request,
+    )
+    return profile
+
+
 def _create_opening_effects(*, actor, asset, finance, profile, resolved):
     models = _models()
     Entry = models["DepreciationEntry"]
@@ -1300,12 +1466,12 @@ def _create_opening_effects(*, actor, asset, finance, profile, resolved):
             company=asset.company,
             asset=asset,
             depreciation_profile=profile,
-            entry_date=profile.effective_from,
-            period_start=profile.effective_from,
+            entry_date=profile.actual_continuation_date,
+            period_start=profile.actual_continuation_date,
             # Opening is a point-in-time carry-forward.  Entry periods are
             # nevertheless represented as non-empty half-open intervals so
             # they satisfy the common immutable ledger period invariant.
-            period_end=profile.effective_from + timedelta(days=1),
+            period_end=profile.actual_continuation_date + timedelta(days=1),
             source_type="opening",
             opening_profile=profile,
             amount=opening_ad,
@@ -1319,7 +1485,7 @@ def _create_opening_effects(*, actor, asset, finance, profile, resolved):
             company=asset.company,
             asset=asset,
             adjustment_type="opening_impairment",
-            effective_date=profile.effective_from,
+            effective_date=profile.actual_continuation_date,
             amount=opening_impairment,
             old_values_json={"impairment": "0.00"},
             new_values_json={"impairment": str(opening_impairment)},
@@ -1487,9 +1653,14 @@ def confirm_asset_finance(
             raise ValidationError({"fixed_asset_category": "固定资产必须选择同公司启用的会计分类。"})
         if values.get("capitalization_date") is None or asset.commissioning_date is None:
             raise ValidationError("固定资产必须填写资本化日期和达到可使用状态日期。")
-        requested_policy = (profile_data or {}).get("depreciation_policy") or (profile_data or {}).get("depreciation_policy_id")
-        policy = resolve_depreciation_policy(asset=asset, effective_date=(profile_data or {}).get("effective_from") or target_date, requested_policy=requested_policy, lock=True)
-        _, result, resolved = _profile_spec(asset=asset, finance_data={**values, "fixed_asset_category": fixed_category}, profile_data=profile_data or {}, policy=policy)
+        profile_values = dict(profile_data or {})
+        if imported_profile_drafts and "actual_continuation_date" not in profile_values:
+            profile_values["actual_continuation_date"] = imported_profile_drafts[
+                0
+            ].actual_continuation_date
+        requested_policy = profile_values.get("depreciation_policy") or profile_values.get("depreciation_policy_id")
+        policy = resolve_depreciation_policy(asset=asset, effective_date=profile_values.get("effective_from") or target_date, requested_policy=requested_policy, lock=True)
+        _, result, resolved = _profile_spec(asset=asset, finance_data={**values, "fixed_asset_category": fixed_category}, profile_data=profile_values, policy=policy)
     else:
         if fixed_category is not None:
             raise ValidationError({"fixed_asset_category": "受控非固定资产不得填写固定资产类别。"})
@@ -1612,13 +1783,15 @@ def record_work_usage(*, actor, profile, period_start, period_end, current_units
     )
     profile.company = company
     profile.asset = asset
+    _require_profile_continuation_reviewed(profile)
     period_start = _business_date(period_start, field_name="period_start")
     period_end = _business_date(period_end, field_name="period_end")
     applicable = (
         _for_update_self(Profile.objects.all())
         .filter(
             asset=profile.asset,
-            effective_from__lte=period_start,
+            effective_from__lt=period_end,
+            actual_continuation_date__lt=period_end,
         )
         .filter(Q(effective_to__isnull=True) | Q(effective_to__gte=period_start))
         .order_by("-version")
@@ -1632,10 +1805,7 @@ def record_work_usage(*, actor, profile, period_start, period_end, current_units
         raise ValidationError({"work_unit": "工作量单位必须与 Profile 一致。"})
     if period_end <= period_start:
         raise ValidationError({"period_end": "工作量期间必须是非空半开区间。"})
-    if (
-        profile.posting_period == "monthly"
-        and (period_start.day != 1 or period_end != _add_months(period_start, 1))
-    ):
+    if period_start.day != 1 or period_end != _add_months(period_start, 1):
         raise ValidationError("月度工作量必须对应完整自然月。")
     if _for_update_self(profile.work_usages.all()).filter(
         period_start__lt=period_end, period_end__gt=period_start
@@ -1655,6 +1825,16 @@ def record_work_usage(*, actor, profile, period_start, period_end, current_units
     if closing > profile.expected_total_units:
         units = max(profile.expected_total_units - opening, Decimal("0"))
         closing = opening + units
+    following = _for_update_self(Usage.objects.filter(
+        depreciation_profile=profile, period_start__gte=period_end
+    )).order_by("period_start", "period_end", "pk").first()
+    if (
+        following is not None
+        and following.opening_accumulated_units != closing
+    ):
+        raise ValidationError(
+            "不得倒序插入会使后续累计工作量断链或重复计算的记录。"
+        )
     usage = Usage(
         company=profile.company,
         asset=profile.asset,
@@ -1763,6 +1943,11 @@ def _balances_before(asset, cutoff_date, *, finance=None, lock=False):
     )
 
 
+def _batch_balance_as_of(profile, period_start):
+    _require_profile_continuation_reviewed(profile)
+    return max(period_start, profile.actual_continuation_date)
+
+
 def _next_unconfirmed_profile_month(*, asset, profile, lock=False):
     """Return the only allowed prospective accounting-estimate boundary."""
 
@@ -1828,9 +2013,9 @@ def _unimpaired_book_value_ceiling(
                     original_cost=boundary_cost,
                     method=profile.method,
                     posting_period=profile.posting_period,
-                    commissioning_date=profile.effective_from,
+                    commissioning_date=profile.start_date,
                     start_rule="specified_date",
-                    specified_start=profile.effective_from,
+                    specified_start=profile.start_date,
                     useful_life_months=profile.useful_life_months,
                     salvage_mode=profile.salvage_mode,
                     salvage_rate=profile.salvage_rate,
@@ -1839,6 +2024,7 @@ def _unimpaired_book_value_ceiling(
                     opening_actual_accumulated_depreciation=boundary_ad,
                     opening_impairment=ZERO_MONEY,
                     opening_book_value=opening_book,
+                    actual_continuation_date=profile.actual_continuation_date,
                     allow_historical_start=True,
                 )
             )
@@ -1907,33 +2093,71 @@ def _event_eligibility(profile, events, *, through_date):
     return tuple(suspensions), stop_date
 
 
+def _batch_work_usages(
+    *, Usage, profile, period_start, period_end, lock=False
+):
+    accounting_window_start = (
+        _add_months(period_end, -12)
+        if profile.posting_period == "yearly"
+        else period_start
+    )
+    if profile.posting_period == "yearly":
+        window_start = max(
+            accounting_window_start, profile.actual_continuation_date
+        )
+        queryset = Usage.objects.filter(
+            depreciation_profile=profile,
+            period_start__lt=period_end,
+            period_end__gt=window_start,
+            period_end__lte=period_end,
+        )
+    else:
+        queryset = Usage.objects.filter(
+            depreciation_profile=profile,
+            period_start=period_start,
+            period_end=period_end,
+        )
+    queryset = queryset.order_by("period_start", "period_end", "pk")
+    if lock:
+        queryset = _for_update_self(queryset)
+    usages = list(queryset)
+    if any(
+        usage.period_start.day != 1
+        or usage.period_end != _add_months(usage.period_start, 1)
+        for usage in usages
+    ):
+        raise ValidationError("工作量必须对应年度计提窗口内的完整自然月。")
+    return usages
+
+
 def _batch_item_source_snapshot(
-    *, profile, period_start, period_end, usage=None, finance=None, lock=False
+    *, profile, period_start, period_end, usages=(), finance=None, lock=False
 ):
     Adjustment = _models()["AssetValueAdjustment"]
+    balance_as_of = _batch_balance_as_of(profile, period_start)
     events = _profile_events_snapshot(profile, lock=lock)
     adjustments = Adjustment.objects.filter(
         asset=profile.asset,
         status__in=("confirmed", "reversed"),
-        effective_date__lte=period_start,
+        effective_date__lte=balance_as_of,
     ).order_by("effective_date", "created_at", "id")
     if lock:
         adjustments = _for_update_self(adjustments)
     entries = _models()["DepreciationEntry"].objects.filter(
         asset=profile.asset
     ).filter(
-        Q(source_type="batch", period_end__lte=period_start)
-        | Q(source_type="opening", entry_date__lte=period_start)
+        Q(source_type="batch", period_end__lte=balance_as_of)
+        | Q(source_type="opening", entry_date__lte=balance_as_of)
         | Q(
             source_type="adjustment",
-            value_adjustment__effective_date__lte=period_start,
+            value_adjustment__effective_date__lte=balance_as_of,
         )
     ).order_by("period_end", "created_at", "id")
     if lock:
         entries = _for_update_self(entries)
     cutoff_cost, cutoff_impairment, cutoff_ad, cutoff_bv = _balances_before(
         profile.asset,
-        period_start,
+        balance_as_of,
         finance=finance or profile.asset.finance,
         lock=lock,
     )
@@ -1946,6 +2170,7 @@ def _batch_item_source_snapshot(
             "effective_from": profile.effective_from,
             "effective_to": profile.effective_to,
             "method": profile.method,
+            "actual_continuation_date": profile.actual_continuation_date,
         },
         "events": events,
         "adjustments": [
@@ -1973,16 +2198,18 @@ def _batch_item_source_snapshot(
             "accumulated_depreciation": cutoff_ad,
             "book_value": cutoff_bv,
         },
-        "usage": (
+        "usages": [
             {
                 "id": str(usage.pk),
+                "period_start": usage.period_start,
+                "period_end": usage.period_end,
                 "current_units": usage.current_units,
                 "closing_units": usage.closing_accumulated_units,
                 "entered_at": usage.entered_at,
             }
-            if usage is not None
-            else None
-        ),
+            for usage in usages
+        ],
+        "balance_as_of": balance_as_of,
         "period_start": period_start,
         "period_end": period_end,
     }
@@ -2038,9 +2265,11 @@ def generate_depreciation_batch(*, actor, company, period_start, period_end, ide
         .filter(Q(effective_to__isnull=True) | Q(effective_to__gte=period_start))
     )
     for profile in profiles:
+        _require_profile_continuation_reviewed(profile)
+        balance_as_of = _batch_balance_as_of(profile, period_start)
         cutoff_cost, cutoff_impairment, cutoff_ad, cutoff_book = _balances_before(
             profile.asset,
-            period_start,
+            balance_as_of,
             finance=profile.asset.finance,
             lock=True,
         )
@@ -2057,12 +2286,18 @@ def generate_depreciation_batch(*, actor, company, period_start, period_end, ide
             value for value in (natural_end, stop_date, period_end) if value is not None
         )
         active_intervals = _domain().active_intervals(
-            start_date=profile.start_date,
+            start_date=profile.actual_continuation_date,
             end_date=eligibility_end,
             suspensions=suspensions,
         )
+        eligibility_period_start = (
+            _add_months(period_end, -12)
+            if profile.posting_period == "yearly"
+            else period_start
+        )
         period_fraction = _domain().eligible_fraction(
-            _domain().Period(period_start, period_end), active_intervals
+            _domain().Period(eligibility_period_start, period_end),
+            active_intervals,
         )
         schedule = Schedule.objects.filter(
             depreciation_profile=profile,
@@ -2077,7 +2312,7 @@ def generate_depreciation_batch(*, actor, company, period_start, period_end, ide
         raw = Decimal("0")
         usage_units = None
         manual_amount = manual_reason = manual_by = manual_at = None
-        usage = None
+        usages = []
         if period_fraction == 0:
             status = "skipped"
             skip_reason = "折旧事件/寿命规则下当期无资格"
@@ -2100,26 +2335,33 @@ def generate_depreciation_batch(*, actor, company, period_start, period_end, ide
                 planned = manual_amount
                 raw = manual_amount
         elif profile.method == "units_of_production":
-            usage = Usage.objects.filter(depreciation_profile=profile, period_start=period_start, period_end=period_end).first()
-            if usage is None:
+            usages = _batch_work_usages(
+                Usage=Usage,
+                profile=profile,
+                period_start=period_start,
+                period_end=period_end,
+            )
+            if not usages:
                 status, error = "error", "缺少财务明确录入的当期工作量"
             else:
-                usage_units = usage.current_units
+                usage_units = sum(
+                    (usage.current_units for usage in usages), Decimal("0")
+                )
                 original_cost = cutoff_cost
                 floor = _calculate_profile_salvage(profile, original_cost)
                 base = max(original_cost - floor, ZERO_MONEY)
                 raw = _domain().units_of_production_raw(
                     depreciable_amount=base,
                     expected_total_units=profile.expected_total_units,
-                    current_units=usage.current_units,
+                    current_units=usage_units,
                 )
                 # The final total-unit period consumes the exact remaining DB;
                 # all other periods follow two-decimal HALF_UP posting.
-                if usage.closing_accumulated_units >= profile.expected_total_units:
+                if usages[-1].closing_accumulated_units >= profile.expected_total_units:
                     planned = None  # resolved from current DB below
                 else:
                     planned = _domain().post_depreciation(
-                        calculated_unrounded=raw * period_fraction,
+                        calculated_unrounded=raw,
                         depreciable_balance_before=base,
                     )
         else:
@@ -2148,6 +2390,7 @@ def generate_depreciation_batch(*, actor, company, period_start, period_end, ide
                 opening_actual_accumulated_depreciation=profile.opening_actual_accumulated_depreciation,
                 opening_impairment=profile_opening_impairment,
                 opening_book_value=profile.opening_book_value,
+                actual_continuation_date=profile.actual_continuation_date,
                 suspensions=suspensions,
                 stop_date=stop_date,
             )
@@ -2182,7 +2425,7 @@ def generate_depreciation_batch(*, actor, company, period_start, period_end, ide
             profile=profile,
             period_start=period_start,
             period_end=period_end,
-            usage=usage,
+            usages=usages,
         )
         Item.objects.create(
             company=company,
@@ -2324,18 +2567,21 @@ def confirm_depreciation_batch(*, actor, batch, reason=None, request=None):
         raise ValidationError("存在后续已确认月份，不得倒序补记并破坏余额链；请先倒序冲销。")
     Usage = models["AssetWorkUsage"]
     for item in items:
-        usage = None
+        _require_profile_continuation_reviewed(item.depreciation_profile)
+        usages = []
         if item.calculation_method == "units_of_production":
-            usage = Usage.objects.select_for_update().filter(
-                depreciation_profile=item.depreciation_profile,
+            usages = _batch_work_usages(
+                Usage=Usage,
+                profile=item.depreciation_profile,
                 period_start=batch.period_start,
                 period_end=batch.period_end,
-            ).first()
+                lock=True,
+            )
         _snapshot, current_hash = _batch_item_source_snapshot(
             profile=item.depreciation_profile,
             period_start=batch.period_start,
             period_end=batch.period_end,
-            usage=usage,
+            usages=usages,
             finance=locked_finances.get(item.asset_id),
             lock=True,
         )
@@ -2350,9 +2596,12 @@ def confirm_depreciation_batch(*, actor, batch, reason=None, request=None):
     for item in items:
         if item.status != "ready":
             continue
+        balance_as_of = _batch_balance_as_of(
+            item.depreciation_profile, batch.period_start
+        )
         original, impairment, accumulated_before, _opening = _balances_before(
             item.asset,
-            batch.period_start,
+            balance_as_of,
             finance=locked_finances[item.asset_id],
             lock=True,
         )
@@ -2392,6 +2641,7 @@ def reverse_depreciation_batch(*, actor, batch, reason, idempotency_key, request
     Batch = models["DepreciationBatch"]
     Item = models["DepreciationBatchItem"]
     Entry = models["DepreciationEntry"]
+    Profile = models["AssetDepreciationProfile"]
     Company = models["Company"]
     source_id = batch.pk
     company_id = Batch.objects.values_list("company_id", flat=True).get(pk=source_id)
@@ -2429,6 +2679,18 @@ def reverse_depreciation_batch(*, actor, batch, reason, idempotency_key, request
         batch_item__batch__period_start__gt=batch.period_start,
     ).exists():
         raise ValidationError("存在依赖该期期初余额的后续已确认月份；必须从最后期向前按顺序冲销。")
+    source_versions = batch.items.values_list(
+        "asset_id", "depreciation_profile__version"
+    )
+    later_profile_scope = Q(pk__isnull=True)
+    for asset_id, version in source_versions:
+        later_profile_scope |= Q(asset_id=asset_id, version__gt=version)
+    if _for_update_self(
+        Profile.objects.filter(later_profile_scope, effective_from__gte=batch.period_end)
+    ).exists():
+        raise ValidationError(
+            "存在依赖该期账面余额建立的后续折旧 Profile；必须先撤销后续版本或按完整更正方案处理。"
+        )
     reversal = Batch.objects.create(
         company=batch.company,
         period_start=batch.period_start,
@@ -2528,6 +2790,7 @@ def create_profile_event(*, actor, profile, event_type, effective_date, reason, 
     )
     profile.company = company
     profile.asset = asset
+    _require_profile_continuation_reviewed(profile)
     latest = _for_update_self(Event.objects.filter(
         depreciation_profile=profile
     )).order_by("-effective_date", "-created_at").first()
@@ -2968,8 +3231,9 @@ def run_theoretical_depreciation(*, actor, asset, as_of_date, parameters, idempo
         idempotency_key=idempotency_key,
     )
     accumulated = ZERO_MONEY
+    cutoff_exclusive = as_of_date + timedelta(days=1)
     for schedule in result.lines:
-        if schedule.period_start > as_of_date:
+        if schedule.period_end > cutoff_exclusive:
             break
         accumulated += schedule.planned_amount
         Line.objects.create(

@@ -6,7 +6,6 @@ from django.core.exceptions import PermissionDenied
 from django.db.models import Q
 
 from apps.masterdata.permissions import resolve_department_ids, role_names_for
-from apps.offboarding.domain import UNRESOLVED_ITEM_RESOLUTIONS
 
 
 GLOBAL_CLEARANCE_VIEW_ROLES = frozenset(
@@ -53,8 +52,7 @@ def scoped_clearances(user, company, queryset=None):
         filters |= Q(employee=employee)
     if "warehouse" in roles:
         filters |= (
-            Q(items__resolution__in=UNRESOLVED_ITEM_RESOLUTIONS)
-            | Q(items__movement__operated_by=user)
+            Q(items__movement__operated_by=user)
             | Q(items__movement__to_employee__user=user)
             | Q(items__source_loan__received_by_employee__user=user)
         )
@@ -84,8 +82,7 @@ def scoped_clearance_items(user, company, queryset=None):
         filters |= Q(clearance__employee=employee)
     if "warehouse" in roles:
         filters |= (
-            Q(resolution__in=UNRESOLVED_ITEM_RESOLUTIONS)
-            | Q(movement__operated_by=user)
+            Q(movement__operated_by=user)
             | Q(movement__to_employee__user=user)
             | Q(source_loan__received_by_employee__user=user)
         )

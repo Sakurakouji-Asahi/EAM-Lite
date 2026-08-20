@@ -12,6 +12,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.db import IntegrityError, connection, transaction
+from django.db.models import Case, When
 from django.db.models.query import QuerySet
 from django.utils import timezone
 from django.utils.text import get_valid_filename
@@ -429,11 +430,44 @@ def complete_maintenance(
         raise ValidationError("该计划到期实例已有确认完成记录。")
     today = business_date()
     is_current_instance = scheduled == plan.next_maintenance_date
-    is_voided_rebuild = MaintenanceRecord._base_manager.filter(
+    is_voided_rebuild = MaintenanceRecord._base_manager.select_for_update().filter(
         maintenance_plan=plan, scheduled_date=scheduled, status="voided"
     ).exists()
     if not is_current_instance and not is_voided_rebuild:
         raise ValidationError({"scheduled_date": "计划日期不是当前到期实例，也没有可重建的作废历史。"})
+    if is_voided_rebuild:
+        historical_records = (
+            MaintenanceRecord._base_manager.select_for_update()
+            .filter(maintenance_plan=plan)
+            .annotate(
+                boundary_priority=Case(
+                    When(status="confirmed", then=0), default=1
+                )
+            )
+        )
+        previous = historical_records.filter(scheduled_date__lt=scheduled).order_by(
+            "-scheduled_date", "boundary_priority", "-created_at", "-pk"
+        ).first()
+        following = historical_records.filter(scheduled_date__gt=scheduled).order_by(
+            "scheduled_date", "boundary_priority", "-created_at", "-pk"
+        ).first()
+        if previous is not None and completed <= previous.completed_date:
+            raise ValidationError(
+                {"completed_date": "重建记录的实际完成日期必须晚于前一保养实例的历史完成日期。"}
+            )
+        if following is not None and completed >= following.completed_date:
+            raise ValidationError(
+                {"completed_date": "重建记录的实际完成日期必须早于后一保养实例的历史完成日期。"}
+            )
+    latest = _latest_valid_record(plan)
+    if (
+        is_current_instance
+        and latest is not None
+        and completed <= latest.completed_date
+    ):
+        raise ValidationError({"completed_date": "实际完成日期必须晚于上次有效保养。"})
+    if add_calendar_cycle(completed, plan.cycle_value, plan.cycle_unit) <= scheduled:
+        raise ValidationError({"completed_date": "实际完成日期必须使下次保养日晚于当前计划实例。"})
     if completed > today:
         raise ValidationError({"completed_date": "实际完成日期不得晚于当前上海业务日。"})
     if plan.status != "active":

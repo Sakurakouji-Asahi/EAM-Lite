@@ -25,6 +25,7 @@ from apps.finance.forms import (
     FixedAssetWarningAmountForm,
     IdempotentReasonForm,
     PolicyActionForm,
+    ProfileContinuationReviewForm,
     ProfileEventForm,
     ProfileVersionForm,
     ReasonForm,
@@ -58,6 +59,7 @@ from apps.finance.services import (
     generate_depreciation_batch,
     preview_asset_depreciation,
     record_work_usage,
+    review_profile_actual_continuation_date,
     retire_depreciation_policy,
     reverse_depreciation_batch,
     reverse_value_adjustment,
@@ -148,6 +150,7 @@ def _finance_initial(asset):
                 "start_rule": draft_profile.start_rule,
                 "stop_rule": draft_profile.stop_rule,
                 "specified_start_date": draft_profile.start_date,
+                "actual_continuation_date": draft_profile.actual_continuation_date,
                 "expected_total_units": draft_profile.expected_total_units,
                 "work_unit": draft_profile.work_unit,
                 "annual_posting_month": draft_profile.annual_posting_month,
@@ -697,6 +700,41 @@ def _profile_for_asset(company, pk):
     if len(profiles) != 1:
         raise ValidationError("当前业务日存在多个生效 Profile，请停止并复核数据。")
     return profiles[0]
+
+
+@login_required
+def profile_continuation_review(request, profile_pk):
+    require_manage_finance(request.user)
+    company = _company()
+    profile = get_object_or_404(
+        AssetDepreciationProfile.objects.select_related("asset"),
+        pk=profile_pk,
+        company=company,
+        asset__in=scoped_finance_assets(request.user, company),
+    )
+    if request.method not in {"GET", "POST"}:
+        return HttpResponseNotAllowed(["GET", "POST"])
+    form = ProfileContinuationReviewForm(request.POST or None, actor=request.user)
+    if request.method == "POST" and form.is_valid():
+        values = form.cleaned_data.copy()
+        values.pop("confirm", None)
+        try:
+            review_profile_actual_continuation_date(
+                actor=request.user,
+                profile=profile,
+                request=request,
+                **values,
+            )
+        except ValidationError as exc:
+            _service_error(form, exc)
+        else:
+            messages.success(request, "实际接续日已完成一次性财务复核。")
+            return redirect("finance:asset-finance-detail", pk=profile.asset_id)
+    return render(
+        request,
+        "finance/form.html",
+        {"form": form, "title": f"复核 Profile v{profile.version} 实际接续日"},
+    )
 
 
 @login_required

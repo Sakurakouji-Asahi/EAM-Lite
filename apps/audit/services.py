@@ -16,7 +16,7 @@ PRE_INITIALIZATION_ACTIONS = frozenset(
         "auth.pre_initialization",
     }
 )
-_SENSITIVE_NAME_PARTS = (
+SENSITIVE_AUDIT_FIELD_PARTS = (
     "password",
     "passwd",
     "passphrase",
@@ -29,6 +29,12 @@ _SENSITIVE_NAME_PARTS = (
     "api_key",
     "apikey",
     "private_key",
+    "file_content",
+    "file_contents",
+    "content_bytes",
+    "binary_content",
+    "file_blob",
+    "file_body",
 )
 
 
@@ -38,7 +44,7 @@ def _normalize_field_name(value):
 
 def _is_sensitive_field(name):
     normalized = _normalize_field_name(name)
-    return any(part in normalized for part in _SENSITIVE_NAME_PARTS)
+    return any(part in normalized for part in SENSITIVE_AUDIT_FIELD_PARTS)
 
 
 def sanitize_audit_data(value, *, excluded_fields=None):

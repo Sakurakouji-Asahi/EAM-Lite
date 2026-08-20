@@ -116,9 +116,7 @@ def test_chinese_transfer_form_post_updates_asset_and_redirects(client):
             "to_department": department.pk,
             "to_responsible_employee": employee.pk,
             "to_location": location.pk,
-            "effective_at": (
-                timezone.localtime() - timedelta(minutes=1)
-            ).strftime("%Y-%m-%dT%H:%M"),
+            "effective_at": timezone.localtime().strftime("%Y-%m-%dT%H:%M"),
             "reason": "生产线调整",
             "remark": "中文表单验收",
             "idempotency_key": "S7HTTPMOVE-key",

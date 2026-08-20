@@ -6,31 +6,10 @@ import json
 from collections.abc import Mapping
 
 from apps.audit.permissions import FINANCE_AUDIT_OBJECT_TYPES, scoped_audit_logs
-from apps.audit.services import REDACTED
+from apps.audit.services import REDACTED, SENSITIVE_AUDIT_FIELD_PARTS
 from apps.core.logging import redact_log_text
 from apps.masterdata.permissions import role_names_for
 
-
-_ALWAYS_REDACT_PARTS = (
-    "password",
-    "passwd",
-    "passphrase",
-    "secret",
-    "token",
-    "authorization",
-    "cookie",
-    "session",
-    "csrf",
-    "api_key",
-    "apikey",
-    "private_key",
-    "file_content",
-    "file_contents",
-    "content_bytes",
-    "binary_content",
-    "file_blob",
-    "file_body",
-)
 
 _FINANCE_FIELD_PARTS = (
     "accounting_treatment",
@@ -77,7 +56,7 @@ def _redact_nested(value, *, can_view_finance):
             return {"已脱敏": REDACTED}
         projected = {}
         for key, item in value.items():
-            if _contains_part(key, _ALWAYS_REDACT_PARTS) or (
+            if _contains_part(key, SENSITIVE_AUDIT_FIELD_PARTS) or (
                 not can_view_finance and _contains_part(key, _FINANCE_FIELD_PARTS)
             ):
                 projected[str(key)] = REDACTED

@@ -10,10 +10,10 @@ from django.utils import timezone
 
 from apps.assets.lifecycle_services import archive_asset
 from apps.audit.models import AuditLog
-from apps.offboarding.services import initiate_clearance, return_clearance_item
+from apps.offboarding.services import initiate_clearance
 from apps.maintenance.services import create_maintenance_plan
 from apps.reports.services import generate_report_export
-from tests.test_sprint10_support import additional_employee, formal_asset, offboarding_context
+from tests.test_sprint10_support import formal_asset, offboarding_context
 from tests.test_sprint3_support import (
     complete_initialization,
     grant_scope,
@@ -440,12 +440,11 @@ def test_export_detail_and_download_recheck_department_scope(client, settings, t
     _assert_no_store(revoked_download)
 
 
-def test_warehouse_export_is_revoked_when_clearance_item_scope_ends(
+def test_warehouse_export_excludes_unrelated_pending_clearance_item(
     client, settings, tmp_path
 ):
     settings.MEDIA_ROOT = tmp_path
     context = offboarding_context("S11HTTPWH")
-    receiver = additional_employee(context, "S11HTTPWH-R")
     asset, _qr = formal_asset(context, "S11HTTPWH-A")
     clearance = initiate_clearance(
         actor=context["hr"],
@@ -453,13 +452,15 @@ def test_warehouse_export_is_revoked_when_clearance_item_scope_ends(
         idempotency_key="S11HTTPWH-init",
     )
     item = clearance.items.get(asset=asset)
-    export_log, _expected = _completed_export(
+    export_log, expected = _completed_export(
         company=context["company"],
         actor=context["warehouse"],
         report_key="offboarding_unresolved",
         suffix="warehouse-scope",
     )
-    assert export_log.filters_json["_authorized_clearance_item_ids"] == [str(item.pk)]
+    assert item.resolution == "pending"
+    assert export_log.filters_json["_authorized_clearance_item_ids"] == []
+    assert export_log.row_count == 0
     detail_url = reverse("reports:export-detail", args=[export_log.pk])
     download_url = reverse("reports:export-download", args=[export_log.pk])
 
@@ -468,22 +469,4 @@ def test_warehouse_export_is_revoked_when_clearance_item_scope_ends(
     initial_download = client.get(download_url)
     assert initial_download.status_code == 200
     _assert_no_store(initial_download)
-    b"".join(initial_download.streaming_content)
-
-    return_clearance_item(
-        actor=context["finance"],
-        item=item,
-        returned_at=timezone.now(),
-        received_by_employee=receiver,
-        return_department=receiver.department,
-        return_responsible_employee=receiver,
-        return_location=context["location"],
-        return_asset_status="idle",
-        idempotency_key="S11HTTPWH-return",
-    )
-    revoked_detail = client.get(detail_url)
-    revoked_download = client.get(download_url)
-    assert revoked_detail.status_code == 403
-    assert revoked_download.status_code == 403
-    _assert_no_store(revoked_detail)
-    _assert_no_store(revoked_download)
+    assert b"".join(initial_download.streaming_content) == expected

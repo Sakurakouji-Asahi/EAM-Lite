@@ -516,6 +516,7 @@ class ScheduleInput:
     opening_actual_accumulated_depreciation: DecimalInput = ZERO
     opening_impairment: DecimalInput = ZERO
     opening_book_value: DecimalInput | None = None
+    actual_continuation_date: date | None = None
     expected_total_units: DecimalInput | None = None
     work_unit: str | None = None
     allow_historical_start: bool = False
@@ -546,6 +547,7 @@ class ScheduleResult:
     opening_book_value: Decimal
     depreciable_amount: Decimal
     start_date: date
+    actual_continuation_date: date
     natural_end_date: date
     schedule_end_date: date
     lines: tuple[ScheduleLine, ...]
@@ -642,7 +644,11 @@ def actual_balances(**kwargs) -> ActualBalances:
 
 
 def _schedule_periods(
-    *, start_date: date, schedule_end: date, posting_period: str
+    *,
+    start_date: date,
+    schedule_end: date,
+    posting_period: str,
+    annual_posting_month: int | None = None,
 ) -> tuple[Period, ...]:
     if schedule_end <= start_date:
         return ()
@@ -654,13 +660,18 @@ def _schedule_periods(
             periods.append(Period(cursor, following))
             cursor = following
     else:
-        index = 0
-        while True:
-            period = depreciation_year_period(start_date, index)
-            if period.start >= schedule_end:
-                break
-            periods.append(period)
-            index += 1
+        if annual_posting_month is None:
+            raise DepreciationError("yearly 政策必须填写 annual_posting_month。")
+        cutoff = add_months_safe(
+            date(start_date.year, annual_posting_month, 1), 1
+        )
+        if cutoff <= start_date:
+            cutoff = add_months_safe(cutoff, 12)
+        cursor = add_months_safe(cutoff, -12)
+        while cursor < schedule_end:
+            following = add_months_safe(cursor, 12)
+            periods.append(Period(cursor, following))
+            cursor = following
     return tuple(periods)
 
 
@@ -675,6 +686,195 @@ def _last_eligible_index(fractions: Sequence[Decimal]) -> int | None:
         if fractions[index] > ZERO:
             return index
     return None
+
+
+def _yearly_method_allocations(
+    *,
+    periods: Sequence[Period],
+    start_date: date,
+    continuation_date: date,
+    natural_end: date,
+    active: Sequence[Period],
+    suspensions: Sequence[Period],
+    method: str,
+    useful_life_years: int,
+    depreciable_amount: Decimal,
+    opening_book_value: Decimal,
+    salvage_value: Decimal,
+) -> tuple[dict[str, object], ...]:
+    """Split qualification-anchored depreciation-year targets into posting windows."""
+
+    depreciation_years = tuple(
+        Period(
+            start_date
+            if index == 0
+            else calculate_life_end(
+                start_date=start_date,
+                useful_life_months=12 * index,
+                suspensions=suspensions,
+            ),
+            calculate_life_end(
+                start_date=start_date,
+                useful_life_months=12 * (index + 1),
+                suspensions=suspensions,
+            ),
+        )
+        for index in range(useful_life_years)
+    )
+    natural_active = active_intervals(
+        start_date=start_date,
+        end_date=natural_end,
+        suspensions=suspensions,
+    )
+    remaining_active = active_intervals(
+        start_date=continuation_date,
+        end_date=natural_end,
+        suspensions=suspensions,
+    )
+    denominators = [
+        eligible_days(year, natural_active) for year in depreciation_years
+    ]
+    remaining_fractions = [
+        (
+            Decimal(eligible_days(year, remaining_active)) / Decimal(days)
+            if days
+            else ZERO
+        )
+        for year, days in zip(depreciation_years, denominators, strict=True)
+    ]
+    future_years = [
+        index for index, fraction in enumerate(remaining_fractions) if fraction > ZERO
+    ]
+    if not future_years:
+        return tuple(
+            {
+                "raw": ZERO,
+                "posted": ZERO,
+                "method_applied": method,
+                "target_correction": False,
+                "components": [],
+            }
+            for _ in periods
+        )
+    full_raw = [ZERO for _ in depreciation_years]
+    targets = [ZERO for _ in depreciation_years]
+    applied_methods = [method for _ in depreciation_years]
+
+    if method == METHOD_STRAIGHT_LINE:
+        equivalents = sum(remaining_fractions, ZERO)
+        rate = depreciable_amount / equivalents
+        for index in future_years:
+            full_raw[index] = rate
+    elif method == METHOD_SUM_OF_YEARS_DIGITS:
+        denominator = Decimal(useful_life_years * (useful_life_years + 1)) / Decimal(2)
+        weights = [
+            Decimal(useful_life_years - index) / denominator
+            for index in range(useful_life_years)
+        ]
+        remaining_weight = sum(
+            (
+                weights[index] * remaining_fractions[index]
+                for index in future_years
+            ),
+            ZERO,
+        )
+        for index in future_years:
+            full_raw[index] = depreciable_amount * weights[index] / remaining_weight
+    else:
+        remaining_db = depreciable_amount
+        book_value = opening_book_value
+        switched = False
+        for position, index in enumerate(future_years):
+            remaining_equivalents = sum(remaining_fractions[index:], ZERO)
+            candidates = double_declining_candidates(
+                book_value_before=book_value,
+                depreciable_balance_before=remaining_db,
+                useful_life_periods=Decimal(useful_life_years),
+                remaining_useful_periods=remaining_equivalents,
+                already_switched=switched,
+            )
+            switched = candidates.use_straight_line
+            full_raw[index] = candidates.selected_raw
+            applied_methods[index] = (
+                METHOD_STRAIGHT_LINE if switched else METHOD_DOUBLE_DECLINING_BALANCE
+            )
+            target = money(full_raw[index] * remaining_fractions[index])
+            if position == len(future_years) - 1:
+                target = remaining_db
+            target = min(target, remaining_db)
+            targets[index] = target
+            remaining_db = money(remaining_db - target)
+            book_value = money(salvage_value + remaining_db)
+
+    if method != METHOD_DOUBLE_DECLINING_BALANCE:
+        targeted = ZERO
+        for position, index in enumerate(future_years):
+            target = money(full_raw[index] * remaining_fractions[index])
+            if position == len(future_years) - 1:
+                target = money(depreciable_amount - targeted)
+            targets[index] = min(target, money(depreciable_amount - targeted))
+            targeted = money(targeted + targets[index])
+
+    allocations: list[dict[str, object]] = [
+        {
+            "raw": ZERO,
+            "posted": ZERO,
+            "method_applied": method,
+            "target_correction": False,
+            "components": [],
+        }
+        for _ in periods
+    ]
+    for year_index in future_years:
+        year = depreciation_years[year_index]
+        denominator_days = denominators[year_index]
+        period_indexes = [
+            period_index
+            for period_index, period in enumerate(periods)
+            if (_intersection(period, year) is not None)
+            and eligible_days(_intersection(period, year), active) > 0
+        ]
+        fully_covered = (
+            eligible_days(year, active)
+            == eligible_days(year, remaining_active)
+        )
+        posted_for_year = ZERO
+        for position, period_index in enumerate(period_indexes):
+            overlap = _intersection(periods[period_index], year)
+            assert overlap is not None
+            fraction = Decimal(eligible_days(overlap, active)) / Decimal(
+                denominator_days
+            )
+            raw_component = full_raw[year_index] * fraction
+            is_final_component = position == len(period_indexes) - 1 and fully_covered
+            remaining_target = max(targets[year_index] - posted_for_year, ZERO)
+            if is_final_component:
+                posted_component = money(remaining_target)
+            else:
+                posted_component = min(
+                    money(raw_component),
+                    money(remaining_target),
+                )
+            posted_for_year = money(posted_for_year + posted_component)
+            allocation = allocations[period_index]
+            allocation["raw"] = allocation["raw"] + raw_component
+            allocation["posted"] = money(allocation["posted"] + posted_component)
+            allocation["method_applied"] = applied_methods[year_index]
+            allocation["target_correction"] = (
+                allocation["target_correction"] or is_final_component
+            )
+            allocation["components"].append(
+                {
+                    "depreciation_year": year_index + 1,
+                    "eligible_fraction": str(fraction),
+                    "annual_raw": str(full_raw[year_index]),
+                    "annual_target": str(targets[year_index]),
+                    "posted_amount": str(posted_component),
+                    "method_applied": applied_methods[year_index],
+                    "target_correction": is_final_component,
+                }
+            )
+    return tuple(allocations)
 
 
 def _syd_monthly_allocations(
@@ -836,19 +1036,34 @@ def generate_schedule(
         useful_life_months=specification.useful_life_months,
         suspensions=suspensions,
     )
+    continuation_date = specification.actual_continuation_date or start_date
+    continuation_date = _require_date(
+        continuation_date, field_name="实际接续日"
+    )
+    if continuation_date < start_date:
+        raise DepreciationError("实际接续日不得早于原折旧起算日。")
+    if continuation_date > natural_end:
+        raise DepreciationError("实际接续日不得晚于原预计寿命终点。")
+    if (
+        specification.method != METHOD_NO_DEPRECIATION
+        and continuation_date == natural_end
+        and canonical_opening_book > salvage
+    ):
+        raise DepreciationError("实际接续日已到预计寿命终点，但账面价值尚未降至残值。")
     schedule_end = natural_end
     if specification.stop_date is not None:
         stop_date = _require_date(specification.stop_date, field_name="停止生效日")
         schedule_end = min(schedule_end, stop_date)
     active = active_intervals(
-        start_date=start_date,
+        start_date=continuation_date,
         end_date=schedule_end,
         suspensions=suspensions,
     )
     periods = _schedule_periods(
-        start_date=start_date,
+        start_date=continuation_date,
         schedule_end=schedule_end,
         posting_period=specification.posting_period,
+        annual_posting_month=specification.annual_posting_month,
     )
     fractions = [eligible_fraction(period, active) for period in periods]
     last_eligible = _last_eligible_index(fractions)
@@ -899,11 +1114,53 @@ def generate_schedule(
     planned_sum = ZERO
     cumulative_units = ZERO
     ddb_switched = False
+    life_periods = _schedule_periods(
+        start_date=continuation_date,
+        schedule_end=natural_end,
+        posting_period=specification.posting_period,
+        annual_posting_month=specification.annual_posting_month,
+    )
+    life_active = active_intervals(
+        start_date=continuation_date,
+        end_date=natural_end,
+        suspensions=suspensions,
+    )
+    remaining_useful_periods = sum(
+        (eligible_fraction(period, life_active) for period in life_periods), ZERO
+    )
     useful_periods = Decimal(
         specification.useful_life_months
         if specification.posting_period == POSTING_MONTHLY
         else specification.useful_life_months // 12
     )
+    straight_line_periods = (
+        useful_periods
+        if continuation_date == start_date
+        else remaining_useful_periods
+    )
+    yearly_allocations = None
+    if (
+        specification.posting_period == POSTING_YEARLY
+        and specification.method
+        in {
+            METHOD_STRAIGHT_LINE,
+            METHOD_DOUBLE_DECLINING_BALANCE,
+            METHOD_SUM_OF_YEARS_DIGITS,
+        }
+    ):
+        yearly_allocations = _yearly_method_allocations(
+            periods=periods,
+            start_date=start_date,
+            continuation_date=continuation_date,
+            natural_end=natural_end,
+            active=active,
+            suspensions=suspensions,
+            method=specification.method,
+            useful_life_years=useful_years,
+            depreciable_amount=depreciable_amount,
+            opening_book_value=canonical_opening_book,
+            salvage_value=salvage,
+        )
     remaining_fraction_sums = [ZERO for _ in fractions]
     running_fraction = ZERO
     for index in range(len(fractions) - 1, -1, -1):
@@ -927,10 +1184,25 @@ def generate_schedule(
         if fraction == ZERO or remaining_db == ZERO:
             posted = money(ZERO)
             snapshot["skipped"] = "ineligible" if fraction == ZERO else "salvage_floor"
+        elif yearly_allocations is not None:
+            allocation = yearly_allocations[index]
+            raw = allocation["raw"]
+            posted = allocation["posted"]
+            method_applied = allocation["method_applied"]
+            final = completed_natural_life and index == last_eligible
+            if final:
+                posted = remaining_db
+            snapshot.update(
+                {
+                    "annual_components": allocation["components"],
+                    "annual_target_correction": allocation["target_correction"],
+                    "final_period_correction": final,
+                }
+            )
         elif specification.method == METHOD_STRAIGHT_LINE:
             raw = straight_line_raw(
                 depreciable_amount=depreciable_amount,
-                useful_life_periods=useful_periods,
+                useful_life_periods=straight_line_periods,
                 fraction=fraction,
             )
             final = completed_natural_life and index == last_eligible
@@ -1100,6 +1372,7 @@ def generate_schedule(
         opening_book_value=canonical_opening_book,
         depreciable_amount=depreciable_amount,
         start_date=start_date,
+        actual_continuation_date=continuation_date,
         natural_end_date=natural_end,
         schedule_end_date=schedule_end,
         lines=tuple(lines),

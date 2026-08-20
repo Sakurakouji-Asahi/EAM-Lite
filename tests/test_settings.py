@@ -1,10 +1,21 @@
-import pytest
+import runpy
 from pathlib import Path
+
+import pytest
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.db import connection
 
 from config.env import parse_bool, parse_database_engine, read_int_env
+
+
+def _load_settings(monkeypatch, *, debug, qr_base_url):
+    monkeypatch.setenv("SECRET_KEY", "settings-test-secret")
+    monkeypatch.setenv("DEBUG", str(debug).lower())
+    monkeypatch.setenv("ALLOWED_HOSTS", "localhost")
+    monkeypatch.setenv("DB_ENGINE", "sqlite")
+    monkeypatch.setenv("QR_BASE_URL", qr_base_url)
+    return runpy.run_path(Path(__file__).parents[1] / "config" / "settings.py")
 
 
 @pytest.mark.parametrize(
@@ -50,6 +61,25 @@ def test_business_locale_timezone_currency_and_selected_database():
     assert connection.vendor == settings.DATABASE_ENGINE
     assert settings.LOGIN_FAILURE_WINDOW_SECONDS > 0
     assert settings.LOGIN_FAILURE_PAIR_LIMIT > 0
+
+
+def test_qr_base_url_allows_http_in_debug(monkeypatch):
+    loaded = _load_settings(
+        monkeypatch,
+        debug=True,
+        qr_base_url="http://192.168.1.10:8765",
+    )
+
+    assert loaded["QR_BASE_URL"] == "http://192.168.1.10:8765"
+
+
+def test_qr_base_url_rejects_http_outside_debug(monkeypatch):
+    with pytest.raises(ImproperlyConfigured):
+        _load_settings(
+            monkeypatch,
+            debug=False,
+            qr_base_url="http://192.168.1.10:8765",
+        )
 
 
 def test_private_attachment_and_upload_temp_roots_are_separate_from_static():

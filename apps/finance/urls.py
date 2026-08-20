@@ -15,6 +15,11 @@ urlpatterns = [
     path("assets/<uuid:pk>/adjustment/", views.value_adjustment, name="value-adjustment"),
     path("assets/<uuid:pk>/adjustment/<uuid:adjustment_pk>/reverse/", views.value_adjustment_reverse, name="value-adjustment-reverse"),
     path("assets/<uuid:pk>/profile-version/", views.profile_version, name="profile-version"),
+    path(
+        "profiles/<uuid:profile_pk>/continuation-review/",
+        views.profile_continuation_review,
+        name="profile-continuation-review",
+    ),
     path("assets/<uuid:pk>/theoretical/", views.theoretical_run, name="theoretical-run"),
     path("assets/<uuid:pk>/theoretical/<uuid:run_pk>/", views.theoretical_detail, name="theoretical-detail"),
     path("policies/", views.policy_list, name="policy-list"),

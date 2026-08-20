@@ -234,10 +234,11 @@ def _write_tplus_difference_sheet(workbook, dataset):
             current_depreciation, _lookup_formula(f"C{row_number}", f"B{row_number}", "F", len(dataset.asset_rows) + 1), f'=IF(A{row_number}="matched",Q{row_number}-R{row_number},"")',
             "", "",
         ]
+        formula_columns = {1, 6, 7, 9, 10, 12, 13, 15, 16, 18, 19}
         cells = []
         for index, value in enumerate(values, start=1):
             kind = CellKind.IDENTIFIER if index in (2, 3) else CellKind.MONEY if index in range(5, 20) else CellKind.TEXT
-            cell = WriteOnlyCell(ws, value=value if isinstance(value, str) and value.startswith("=") else _safe_text(value) if kind in {CellKind.TEXT, CellKind.IDENTIFIER} else value)
+            cell = WriteOnlyCell(ws, value=value if index in formula_columns else _safe_text(value) if kind in {CellKind.TEXT, CellKind.IDENTIFIER} else value)
             if kind == CellKind.IDENTIFIER:
                 cell.number_format = "@"
             elif kind == CellKind.MONEY:

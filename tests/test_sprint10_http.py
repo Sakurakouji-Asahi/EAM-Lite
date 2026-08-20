@@ -123,23 +123,28 @@ def test_warehouse_http_can_receive_pending_item_and_keeps_history_scope(client)
         context, "S10HWH-W", user=context["warehouse"]
     )
     asset, _ = formal_asset(context, "S10HWH-A")
+    sibling, _ = formal_asset(context, "S10HWH-B")
     clearance = initiate_clearance(
         actor=context["hr"],
         employee=context["employee"],
         idempotency_key="S10HWH-init",
     )
-    item = clearance.items.get()
+    item = clearance.items.get(asset=asset)
     return_url = reverse("offboarding:item-return", args=[clearance.pk, item.pk])
     transfer_url = reverse(
         "offboarding:item-transfer", args=[clearance.pk, item.pk]
     )
 
     client.force_login(context["warehouse"])
-    page = client.get(_detail_url(clearance))
-    assert page.status_code == 200
-    assert return_url in page.content.decode()
-    assert client.get(return_url).status_code == 200
-    assert client.get(transfer_url).status_code == 403
+    listing = client.get(reverse("offboarding:clearance-list"))
+    assert listing.status_code == 200
+    assert not list(listing.context["clearances"])
+    assert client.get(_detail_url(clearance)).status_code == 404
+    return_page = client.get(return_url)
+    assert return_page.status_code == 200
+    assert asset.asset_code in return_page.content.decode()
+    assert sibling.asset_code not in return_page.content.decode()
+    assert client.get(transfer_url).status_code in {403, 404}
     response = client.post(
         return_url,
         {
@@ -157,7 +162,11 @@ def test_warehouse_http_can_receive_pending_item_and_keeps_history_scope(client)
     assert response.url == _detail_url(clearance)
     item.refresh_from_db()
     assert item.resolution == "returned"
-    assert client.get(response.url).status_code == 200
+    history = client.get(response.url)
+    assert history.status_code == 200
+    assert {row["item"].pk for row in history.context["item_rows"]} == {
+        item.pk
+    }
 
 
 def test_warehouse_http_and_service_reject_other_company_item(client):

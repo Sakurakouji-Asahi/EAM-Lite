@@ -401,7 +401,17 @@ def confirm_label_attachment(*, actor, asset, scanned_token, target_status=None,
         company=company, idempotency_key=key
     ).first()
     if existing:
-        if existing.asset_id != asset.pk or existing.to_status != target_status:
+        if (
+            existing.asset_id != asset.pk
+            or existing.movement_type != "label_activation"
+            or existing.to_status != target_status
+            or qr.label_status != "attached"
+            or asset.asset_status != target_status
+            or qr.version > 1
+            or AssetQrIdentity.objects.filter(
+                asset=asset, status="revoked"
+            ).exists()
+        ):
             raise ValidationError("相同幂等键已用于其他资产或不同启用状态。")
         AssetLabelAttachmentRequest.objects.create(
             company=company,

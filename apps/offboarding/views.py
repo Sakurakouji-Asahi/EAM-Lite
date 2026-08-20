@@ -118,6 +118,35 @@ def _item(request, clearance, pk):
     )
 
 
+def _return_item(request, clearance_pk, pk):
+    if "warehouse" not in role_names_for(request.user):
+        clearance = _clearance(request, clearance_pk)
+        return clearance, _item(request, clearance, pk)
+
+    item = get_object_or_404(
+        EmployeeAssetClearanceItem.objects.select_related(
+            "company",
+            "clearance__employee",
+            "asset__department",
+            "asset__responsible_employee",
+            "asset__location",
+            "source_loan",
+            "movement",
+            "disposal",
+            "resolved_by",
+        ),
+        pk=pk,
+        company=_company(),
+        clearance_id=clearance_pk,
+        clearance__status__in=(
+            EmployeeAssetClearance.Status.OPEN,
+            EmployeeAssetClearance.Status.BLOCKED,
+        ),
+        resolution=EmployeeAssetClearanceItem.Resolution.PENDING,
+    )
+    return item.clearance, item
+
+
 def _service_error(form, exc):
     if hasattr(exc, "message_dict"):
         for field, errors in exc.message_dict.items():
@@ -590,8 +619,7 @@ def _restrict_return_form(form, user, company):
 def clearance_item_return(request, clearance_pk, pk):
     if request.method not in {"GET", "POST"}:
         return HttpResponseNotAllowed(["GET", "POST"])
-    clearance = _clearance(request, clearance_pk)
-    item = _item(request, clearance, pk)
+    clearance, item = _return_item(request, clearance_pk, pk)
     active_loan = _active_loan(item)
     if (
         clearance.status not in {"open", "blocked"}
@@ -656,7 +684,13 @@ def clearance_item_return(request, clearance_pk, pk):
         title=f"清退归还：{item.asset_code_snapshot}",
         description="本操作将生成正式借出归还记录和 AssetMovement；不会直接清空责任人。",
         button_label="确认归还",
-        cancel_url=reverse("offboarding:clearance-detail", args=[clearance.pk]),
+        cancel_url=(
+            reverse("offboarding:clearance-detail", args=[clearance.pk])
+            if scoped_clearances(request.user, item.company).filter(
+                pk=clearance.pk
+            ).exists()
+            else reverse("offboarding:clearance-list")
+        ),
     )
 
 

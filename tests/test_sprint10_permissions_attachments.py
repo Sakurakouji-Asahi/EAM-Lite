@@ -26,6 +26,7 @@ from apps.offboarding.services import (
 from tests.test_sprint3_support import (
     JPEG_BYTES,
     PDF_BYTES,
+    direct_attachment,
     grant_scope,
     make_department,
     make_employee,
@@ -85,12 +86,8 @@ def test_clearance_read_scope_matrix_and_system_admin_default_deny():
             pk=item.pk
         ).exists()
 
-    assert can_view_clearance(context["warehouse"], clearance)
-    assert scoped_clearance_items(
-        context["warehouse"], context["company"]
-    ).filter(pk=item.pk).exists()
-
-    for actor in (context["admin"], outsider):
+    # Latest correction supersedes the former broad unresolved warehouse scope.
+    for actor in (context["warehouse"], context["admin"], outsider):
         assert not can_view_clearance(actor, clearance)
         assert not scoped_clearances(actor, context["company"]).filter(
             pk=clearance.pk
@@ -100,19 +97,47 @@ def test_clearance_read_scope_matrix_and_system_admin_default_deny():
         ).exists()
 
 
-def test_warehouse_scope_is_limited_to_unresolved_company_items():
+def test_warehouse_scope_starts_only_after_related_movement_history():
     context = offboarding_context("S10WH")
     warehouse_employee = additional_employee(
         context, "S10WH-W", user=context["warehouse"]
     )
     asset, _ = formal_asset(context, "S10WH-A")
+    sibling, _ = formal_asset(context, "S10WH-B")
     clearance = initiate_clearance(
         actor=context["hr"],
         employee=context["employee"],
         idempotency_key="S10WH-init",
     )
-    item = clearance.items.get()
-    assert can_view_clearance(context["warehouse"], clearance)
+    item = clearance.items.get(asset=asset)
+    sibling_item = clearance.items.get(asset=sibling)
+    item_link = AttachmentLink.objects.create(
+        company=context["company"],
+        attachment=direct_attachment(
+            context["company"],
+            context["equipment"],
+            key="private/clearance/S10WH-item.jpg",
+        ),
+        clearance_item=item,
+        role=AttachmentLink.Role.CLEARANCE,
+        security_class=AttachmentLink.SecurityClass.A0,
+        created_by=context["equipment"],
+    )
+    sibling_link = AttachmentLink.objects.create(
+        company=context["company"],
+        attachment=direct_attachment(
+            context["company"],
+            context["equipment"],
+            key="private/clearance/S10WH-sibling.jpg",
+        ),
+        clearance_item=sibling_item,
+        role=AttachmentLink.Role.CLEARANCE,
+        security_class=AttachmentLink.SecurityClass.A0,
+        created_by=context["equipment"],
+    )
+    assert not can_view_clearance(context["warehouse"], clearance)
+    assert not can_view_clearance_attachment(context["warehouse"], item_link)
+    assert not can_view_clearance_attachment(context["warehouse"], sibling_link)
 
     item = transfer_clearance_item(
         actor=context["equipment"],
@@ -129,6 +154,13 @@ def test_warehouse_scope_is_limited_to_unresolved_company_items():
     assert scoped_clearance_items(
         context["warehouse"], context["company"]
     ).filter(pk=item.pk).exists()
+    assert not scoped_clearance_items(
+        context["warehouse"], context["company"]
+    ).filter(pk=sibling_item.pk).exists()
+    assert can_view_clearance_attachment(context["warehouse"], item_link)
+    assert not can_view_clearance_attachment(
+        context["warehouse"], sibling_link
+    )
 
 
 @override_settings(MEDIA_ROOT="var/test-sprint10-item-attachment-scope")

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from django.core.exceptions import PermissionDenied
 
-from apps.assets.permissions import scoped_assets
+from apps.assets.permissions import scoped_assets, scoped_assets_p1
 from apps.masterdata.permissions import resolve_department_ids, role_names_for
 
 
@@ -155,7 +155,7 @@ def scoped_disposals(user, company, queryset=None):
     queryset = queryset if queryset is not None else AssetDisposal.objects.all()
     if not _roles(user).intersection(DISPOSAL_VIEW_ROLES):
         return queryset.none()
-    asset_ids = scoped_assets(user, company).values_list("pk", flat=True)
+    asset_ids = scoped_assets_p1(user, company).values_list("pk", flat=True)
     return queryset.filter(company=company, asset_id__in=asset_ids)
 
 

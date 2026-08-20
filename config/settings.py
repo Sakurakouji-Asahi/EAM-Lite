@@ -148,8 +148,9 @@ if BUSINESS_CURRENCY != "CNY":
 # development and automated tests deterministic without an external service.
 QR_BASE_URL = read_env("QR_BASE_URL", "https://localhost").rstrip("/")
 _qr_base = urlsplit(QR_BASE_URL)
+_allowed_qr_schemes = {"http", "https"} if DEBUG else {"https"}
 if (
-    _qr_base.scheme != "https"
+    _qr_base.scheme not in _allowed_qr_schemes
     or not _qr_base.hostname
     or _qr_base.username is not None
     or _qr_base.password is not None
@@ -158,7 +159,8 @@ if (
     or _qr_base.path not in {"", "/"}
 ):
     raise ImproperlyConfigured(
-        "QR_BASE_URL 必须是无凭据、查询参数和路径的 https:// 内网应用根地址"
+        "QR_BASE_URL 必须是无凭据、查询参数和路径的内网应用根地址；"
+        "仅 DEBUG=true 时允许 http://"
     )
 
 STATIC_URL = "/static/"

@@ -208,7 +208,6 @@ def test_as_of_report_uses_movement_before_values_not_current_assignment():
     old_department = asset.department
     old_employee = asset.responsible_employee
     old_location = asset.location
-    moved_at = real_now - timedelta(days=1)
     boundary_day = timezone.localdate(real_now)
     new_department, new_employee, new_location = add_target_assignment(
         context, "S11HIST-N"
@@ -219,7 +218,7 @@ def test_as_of_report_uses_movement_before_values_not_current_assignment():
         to_department=new_department,
         to_responsible_employee=new_employee,
         to_location=new_location,
-        effective_at=moved_at,
+        effective_at=timezone.now(),
         reason="Sprint11 历史归属验收",
         idempotency_key="S11HIST-move",
         expected_status=asset.asset_status,
@@ -284,7 +283,7 @@ def test_historical_rows_use_current_department_scope_and_revocation():
         to_department=new_department,
         to_responsible_employee=new_employee,
         to_location=new_location,
-        effective_at=real_now - timedelta(days=1),
+        effective_at=timezone.now(),
         reason="Sprint11 历史范围验收",
         idempotency_key="S11HISTSCOPE-move",
         expected_status=asset.asset_status,

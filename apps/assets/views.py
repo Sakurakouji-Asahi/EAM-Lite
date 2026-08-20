@@ -42,6 +42,7 @@ from apps.assets.permissions import (
     can_void_attachment_link,
     can_withdraw_asset,
     scoped_assets,
+    scoped_assets_p1,
 )
 from apps.assets.qr_permissions import can_manage_labels
 from apps.assets.lifecycle_permissions import (
@@ -289,17 +290,23 @@ def asset_list(request):
             else Asset.RecordStatus.ACTIVE
         )
     )
+    roles = role_names_for(request.user)
+    p1_asset_ids = scoped_assets_p1(request.user, company).values("pk")
+    list_has_p1 = not base_queryset.exclude(pk__in=p1_asset_ids).exists()
     queryset = base_queryset
     query = request.GET.get("q", "").strip()
     if query:
         search = (
             Q(asset_code__icontains=query)
             | Q(asset_name__icontains=query)
-            | Q(model__icontains=query)
-            | Q(serial_number__icontains=query)
-            | Q(factory_number__icontains=query)
             | Q(responsible_employee__name__icontains=query)
         )
+        if list_has_p1:
+            search |= (
+                Q(model__icontains=query)
+                | Q(serial_number__icontains=query)
+                | Q(factory_number__icontains=query)
+            )
         draft_match = re.fullmatch(r"D-([0-9A-Fa-f]{1,8})", query)
         if draft_match:
             queryset = queryset.annotate(
@@ -352,20 +359,6 @@ def asset_list(request):
             else queryset.none()
         )
 
-    roles = role_names_for(request.user)
-    list_has_p1 = bool(
-        roles.intersection(
-            {
-                "system_admin",
-                "finance",
-                "equipment",
-                "department_manager",
-                "employee",
-                "warehouse",
-                "management",
-            }
-        )
-    )
     can_create = bool(roles.intersection(ASSET_GLOBAL_WRITE_ROLES)) or bool(
         "department_manager" in roles
         and resolve_department_ids(request.user, company)
@@ -511,7 +504,7 @@ def asset_detail(request, pk):
     maintenance_plans = []
     can_create_maintenance_plan = False
     clearance_items = []
-    if can_p1 and "hr" not in roles:
+    if can_p1:
         try:
             from apps.maintenance.permissions import (
                 can_manage_maintenance_plan,
@@ -543,7 +536,7 @@ def asset_detail(request, pk):
     except (ImportError, OperationalError, ProgrammingError):
         clearance_items = []
     attachment_filter = Q(pk__in=[])
-    if can_p1 and "hr" not in roles:
+    if can_p1:
         attachment_filter |= Q(security_class=AttachmentLink.SecurityClass.A0)
     if roles.intersection({"finance", "management"}):
         attachment_filter |= Q(security_class=AttachmentLink.SecurityClass.A1)

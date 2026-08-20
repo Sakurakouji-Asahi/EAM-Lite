@@ -109,6 +109,12 @@ def add_finance_row(
             "实际期初累计折旧": opening_ad,
             "期初减值": opening_impairment,
             "实际期初账面净值": opening_book,
+            "实际接续日": (
+                "2026-01-01"
+                if Decimal(str(opening_ad or "0")) != 0
+                or Decimal(str(opening_impairment or "0")) != 0
+                else ""
+            ),
             "理论测算截止日": "2025-12-31",
             "财务备注": "实际账面值不得被理论值覆盖",
         }

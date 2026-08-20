@@ -12,9 +12,8 @@ import re
 import uuid
 import zipfile
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from pathlib import Path
 
 from defusedxml import ElementTree as DefusedElementTree
 
@@ -31,7 +30,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 
 from apps.audit.services import request_audit_context, write_business_audit_log
 from apps.assets.permissions import can_create_asset_draft
-from apps.assets.services import create_asset_draft
+from apps.assets.services import _validate_filename, create_asset_draft
 from apps.finance.permissions import can_manage_finance
 from apps.masterdata.normalization import clean_display_identifier, normalize_identifier
 from apps.masterdata.permissions import (
@@ -143,7 +142,7 @@ TEMPLATE_REGISTRY = {
     "asset_initialization": TemplateDefinition(
         import_type="asset_initialization",
         label="资产初始化",
-        version="asset-initialization-v1",
+        version="asset-initialization-v2",
         sheet_name="资产初始化导入",
         has_example_sheet=True,
         columns=(
@@ -188,6 +187,7 @@ TEMPLATE_REGISTRY = {
             Column("实际期初累计折旧", "opening_actual_accumulated_depreciation"),
             Column("期初减值", "opening_impairment"),
             Column("实际期初账面净值", "opening_book_value"),
+            Column("实际接续日", "actual_continuation_date"),
             Column("理论测算截止日", "theoretical_as_of_date"),
             Column("财务备注", "finance_remark"),
         ),
@@ -335,6 +335,7 @@ def build_template_workbook(import_type: str, company=None) -> bytes:
                     ("财务列", "只有 finance 可提交；无财务权限时所有财务列必须留空"),
                     ("会计认定", "只能为 fixed_asset 或 controlled_non_fixed"),
                     ("折旧机器值", "方法/周期/起止/残值方式使用系统机器值，不接受别名"),
+                    ("旧资产接续", "填写历史起算原因或期初累计折旧/减值时，必须另填实际接续日"),
                     ("动态字段", "自定义列按“自定义:<code>”精确匹配当前启用字段"),
                 )
             )
@@ -398,6 +399,7 @@ ASSET_FINANCE_KEYS = frozenset(
         "opening_actual_accumulated_depreciation",
         "opening_impairment",
         "opening_book_value",
+        "actual_continuation_date",
         "theoretical_as_of_date",
         "finance_remark",
     }
@@ -1016,10 +1018,11 @@ def _normalize_employee_rows(company, loaded_rows, definition):
 
 def _asset_theoretical_summary(result, *, as_of_date=None):
     lines = result.get("lines", ()) if isinstance(result, dict) else result.lines
+    cutoff_exclusive = as_of_date + timedelta(days=1) if as_of_date else None
     selected = [
         line
         for line in lines
-        if as_of_date is None or line.period_end <= as_of_date
+        if cutoff_exclusive is None or line.period_end <= cutoff_exclusive
     ]
     if isinstance(result, dict):
         opening = result["opening_book_value"]
@@ -1207,6 +1210,9 @@ def _create_asset_finance_drafts(*, actor, asset, normalized, request=None):
         start_rule=stored_profile["start_rule"],
         stop_rule=stored_profile["stop_rule"],
         start_date=date.fromisoformat(stored_profile["start_date"]),
+        actual_continuation_date=date.fromisoformat(
+            stored_profile["actual_continuation_date"]
+        ),
         useful_life_months=stored_profile["useful_life_months"],
         salvage_mode=stored_profile["salvage_mode"],
         salvage_rate=Decimal(stored_profile["salvage_rate"])
@@ -1251,6 +1257,7 @@ def _create_asset_finance_drafts(*, actor, asset, normalized, request=None):
             ),
             "opening_impairment": str(opening_impairment),
             "opening_book_value": str(profile.opening_book_value),
+            "actual_continuation_date": profile.actual_continuation_date,
             "theoretical_accumulated_depreciation": reference.get(
                 "planned_accumulated_depreciation"
             ),
@@ -1423,6 +1430,36 @@ def _normalize_asset_rows(*, actor, company, loaded_rows, definition):
                 errors.append(_error("资本化日期", values["capitalization_date"], "固定资产必填。"))
             if treatment == "controlled_non_fixed" and fixed_category_code:
                 errors.append(_error("固定资产类别编码", fixed_category_code, "受控非固定资产不得填写固定资产类别。"))
+            if treatment == "controlled_non_fixed":
+                for key, label in (
+                    ("depreciation_policy_key", "折旧政策编码"),
+                    ("method", "折旧方法"),
+                    ("posting_period", "计提周期"),
+                    ("start_rule", "起算规则"),
+                    ("specified_start", "指定起算日期"),
+                    ("historical_start_reason", "历史起算原因"),
+                    ("stop_rule", "停止规则"),
+                    ("useful_life_months", "使用寿命月数"),
+                    ("salvage_mode", "残值方式"),
+                    ("salvage_rate", "残值率"),
+                    ("salvage_amount", "残值金额"),
+                    ("annual_posting_month", "年度计提月份"),
+                    ("expected_total_units", "预计总工作量"),
+                    ("work_unit", "工作量单位"),
+                    ("opening_actual_accumulated_depreciation", "实际期初累计折旧"),
+                    ("opening_impairment", "期初减值"),
+                    ("opening_book_value", "实际期初账面净值"),
+                    ("actual_continuation_date", "实际接续日"),
+                    ("theoretical_as_of_date", "理论测算截止日"),
+                ):
+                    if values[key] not in (None, ""):
+                        errors.append(
+                            _error(
+                                label,
+                                values[key],
+                                "受控非固定资产不得填写折旧或期初字段。",
+                            )
+                        )
             finance_data = {
                 "accounting_treatment": treatment,
                 "accounting_treatment_reason": _text(values["accounting_treatment_reason"]),
@@ -1470,12 +1507,28 @@ def _normalize_asset_rows(*, actor, company, loaded_rows, definition):
                     "opening_actual_accumulated_depreciation": _decimal_value(values["opening_actual_accumulated_depreciation"], "实际期初累计折旧", errors, places=2, minimum=Decimal("0")) or Decimal("0.00"),
                     "opening_impairment": _decimal_value(values["opening_impairment"], "期初减值", errors, places=2, minimum=Decimal("0")) or Decimal("0.00"),
                     "opening_book_value": _decimal_value(values["opening_book_value"], "实际期初账面净值", errors, places=2, minimum=Decimal("0")),
+                    "actual_continuation_date": _date(
+                        values["actual_continuation_date"], "实际接续日", errors
+                    ),
                 }
                 profile_values = {key: value for key, value in profile_values.items() if value is not None}
                 historical_reason = _text(values["historical_start_reason"])
                 if historical_reason:
                     profile_values["allow_historical_start"] = True
                     profile_values["change_reason"] = historical_reason
+                if (
+                    historical_reason
+                    or profile_values["opening_actual_accumulated_depreciation"]
+                    != Decimal("0.00")
+                    or profile_values["opening_impairment"] != Decimal("0.00")
+                ) and profile_values.get("actual_continuation_date") is None:
+                    errors.append(
+                        _error(
+                            "实际接续日",
+                            values["actual_continuation_date"],
+                            "旧资产初始化必须填写独立的实际接续日。",
+                        )
+                    )
                 try:
                     policy = resolve_depreciation_policy(asset=temp_asset, requested_policy=requested)
                     _spec, result, resolved = _profile_spec(asset=temp_asset, finance_data={"original_cost": cost, "fixed_asset_category": fixed_category}, profile_data=profile_values, policy=policy)
@@ -1489,6 +1542,9 @@ def _normalize_asset_rows(*, actor, company, loaded_rows, definition):
                         "opening_impairment": Decimal("0.00"),
                         "opening_book_value": cost,
                     }
+                    theoretical_inputs["actual_continuation_date"] = resolved[
+                        "start_date"
+                    ]
                     _theoretical_spec, theoretical_result, _theoretical_resolved = _profile_spec(
                         asset=temp_asset,
                         finance_data={
@@ -1703,7 +1759,8 @@ def upload_and_validate_import(
     allowed = set(get_system_setting(company=company, key="attachment_allowed_extensions"))
     if "xlsx" not in allowed:
         raise ValidationError("当前公司附件白名单未允许 xlsx。")
-    if Path(uploaded_file.name).suffix.lower() != ".xlsx":
+    original_filename, extension = _validate_filename(uploaded_file.name)
+    if extension != "xlsx":
         raise ValidationError("只允许上传无宏的 .xlsx 文件。")
     content_type = str(getattr(uploaded_file, "content_type", "") or "").lower()
     if content_type != XLSX_MIME:
@@ -1814,8 +1871,8 @@ def upload_and_validate_import(
                 attachment = Attachment(
                     company=company,
                     storage_key=saved_key,
-                    original_filename=str(uploaded_file.name)[:255],
-                    safe_filename=(get_valid_filename(Path(uploaded_file.name).name) or "import.xlsx")[:255],
+                    original_filename=original_filename[:255],
+                    safe_filename=(get_valid_filename(original_filename) or "import.xlsx")[:255],
                     file_size=len(data),
                     mime_type=XLSX_MIME,
                     sha256=digest,

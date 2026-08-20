@@ -365,7 +365,8 @@ def test_opening_balances_are_decimal_and_theoretical_reference_does_not_replace
     # The independent run starts from original cost rather than the imported
     # actual opening book value; its result therefore exceeds the same run
     # incorrectly seeded from 10,765.44.
-    assert Decimal(theoretical["theoretical_book_value"]) == Decimal("7630.00")
+    # as_of_date includes the complete December period ending on 2026-01-01.
+    assert Decimal(theoretical["theoretical_book_value"]) == Decimal("7440.00")
     assert Decimal(theoretical["planned_accumulated_depreciation"]) != Decimal(
         profile["opening_actual_accumulated_depreciation"]
     )

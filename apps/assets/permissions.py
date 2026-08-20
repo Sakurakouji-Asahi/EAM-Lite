@@ -11,6 +11,9 @@ from apps.masterdata.permissions import resolve_department_ids, role_names_for
 ASSET_GLOBAL_VIEW_ROLES = frozenset(
     {"system_admin", "finance", "equipment", "warehouse", "hr", "management"}
 )
+ASSET_GLOBAL_P1_VIEW_ROLES = frozenset(
+    {"system_admin", "finance", "equipment", "warehouse", "management"}
+)
 ASSET_GLOBAL_WRITE_ROLES = frozenset({"finance", "equipment", "warehouse"})
 
 
@@ -26,6 +29,29 @@ def scoped_assets(user, company, queryset=None):
     queryset = queryset.filter(company=company)
     roles = _roles(user)
     if roles.intersection(ASSET_GLOBAL_VIEW_ROLES):
+        return queryset
+
+    filters = Q(pk__in=[])
+    if "department_manager" in roles:
+        filters |= Q(department_id__in=resolve_department_ids(user, company))
+    if "employee" in roles:
+        from apps.masterdata.models import Employee
+
+        employee_ids = Employee.objects.filter(
+            company=company, user=user
+        ).values_list("pk", flat=True)
+        filters |= Q(responsible_employee_id__in=employee_ids)
+    return queryset.filter(filters).distinct()
+
+
+def scoped_assets_p1(user, company, queryset=None):
+    """Apply the P1 role grant before combining department/object scope."""
+    from apps.assets.models import Asset
+
+    queryset = queryset if queryset is not None else Asset.objects.all()
+    queryset = queryset.filter(company=company)
+    roles = _roles(user)
+    if roles.intersection(ASSET_GLOBAL_P1_VIEW_ROLES):
         return queryset
 
     filters = Q(pk__in=[])
@@ -59,21 +85,14 @@ def require_view_asset(user, asset) -> None:
 
 def can_view_asset_p1(user, asset) -> bool:
     """HR only receives the P0 clearance summary, not normal P1 details."""
-    if not can_view_asset(user, asset):
+    if (
+        asset is None
+        or asset.company_id is None
+        or not asset.pk
+        or asset._state.adding
+    ):
         return False
-    return bool(
-        _roles(user).intersection(
-            {
-                "system_admin",
-                "finance",
-                "equipment",
-                "department_manager",
-                "employee",
-                "warehouse",
-                "management",
-            }
-        )
-    )
+    return scoped_assets_p1(user, asset.company).filter(pk=asset.pk).exists()
 
 
 def can_view_asset_summary_fields(user, asset) -> bool:
@@ -168,8 +187,6 @@ def can_view_attachment(user, link) -> bool:
         return False
     if link.security_class == "A1":
         return bool(_roles(user).intersection({"finance", "management"}))
-    if "hr" in _roles(user):
-        return False
     return can_view_asset_p1(user, link.asset)
 
 

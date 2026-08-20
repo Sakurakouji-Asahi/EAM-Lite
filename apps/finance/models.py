@@ -331,6 +331,8 @@ class AssetDepreciationProfile(models.Model):
     start_rule = models.CharField(max_length=32, choices=StartRule.choices)
     stop_rule = models.CharField(max_length=16, choices=StopRule.choices)
     start_date = models.DateField()
+    actual_continuation_date = models.DateField(null=True, blank=True)
+    actual_continuation_review_required = models.BooleanField(default=False)
     useful_life_months = models.PositiveIntegerField()
     salvage_mode = models.CharField(max_length=16, choices=SalvageMode.choices)
     salvage_rate = models.DecimalField(null=True, blank=True, **RATE)
@@ -446,10 +448,32 @@ class AssetDepreciationProfile(models.Model):
                 name="ck_depr_profile_effective_dates",
             ),
             models.CheckConstraint(
+                condition=(
+                    Q(
+                        actual_continuation_review_required=True,
+                        actual_continuation_date__isnull=True,
+                    )
+                    | Q(
+                        actual_continuation_review_required=False,
+                        actual_continuation_date__gte=F("start_date"),
+                    )
+                ),
+                name="ck_depr_profile_continuation_date",
+            ),
+            models.CheckConstraint(
                 condition=Q(version=1) | ~Q(change_reason=""),
                 name="ck_depr_profile_change_reason",
             ),
         ]
+
+    def save(self, *args, **kwargs):
+        if (
+            self._state.adding
+            and self.actual_continuation_date is None
+            and not self.actual_continuation_review_required
+        ):
+            self.actual_continuation_date = self.start_date
+        return super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.asset} / v{self.version}"
