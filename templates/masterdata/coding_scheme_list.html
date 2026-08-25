@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 {% block title %}编码规则 - EAM-Lite{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
+<header class="app-page-header">
   <div><h1 class="h3 mb-1">编码规则</h1><p class="text-secondary mb-0">版本化配置；预览不占用正式序号。</p></div>
   {% if can_manage %}<a class="btn btn-primary" href="{% url 'masterdata:coding-scheme-create' %}">新增方案草稿</a>{% endif %}
-</div>
+</header>
 <div class="table-responsive card shadow-sm"><table class="table table-hover align-middle mb-0">
   <thead><tr><th>稳定键 / 版本</th><th>名称</th><th>状态</th><th>默认</th><th>重置</th><th>生效期</th><th>操作</th></tr></thead>
   <tbody>{% for scheme in schemes %}<tr>

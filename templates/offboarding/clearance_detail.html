@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ clearance.employee.name }}清退详情 - EAM-Lite{% endblock %}
 {% block content %}
-  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+  <header class="app-page-header align-items-start">
     <div>
       <div class="text-secondary">{{ clearance.employee.employee_no }} · {{ clearance.employee.department.name|default:"—" }}</div>
       <h1 class="h3 mb-2">{{ clearance.employee.name }}的{% if clearance.is_supplement %}补充{% endif %}离职资产清退</h1>
@@ -16,7 +16,7 @@
       {% if can_create_supplement and not active_for_employee %}<a class="btn btn-warning" href="{% url 'offboarding:clearance-supplement' clearance.pk %}">建立补充清退</a>{% endif %}
       {% if can_create_supplement and active_for_employee %}<a class="btn btn-warning" href="{% url 'offboarding:clearance-detail' active_for_employee.pk %}">打开活动补充单</a>{% endif %}
     </div>
-  </div>
+  </header>
 
   {% if clearance.unresolved_assets %}
     <div class="alert alert-danger" role="alert">

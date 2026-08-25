@@ -39,7 +39,7 @@ def test_postgresql_concurrent_stale_assignment_has_one_winner_and_no_lost_histo
         asset.responsible_employee_id,
         asset.location_id,
     )
-    effective_at = timezone.now() - timedelta(seconds=1)
+    effective_at = timezone.now()
     barrier = Barrier(2)
 
     def worker(item):
@@ -113,7 +113,7 @@ def test_postgresql_two_simultaneous_returns_create_one_return_movement():
         context["department"].pk,
         context["location"].pk,
     )
-    returned_at = timezone.now() - timedelta(seconds=1)
+    returned_at = timezone.now()
     barrier = Barrier(2)
 
     def worker(key):

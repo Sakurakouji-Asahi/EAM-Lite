@@ -17,7 +17,9 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 
+from apps.accounts.roles import ROLE_LABELS
 from apps.masterdata.forms import (
+    ApplicationUserCreateForm,
     AssetCategoryForm,
     AssetCodingSchemeForm,
     AssetCodingSegmentFormSet,
@@ -60,6 +62,7 @@ from apps.masterdata.services import (
     assign_department_scope,
     compute_initialization_progress,
     complete_initialization,
+    create_application_user,
     create_asset_category,
     create_company,
     create_department,
@@ -1230,7 +1233,9 @@ def user_permissions_list(request):
     rows = [
         {
             "user": user,
-            "roles": sorted(assigned_role_names_for(user)),
+            "roles": [
+                ROLE_LABELS[name] for name in sorted(assigned_role_names_for(user))
+            ],
             "scopes": scopes_by_user.get(user.pk, []),
             "login_capable": is_login_capable(user),
         }
@@ -1244,14 +1249,53 @@ def user_permissions_list(request):
 
 
 @login_required
+def user_create(request):
+    require_manage_masterdata(request.user, "user_permissions")
+    company = _company_or_404()
+    form = ApplicationUserCreateForm(
+        request.POST or None,
+        actor=request.user,
+        company=company,
+    )
+    if request.method == "POST" and form.is_valid():
+        try:
+            user = create_application_user(
+                actor=request.user,
+                company=company,
+                username=form.cleaned_data["username"],
+                display_name=form.cleaned_data["display_name"],
+                email=form.cleaned_data["email"],
+                mobile=form.cleaned_data["mobile"],
+                password=form.cleaned_data["password"],
+                roles=form.cleaned_data["roles"],
+                initial_department=form.cleaned_data["initial_department"],
+                include_descendants=form.cleaned_data["include_descendants"],
+                reason=form.cleaned_data["reason"],
+                current_password=form.cleaned_data["current_password"],
+                request=request,
+            )
+        except ValidationError as exc:
+            _service_error(form, exc)
+        else:
+            messages.success(request, f"应用用户 {user.username} 已创建并完成角色配置。")
+            return redirect("masterdata:user-permissions-detail", user_id=user.pk)
+    return render(
+        request,
+        "masterdata/user_create.html",
+        {"form": form, "company": company},
+    )
+
+
+@login_required
 def user_permissions_detail(request, user_id):
     require_manage_masterdata(request.user, "user_permissions")
     company = _company_or_404()
     User = get_user_model()
     target = get_object_or_404(User, pk=user_id, is_superuser=False)
+    assigned_role_names = sorted(assigned_role_names_for(target))
     role_form = UserRoleForm(
         actor=request.user,
-        initial={"roles": sorted(assigned_role_names_for(target))},
+        initial={"roles": assigned_role_names},
     )
     scope_form = ScopeAssignForm(actor=request.user, company=company)
     scopes = UserDepartmentScope.objects.filter(
@@ -1265,9 +1309,8 @@ def user_permissions_detail(request, user_id):
             "role_form": role_form,
             "scope_form": scope_form,
             "scopes": scopes,
-            "assigned_roles": sorted(assigned_role_names_for(target)),
-            "finance_fields_visible": "finance"
-            in assigned_role_names_for(target),
+            "assigned_roles": [ROLE_LABELS[name] for name in assigned_role_names],
+            "finance_fields_visible": "finance" in assigned_role_names,
         },
     )
 
@@ -1458,7 +1501,17 @@ def _setup_context(company):
         )
         if number == 8:
             complete = progress["users_configured"] and progress["permissions_configured"]
-        steps.append({"number": number, **definition, "complete": complete})
+        writer_names = [part.strip() for part in definition["writer"].split("/")]
+        steps.append(
+            {
+                "number": number,
+                **definition,
+                "writer_label": " / ".join(
+                    f"{ROLE_LABELS[name]}（{name}）" for name in writer_names
+                ),
+                "complete": complete,
+            }
+        )
     return {
         "company": company,
         "setting": setting,

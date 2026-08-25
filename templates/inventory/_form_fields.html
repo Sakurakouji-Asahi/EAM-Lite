@@ -5,9 +5,9 @@
 {% for field in form.visible_fields %}
   <div class="mb-3">
     {% if field.field.widget.input_type == 'checkbox' %}
-      <div class="form-check">{{ field }} <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label></div>
+      <div class="form-check">{{ field }} <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %}<span class="required-mark" aria-hidden="true">*</span><span class="visually-hidden">必填</span>{% endif %}</label></div>
     {% else %}
-      <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+      <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %}<span class="required-mark" aria-hidden="true">*</span><span class="visually-hidden">必填</span>{% endif %}</label>
       {{ field }}
     {% endif %}
     {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}

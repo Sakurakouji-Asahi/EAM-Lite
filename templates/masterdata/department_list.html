@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block title %}部门 - EAM-Lite{% endblock %}
 {% block content %}
-  <div class="d-flex justify-content-between align-items-center mb-3">
+  <header class="app-page-header">
     <div><h1 class="h3 mb-0">部门</h1><small class="text-secondary">{{ company.short_name }}</small></div>
     <div class="d-flex gap-2">
       {% if can_manage %}<a class="btn btn-primary" href="{% url 'masterdata:department-create' %}">新增部门</a>{% endif %}
       {% if can_manage %}<a class="btn btn-outline-secondary" href="{% url 'imports:template' 'department' %}">下载模板</a><a class="btn btn-outline-primary" href="{% url 'imports:upload' 'department' %}">Excel 导入</a>{% endif %}
     </div>
-  </div>
+  </header>
   {% include "masterdata/_filters.html" %}
   <div class="table-responsive card shadow-sm">
     <table class="table table-hover align-middle mb-0">

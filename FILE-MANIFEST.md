@@ -6,6 +6,8 @@
 - `README-CODEX.md` — package placement, reading order, staged execution and scope
 - `CHANGELOG.md` — V1.0 to V1.1 changes
 - `FILE-MANIFEST.md` — this file inventory
+- `启动EAM-Lite.cmd` — Windows 本地验收一键启动入口
+- `deploy/` — pinned Docker Compose, Gunicorn/Caddy/PostgreSQL production deployment
 
 ## Specifications
 
@@ -22,6 +24,8 @@
 - `docs/10-Definition-of-Done.md` — mandatory completion gate for every Sprint
 - `docs/11-Tplus-Reconciliation-Export.md` — manual T+ reconciliation workbook specification
 - `docs/12-UAT-Acceptance.md` — end-to-end acceptance cases and traceability
+- `docs/Sprint-12-Operations-Runbook.md` — production deployment, backup, restore and incident runbook
+- `docs/Sprint-12-UAT-Evidence.md` — executed Sprint 12 evidence and remaining sign-off blockers
 
 ## Codex Tasks
 
@@ -39,4 +43,4 @@
 - `tasks/Sprint-11-Reports-Tplus-Export.md` — dashboards, reports and T+ reconciliation workbook
 - `tasks/Sprint-12-Production-Readiness.md` — security audit, backup/restore, performance and UAT
 
-Total: 30 Markdown files.
+Total: 32 Markdown files.

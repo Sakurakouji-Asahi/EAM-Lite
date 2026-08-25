@@ -3,39 +3,54 @@
 {% block title %}登录 | EAM-Lite{% endblock %}
 
 {% block anonymous_content %}
-<div class="row justify-content-center">
-  <div class="col-12 col-sm-9 col-md-6 col-lg-4">
-    <div class="card shadow-sm">
-      <div class="card-body p-4">
-        <h1 class="h4 mb-4 text-center">登录 EAM-Lite</h1>
-        {% if form.non_field_errors %}
-          <div class="alert alert-danger" role="alert">
-            用户名或密码错误，请重新输入。
-          </div>
-        {% endif %}
-        <form method="post" novalidate>
-          {% csrf_token %}
-          {% if next %}
-            <input type="hidden" name="next" value="{{ next }}">
-          {% endif %}
-          <div class="mb-3">
-            <label for="{{ form.username.id_for_label }}" class="form-label">用户名</label>
-            {{ form.username }}
-            {% for error in form.username.errors %}
-              <div class="invalid-feedback d-block">{{ error }}</div>
-            {% endfor %}
-          </div>
-          <div class="mb-3">
-            <label for="{{ form.password.id_for_label }}" class="form-label">密码</label>
-            {{ form.password }}
-            {% for error in form.password.errors %}
-              <div class="invalid-feedback d-block">{{ error }}</div>
-            {% endfor %}
-          </div>
-          <button type="submit" class="btn btn-primary w-100">登录</button>
-        </form>
+<section class="login-layout" aria-labelledby="login-title">
+  <div class="login-intro">
+    <div class="login-intro-content">
+      <span class="login-product-name">EAM-Lite</span>
+      <h1>资产有据可查，责任清晰可见</h1>
+      <p>用于公司内网的资产建档、标签、盘点、保养与财务辅助核对。</p>
+    </div>
+    <div class="login-trust-note">企业内部系统，请使用已分配的账号登录。</div>
+  </div>
+
+  <div class="login-form-panel">
+    <div class="login-form-wrap">
+      <div class="login-form-heading">
+        <span class="login-mobile-brand">EAM-Lite</span>
+        <h2 id="login-title">欢迎回来</h2>
+        <p>登录后继续处理你的资产工作。</p>
       </div>
+
+      {% if form.non_field_errors %}
+        <div class="alert alert-danger" role="alert">
+          用户名或密码错误，请重新输入。
+        </div>
+      {% endif %}
+
+      <form method="post" novalidate class="login-form">
+        {% csrf_token %}
+        {% if next %}
+          <input type="hidden" name="next" value="{{ next }}">
+        {% endif %}
+        <div class="mb-3">
+          <label for="{{ form.username.id_for_label }}" class="form-label">用户名</label>
+          {{ form.username }}
+          {% for error in form.username.errors %}
+            <div class="invalid-feedback d-block">{{ error }}</div>
+          {% endfor %}
+        </div>
+        <div class="mb-4">
+          <label for="{{ form.password.id_for_label }}" class="form-label">密码</label>
+          {{ form.password }}
+          {% for error in form.password.errors %}
+            <div class="invalid-feedback d-block">{{ error }}</div>
+          {% endfor %}
+        </div>
+        <button type="submit" class="btn btn-primary w-100 login-submit">登录</button>
+      </form>
+
+      <p class="login-help mb-0">无法登录时，请联系系统管理员检查账号状态和角色权限。</p>
     </div>
   </div>
-</div>
+</section>
 {% endblock %}

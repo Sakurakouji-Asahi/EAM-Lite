@@ -4,8 +4,8 @@
   <nav aria-label="面包屑"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="{% url 'masterdata:setup' %}">初始化向导</a></li><li class="breadcrumb-item active" aria-current="page">步骤 {{ step.number }}</li></ol></nav>
   <div class="card shadow-sm"><div class="card-body">
     <div class="d-flex justify-content-between align-items-center mb-3"><h1 class="h3 mb-0">步骤 {{ step.number }}：{{ step.name }}</h1>{% if step.complete %}<span class="badge text-bg-success">完成条件已满足</span>{% else %}<span class="badge text-bg-warning">完成条件未满足</span>{% endif %}</div>
-    <p>本步骤所需维护角色：<strong>{{ step.writer }}</strong>。完成状态根据真实启用数据重新计算，不会因访问页面而置为完成。</p>
-    {% if not has_writer_role %}<div class="alert alert-warning"><strong>当前账号不能代行本步骤写权限。</strong> 请使用具备 {{ step.writer }} 固定角色的应用账号完成维护。{% if bootstrap_hint %}若缺少对应账号，请在服务器管理终端使用 Sprint 0 账号引导命令创建并分配固定角色。{% endif %}</div>{% endif %}
+    <p>本步骤所需维护角色：<strong>{{ step.writer_label }}</strong>。完成状态根据真实启用数据重新计算，不会因访问页面而置为完成。</p>
+    {% if not has_writer_role %}<div class="alert alert-warning"><strong>当前账号不能代行本步骤写权限。</strong> 请使用具备 {{ step.writer_label }} 固定角色的应用账号完成维护。{% if bootstrap_hint %}若缺少对应账号，请在服务器管理终端使用 Sprint 0 账号引导命令创建并分配固定角色。{% endif %}</div>{% endif %}
     {% if step.number == 8 and can_view_step %}
       <dl class="row">
         <dt class="col-sm-4"><code>users_configured</code></dt><dd class="col-sm-8">{% if progress.users_configured %}<span class="badge text-bg-success">已满足</span>{% else %}<span class="badge text-bg-warning">未满足</span>{% endif %}</dd>

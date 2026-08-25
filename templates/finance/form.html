@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block title %}{{ title }} - EAM-Lite{% endblock %}
 {% block content %}
-  <nav aria-label="面包屑"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="{% url 'finance:policy-list' %}">财务与折旧</a></li><li class="breadcrumb-item active">{{ title }}</li></ol></nav>
-  <div class="card shadow-sm"><div class="card-body"><h1 class="h3 mb-3">{{ title }}</h1>
+  <div class="app-narrow-page"><nav aria-label="面包屑"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="{% url 'finance:policy-list' %}">财务与折旧</a></li><li class="breadcrumb-item active">{{ title }}</li></ol></nav>
+  <header class="app-page-header"><div><h1 class="h3 mb-1">{{ title }}</h1><p class="text-secondary mb-0">保存前请核对本页财务配置。</p></div></header><div class="card shadow-sm"><div class="card-body">
     <form method="post" novalidate>{% csrf_token %}
       {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
-      {% for field in form %}{% if not field.is_hidden %}<div class="mb-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}{% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>{% else %}{{ field }}{% endif %}{% endfor %}
-      <button class="btn btn-primary" type="submit">保存</button> <a class="btn btn-outline-secondary" href="{% url 'finance:pending-list' %}">返回财务工作台</a>
+      {% for field in form %}{% if not field.is_hidden %}<div class="mb-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %}<span class="required-mark" aria-hidden="true">*</span><span class="visually-hidden">必填</span>{% endif %}</label>{{ field }}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}{% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>{% else %}{{ field }}{% endif %}{% endfor %}
+      <div class="app-form-actions app-form-actions-contained"><button class="btn btn-primary" type="submit">保存</button> <a class="btn btn-outline-secondary" href="{% url 'finance:pending-list' %}">返回财务工作台</a></div>
     </form>
-  </div></div>
+  </div></div></div>
 {% endblock %}

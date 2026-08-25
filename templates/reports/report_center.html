@@ -3,14 +3,14 @@
 {% block title %}报表中心 | EAM-Lite{% endblock %}
 
 {% block content %}
-<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+<header class="app-page-header">
   <div>
     <h1 class="h3 mb-1">报表中心</h1>
     <p class="text-secondary mb-0">预览、筛选条件和 Excel 导出使用同一数据口径与权限范围。</p>
   </div>
-</div>
+</header>
 
-<section class="card shadow-sm mb-3">
+<section class="card shadow-sm mb-3 app-filter-card">
   <div class="card-body">
     <form method="get" class="row g-3" novalidate>
       {% if form.non_field_errors %}<div class="col-12"><div class="alert alert-danger mb-0">{{ form.non_field_errors }}</div></div>{% endif %}
@@ -30,11 +30,11 @@
 </section>
 
 {% if dataset %}
-<section class="card shadow-sm">
+<section class="card shadow-sm app-data-card">
   <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
     <div>
       <strong>{{ dataset.definition.title }}</strong>
-      <div class="small text-secondary">预览生成时间 {{ generated_at|date:'Y-m-d H:i:s' }} · 数据截止时间 {{ dataset.data_snapshot_at|date:'Y-m-d H:i:s' }} · 共 {{ dataset.row_count }} 行</div>
+      <div class="report-meta"><span>预览生成时间 {{ generated_at|date:'Y-m-d H:i:s' }}</span><span>数据截止时间 {{ dataset.data_snapshot_at|date:'Y-m-d H:i:s' }}</span><span>共 {{ dataset.row_count }} 行</span></div>
     </div>
     {% if can_export %}
       <form method="post" action="{% url 'reports:report-export' %}" class="m-0">

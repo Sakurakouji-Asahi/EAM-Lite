@@ -40,6 +40,7 @@ from apps.masterdata.services import (
 
 pytestmark = pytest.mark.django_db
 PASSWORD = "Valid-Password-2026!"
+NEW_USER_PASSWORD = "Long-Random-7p!vQ2zN-2026"
 
 
 def make_user(username, *roles):
@@ -199,6 +200,65 @@ def test_inactive_user_roles_remain_visible_for_configuration(client):
         "finance",
         "employee",
     }
+
+
+def test_system_admin_can_create_login_capable_application_user_from_ui(client):
+    make_company()
+    admin = make_user("admin", "system_admin")
+    equipment = make_user("equipment", "equipment")
+    create_url = reverse("masterdata:user-create")
+
+    client.force_login(equipment)
+    assert client.get(create_url).status_code == 403
+    assert client.post(create_url, {}).status_code == 403
+
+    client.force_login(admin)
+    listing = client.get(reverse("masterdata:user-permissions-list"))
+    assert create_url in listing.content.decode()
+    page = client.get(create_url)
+    assert page.status_code == 200
+    assert "新增应用用户" in page.content.decode()
+    assert 'id="id_roles" class="form-check-input"' not in page.content.decode()
+    assert page.content.decode().count('name="roles"') == 8
+
+    response = client.post(
+        create_url,
+        {
+            "username": "web-created-user",
+            "display_name": "网页创建用户",
+            "email": "web-user@example.test",
+            "mobile": "13800000002",
+            "roles": ["equipment", "warehouse"],
+            "password": NEW_USER_PASSWORD,
+            "password_confirm": NEW_USER_PASSWORD,
+            "reason": "建立资产与仓库协同账号",
+            "current_password": PASSWORD,
+            "is_staff": "on",
+            "is_superuser": "on",
+        },
+    )
+
+    assert response.status_code == 302
+    target = get_user_model().objects.get(username="web-created-user")
+    assert response.url == reverse(
+        "masterdata:user-permissions-detail", args=[target.pk]
+    )
+    assert target.check_password(NEW_USER_PASSWORD)
+    assert not target.is_staff and not target.is_superuser
+    assert set(target.groups.values_list("name", flat=True)) == {
+        "equipment",
+        "warehouse",
+    }
+    assert AuditLog.objects.filter(
+        action="user_create", object_id=str(target.pk), user=admin
+    ).exists()
+
+    client.logout()
+    login = client.post(
+        reverse("login"),
+        {"username": target.username, "password": NEW_USER_PASSWORD},
+    )
+    assert login.status_code == 302
 
 
 def test_department_manager_scope_limits_lists_and_revocation_is_immediate():

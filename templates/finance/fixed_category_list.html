@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}固定资产会计类别 - EAM-Lite{% endblock %}
 {% block content %}
-  <div class="d-flex justify-content-between align-items-center mb-3"><div><h1 class="h3 mb-1">固定资产会计类别</h1><p class="text-secondary mb-0">该分类与实物分类相互独立；仅为固定资产会计认定和寿命默认服务。</p></div>{% if can_manage %}<a class="btn btn-primary" href="{% url 'finance:fixed-category-create' %}">新建类别</a>{% endif %}</div>
+  <header class="app-page-header"><div><h1 class="h3 mb-1">固定资产会计类别</h1><p class="text-secondary mb-0">该分类与实物分类相互独立；仅为固定资产会计认定和寿命默认服务。</p></div>{% if can_manage %}<a class="btn btn-primary" href="{% url 'finance:fixed-category-create' %}">新建类别</a>{% endif %}</header>
   <div class="table-responsive shadow-sm"><table class="table table-hover bg-white mb-0"><thead><tr><th>编码</th><th>名称</th><th>默认寿命（月）</th><th>状态</th><th></th></tr></thead><tbody>{% for category in categories %}<tr><td>{{ category.code }}</td><td>{{ category.name }}</td><td>{{ category.useful_life_months_default }}</td><td>{% if category.is_active %}启用{% else %}停用{% endif %}</td><td>{% if can_manage %}<a class="btn btn-sm btn-outline-primary" href="{% url 'finance:fixed-category-edit' category.pk %}">编辑</a>{% if category.is_active %}<a class="btn btn-sm btn-outline-danger" href="{% url 'finance:fixed-category-deactivate' category.pk %}">停用</a>{% endif %}{% endif %}</td></tr>{% empty %}<tr><td colspan="5" class="text-center text-secondary py-4">尚无会计类别。</td></tr>{% endfor %}</tbody></table></div>
 {% endblock %}

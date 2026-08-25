@@ -2,11 +2,12 @@
 
 from django import forms
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.accounts.roles import ROLE_NAMES
+from apps.accounts.roles import ROLE_CHOICES
 from apps.masterdata.models import (
     AssetCategory,
     AssetCodingScheme,
@@ -24,7 +25,9 @@ from apps.masterdata.services import SAFE_ATTACHMENT_EXTENSIONS
 def _bootstrap_widgets(form):
     for field in form.fields.values():
         widget = field.widget
-        if isinstance(widget, forms.CheckboxInput):
+        if isinstance(widget, forms.CheckboxSelectMultiple):
+            widget.attrs.pop("class", None)
+        elif isinstance(widget, forms.CheckboxInput):
             widget.attrs.setdefault("class", "form-check-input")
         elif isinstance(widget, (forms.Select, forms.SelectMultiple)):
             widget.attrs.setdefault("class", "form-select")
@@ -462,7 +465,7 @@ class SystemSettingForm(forms.Form):
 class UserRoleForm(forms.Form):
     roles = forms.MultipleChoiceField(
         label="固定角色",
-        choices=[(role, role) for role in ROLE_NAMES],
+        choices=ROLE_CHOICES,
         widget=forms.CheckboxSelectMultiple,
         required=False,
     )
@@ -475,7 +478,7 @@ class UserRoleForm(forms.Form):
         label="当前操作人密码",
         widget=forms.PasswordInput(render_value=False),
         required=False,
-        help_text="授予或移除 system_admin / finance 时必须填写。",
+        help_text="授予或移除系统管理员、财务角色时必须填写。",
     )
 
     def __init__(self, *args, actor=None, **kwargs):
@@ -485,6 +488,120 @@ class UserRoleForm(forms.Form):
         self.actor = actor
         super().__init__(*args, **kwargs)
         _bootstrap_widgets(self)
+
+
+class ApplicationUserCreateForm(forms.Form):
+    username = forms.CharField(label="用户名", max_length=150)
+    display_name = forms.CharField(label="显示名称", max_length=100)
+    email = forms.EmailField(label="电子邮箱", required=False)
+    mobile = forms.CharField(label="手机号码", max_length=32, required=False)
+    roles = forms.MultipleChoiceField(
+        label="固定角色",
+        choices=ROLE_CHOICES,
+        widget=forms.CheckboxSelectMultiple,
+        help_text="至少选择一个角色；角色权限由固定矩阵决定。",
+    )
+    initial_department = forms.ModelChoiceField(
+        label="部门负责人初始范围",
+        queryset=Department.objects.none(),
+        required=False,
+        empty_label="不配置",
+        help_text="仅选择“部门负责人”角色时必填。",
+    )
+    include_descendants = forms.BooleanField(
+        label="部门范围包含下级部门",
+        required=False,
+        initial=True,
+    )
+    password = forms.CharField(
+        label="新用户密码",
+        strip=False,
+        widget=forms.PasswordInput(
+            render_value=False,
+            attrs={"autocomplete": "new-password"},
+        ),
+    )
+    password_confirm = forms.CharField(
+        label="再次输入新用户密码",
+        strip=False,
+        widget=forms.PasswordInput(
+            render_value=False,
+            attrs={"autocomplete": "new-password"},
+        ),
+    )
+    reason = forms.CharField(
+        label="创建原因",
+        max_length=500,
+        widget=forms.Textarea(attrs={"rows": 2}),
+    )
+    current_password = forms.CharField(
+        label="当前操作人密码",
+        strip=False,
+        widget=forms.PasswordInput(
+            render_value=False,
+            attrs={"autocomplete": "current-password"},
+        ),
+        help_text="创建账号前必须再次确认当前系统管理员身份。",
+    )
+
+    def __init__(self, *args, actor=None, company=None, **kwargs):
+        if actor is None or company is None:
+            raise PermissionDenied("创建用户表单必须绑定当前操作人和公司。")
+        require_manage_masterdata(actor, "user_permissions")
+        self.actor = actor
+        self.company = company
+        super().__init__(*args, **kwargs)
+        self.fields["initial_department"].queryset = Department.objects.filter(
+            company=company,
+            is_active=True,
+        ).order_by("normalized_code", "pk")
+        _bootstrap_widgets(self)
+
+    def clean_username(self):
+        value = get_user_model().normalize_username(
+            self.cleaned_data["username"].strip()
+        )
+        if get_user_model().objects.filter(username__iexact=value).exists():
+            raise ValidationError("该用户名已存在。")
+        return value
+
+    def clean_current_password(self):
+        value = self.cleaned_data["current_password"]
+        if not self.actor.check_password(value):
+            raise ValidationError("当前操作人密码验证失败。")
+        return value
+
+    def clean(self):
+        cleaned = super().clean()
+        password = cleaned.get("password")
+        confirmation = cleaned.get("password_confirm")
+        if password and confirmation and password != confirmation:
+            self.add_error("password_confirm", "两次输入的新用户密码不一致。")
+        roles = set(cleaned.get("roles") or ())
+        department = cleaned.get("initial_department")
+        if "department_manager" in roles and department is None:
+            self.add_error(
+                "initial_department",
+                "部门负责人必须同时配置一个启用部门范围。",
+            )
+        elif "department_manager" not in roles and department is not None:
+            self.add_error(
+                "initial_department",
+                "只有部门负责人需要在创建时配置部门范围。",
+            )
+        if password and not self.errors.get("password_confirm"):
+            User = get_user_model()
+            candidate = User(
+                username=cleaned.get("username", ""),
+                display_name=cleaned.get("display_name", ""),
+                email=cleaned.get("email", ""),
+                mobile=cleaned.get("mobile", ""),
+            )
+            try:
+                validate_password(password, user=candidate)
+            except ValidationError as exc:
+                self.add_error("password", exc)
+        return cleaned
 
 
 class ScopeAssignForm(forms.Form):

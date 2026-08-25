@@ -4,101 +4,97 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#16324f">
   <title>{% block title %}EAM-Lite{% endblock %}</title>
   <link rel="stylesheet" href="{% static 'vendor/bootstrap/5.3.8/css/bootstrap.min.css' %}">
-  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}?v=20260825-user-audit2">
   <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
   <script src="{% static 'vendor/htmx/2.0.10/htmx.min.js' %}" defer></script>
   <script src="{% static 'vendor/bootstrap/5.3.8/js/bootstrap.bundle.min.js' %}" defer></script>
+  <script src="{% static 'js/app.js' %}?v=20260824-ux1" defer></script>
 </head>
-<body class="bg-body-tertiary">
-  <header class="navbar navbar-dark bg-primary px-3 shadow-sm">
-    <a class="navbar-brand mb-0 h1 text-decoration-none" href="{% url 'home' %}">
-      {% if current_company %}{{ current_company.short_name }} · {% endif %}EAM-Lite
-    </a>
-    {% if request.user.is_authenticated %}
-      <div class="d-flex align-items-center gap-3 text-white">
-        <span class="d-none d-md-inline">当前用户：{{ request.user.display_name|default:request.user.username }}{% if current_role_names %}（{{ current_role_names|join:', ' }}）{% endif %}</span>
-        <form method="post" action="{% url 'logout' %}" class="m-0">
-          {% csrf_token %}
-          <button type="submit" class="btn btn-sm btn-outline-light">退出</button>
-        </form>
-      </div>
-    {% endif %}
+<body class="app-body">
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
+
+  <header class="app-topbar">
+    <div class="app-topbar-inner">
+      {% if request.user.is_authenticated %}
+        <button class="app-menu-toggle d-xl-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#mobile-navigation" aria-controls="mobile-navigation" aria-label="打开功能菜单">
+          <span></span><span></span><span></span>
+        </button>
+      {% endif %}
+
+      <a class="app-brand" href="{% url 'home' %}">
+        <span class="app-brand-mark" aria-hidden="true">E</span>
+        <span class="app-brand-copy">
+          <strong>EAM-Lite</strong>
+          {% if current_company %}<small>{{ current_company.short_name }}</small>{% else %}<small>企业资产管理</small>{% endif %}
+        </span>
+      </a>
+
+      {% if request.user.is_authenticated %}
+        <div class="app-topbar-actions">
+          {% if asset_nav.initialized and asset_nav.can_create %}
+            <a class="btn app-quick-create d-none d-md-inline-flex" href="{% url 'assets:asset-create' %}">新增资产</a>
+          {% endif %}
+          <div class="dropdown">
+            <button class="app-user-menu dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+              <span class="app-user-avatar" aria-hidden="true">{{ request.user.display_name|default:request.user.username|first|upper }}</span>
+              <span class="app-user-copy d-none d-sm-flex">
+                <strong>{{ request.user.display_name|default:request.user.username }}</strong>
+                <small>{{ request.user.username }}</small>
+              </span>
+            </button>
+            <div class="dropdown-menu dropdown-menu-end app-user-dropdown">
+              <div class="px-3 py-2">
+                <div class="small text-secondary mb-1">当前角色</div>
+                <div class="app-role-list">{% for role in current_role_labels %}<span>{{ role }}</span>{% empty %}<span>未分配业务角色</span>{% endfor %}</div>
+              </div>
+              <div class="dropdown-divider"></div>
+              <form method="post" action="{% url 'logout' %}">
+                {% csrf_token %}
+                <button type="submit" class="dropdown-item app-logout-button">退出登录</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      {% endif %}
+    </div>
   </header>
 
   {% if request.user.is_authenticated %}
-    <div class="container-fluid">
-      <div class="row min-vh-content">
-        <aside class="col-12 col-md-3 col-lg-2 border-end bg-white p-3">
-          <div class="text-secondary small mb-2">功能菜单</div>
-          <nav aria-label="主菜单">
-            <a class="nav-link px-0" href="{% url 'home' %}">首页</a>
-            {% if asset_nav.initialized and asset_nav.can_view %}
-              <div class="text-secondary small mt-3 mb-1">资产管理</div>
-              <a class="nav-link px-0" href="{% url 'assets:asset-list' %}">资产总账</a>
-              {% if asset_nav.can_create %}<a class="nav-link px-0" href="{% url 'assets:asset-create' %}">新增资产</a>{% endif %}
-              {% if asset_nav.can_manage_labels %}<a class="nav-link px-0" href="{% url 'assets:label-queue' %}">标签打印与贴标</a>{% endif %}
-              {% if asset_nav.can_create %}<a class="nav-link px-0" href="{% url 'imports:upload' 'asset_initialization' %}">初始化建账</a>{% endif %}
-            {% endif %}
-            {% if finance_nav.can_view %}
-              <div class="text-secondary small mt-3 mb-1">财务与折旧</div>
-              <a class="nav-link px-0" href="{% url 'finance:pending-list' %}">待财务确认</a>
-              <a class="nav-link px-0" href="{% url 'finance:policy-list' %}">折旧政策</a>
-              <a class="nav-link px-0" href="{% url 'finance:fixed-category-list' %}">固定资产类别</a>
-              <a class="nav-link px-0" href="{% url 'finance:batch-list' %}">折旧批次</a>
-            {% endif %}
-            {% if inventory_nav.can_view %}
-              <div class="text-secondary small mt-3 mb-1">盘点管理</div>
-              <a class="nav-link px-0" href="{% url 'inventory:task-list' %}">盘点任务</a>
-              {% if inventory_nav.can_create %}<a class="nav-link px-0" href="{% url 'inventory:task-create' %}">新建盘点任务</a>{% endif %}
-            {% endif %}
-            {% if maintenance_nav.can_view %}
-              <div class="text-secondary small mt-3 mb-1">设备保养</div>
-              <a class="nav-link px-0" href="{% url 'maintenance:due-list' %}">待保养</a>
-              <a class="nav-link px-0" href="{% url 'maintenance:plan-list' %}">保养计划</a>
-              <a class="nav-link px-0" href="{% url 'maintenance:record-list' %}">保养记录</a>
-              <a class="nav-link px-0" href="{% url 'maintenance:problem-list' %}">问题跟进</a>
-            {% endif %}
-            {% if offboarding_nav.can_view %}
-              <div class="text-secondary small mt-3 mb-1">人员资产</div>
-              <a class="nav-link px-0" href="{% url 'offboarding:clearance-list' %}">离职资产清退</a>
-              {% if offboarding_nav.can_initiate %}<a class="nav-link px-0" href="{% url 'offboarding:clearance-initiate' %}">发起离职清退</a>{% endif %}
-            {% endif %}
-            {% if reports_nav.can_view %}
-              <div class="text-secondary small mt-3 mb-1">报表中心</div>
-              <a class="nav-link px-0" href="{% url 'reports:report-center' %}">报表查询与导出</a>
-              {% if reports_nav.can_view_external_references %}<a class="nav-link px-0" href="{% url 'reports:external-reference-list' %}">T+ 资产卡片编码</a>{% endif %}
-              {% if reports_nav.can_view_tplus %}<a class="nav-link px-0" href="{% url 'reports:tplus-export' %}">T+ 人工对账导出</a>{% endif %}
-            {% endif %}
-            {% if can_access_setup %}<a class="nav-link px-0" href="{% url 'masterdata:setup' %}">初始化向导</a>{% endif %}
-            {% if masterdata_nav.company or masterdata_nav.department or masterdata_nav.employee or masterdata_nav.location or masterdata_nav.asset_category or masterdata_nav.coding_scheme %}
-              <div class="text-secondary small mt-3 mb-1">基础资料</div>
-              {% if masterdata_nav.company %}<a class="nav-link px-0" href="{% url 'masterdata:company-list' %}">公司</a>{% endif %}
-              {% if masterdata_nav.department %}<a class="nav-link px-0" href="{% url 'masterdata:department-list' %}">部门</a>{% endif %}
-              {% if masterdata_nav.employee %}<a class="nav-link px-0" href="{% url 'masterdata:employee-list' %}">人员</a>{% endif %}
-              {% if masterdata_nav.asset_category %}<a class="nav-link px-0" href="{% url 'masterdata:category-list' %}">实物分类</a>{% endif %}
-              {% if masterdata_nav.coding_scheme %}<a class="nav-link px-0" href="{% url 'masterdata:coding-scheme-list' %}">编码规则</a>{% endif %}
-              {% if masterdata_nav.location %}<a class="nav-link px-0" href="{% url 'masterdata:location-list' %}">位置</a>{% endif %}
-            {% endif %}
-            {% if masterdata_nav.system_setting or masterdata_nav.user_permissions or audit_nav.can_view %}
-              <div class="text-secondary small mt-3 mb-1">系统设置</div>
-              {% if masterdata_nav.system_setting %}<a class="nav-link px-0" href="{% url 'masterdata:system-settings' %}">附件技术设置</a>{% endif %}
-              {% if masterdata_nav.user_permissions %}<a class="nav-link px-0" href="{% url 'masterdata:user-permissions-list' %}">用户权限</a>{% endif %}
-              {% if audit_nav.can_view %}<a class="nav-link px-0" href="{% url 'audit:log-list' %}">操作日志</a>{% endif %}
-            {% endif %}
-            {% if masterdata_manage.department or masterdata_manage.employee %}<a class="nav-link px-0" href="{% url 'imports:home' %}">基础资料导入</a>{% endif %}
-            {% if not asset_nav.initialized %}<span class="nav-link disabled px-0">资产建档将在初始化全部完成后开放</span>{% endif %}
-          </nav>
-        </aside>
-        <main class="col-12 col-md-9 col-lg-10 p-4">
+    <div class="app-layout">
+      <aside class="app-sidebar d-none d-xl-flex" aria-label="桌面功能菜单">
+        <div class="app-sidebar-heading">
+          <span>功能导航</span>
+          <small>按业务模块展开</small>
+        </div>
+        {% include "_app_navigation.html" %}
+      </aside>
+
+      <div class="offcanvas offcanvas-start app-mobile-nav" tabindex="-1" id="mobile-navigation" aria-labelledby="mobile-navigation-title">
+        <div class="offcanvas-header">
+          <div>
+            <h2 class="offcanvas-title h5 mb-1" id="mobile-navigation-title">功能导航</h2>
+            <div class="small text-secondary">选择要处理的业务</div>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="关闭"></button>
+        </div>
+        <div class="offcanvas-body">
+          {% include "_app_navigation.html" %}
+        </div>
+      </div>
+
+      <main class="app-main" id="main-content" tabindex="-1">
+        <div class="app-content">
           {% include "masterdata/_messages.html" %}
           {% block content %}{% endblock %}
-        </main>
-      </div>
+        </div>
+      </main>
     </div>
   {% else %}
-    <main class="container py-5">
+    <main class="auth-shell" id="main-content" tabindex="-1">
       {% block anonymous_content %}{% endblock %}
     </main>
   {% endif %}

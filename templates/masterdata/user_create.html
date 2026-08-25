@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}新增用户 - EAM-Lite{% endblock %}
+{% block content %}
+<div class="app-narrow-page">
+  <header class="app-page-header">
+    <div><h1 class="h3 mb-1">新增应用用户</h1><p class="text-secondary mb-0">创建普通应用账号，并一次性配置固定角色和可选的部门负责人范围。</p></div>
+    <a class="btn btn-outline-secondary" href="{% url 'masterdata:user-permissions-list' %}">返回用户列表</a>
+  </header>
+
+  <div class="alert alert-info" role="note">新账号不会获得 Django 后台、超级用户或自定义权限。业务权限只来自下方固定角色和部门范围。</div>
+
+  {% if form.errors %}
+    <div class="alert alert-danger" role="alert"><strong>创建失败，请检查以下内容：</strong><ul class="mb-0">{% for field in form %}{% for error in field.errors %}<li><a href="#{{ field.id_for_label }}">{{ field.label }}：{{ error }}</a></li>{% endfor %}{% endfor %}{% for error in form.non_field_errors %}<li>{{ error }}</li>{% endfor %}</ul></div>
+  {% endif %}
+
+  <form method="post" class="card shadow-sm" novalidate>
+    {% csrf_token %}
+    <section class="card-body border-bottom" aria-labelledby="user-account-heading">
+      <h2 class="h5 mb-3" id="user-account-heading">账号资料</h2>
+      <div class="row g-3">
+        {% for field in form %}{% if field.name == 'username' or field.name == 'display_name' or field.name == 'email' or field.name == 'mobile' %}<div class="col-12 col-md-6"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %}<span class="required-mark" aria-hidden="true">*</span><span class="visually-hidden">必填</span>{% endif %}</label>{{ field }}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}{% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>{% endif %}{% endfor %}
+      </div>
+    </section>
+
+    <section class="card-body border-bottom" aria-labelledby="user-role-heading">
+      <h2 class="h5 mb-3" id="user-role-heading">角色与范围</h2>
+      <div class="mb-3"><label class="form-label">{{ form.roles.label }}<span class="required-mark" aria-hidden="true">*</span><span class="visually-hidden">必填</span></label><div class="role-choice-grid">{{ form.roles }}</div>{% if form.roles.help_text %}<div class="form-text">{{ form.roles.help_text }}</div>{% endif %}{% for error in form.roles.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>
+      <div class="row g-3"><div class="col-12 col-md-8"><label class="form-label" for="{{ form.initial_department.id_for_label }}">{{ form.initial_department.label }}</label>{{ form.initial_department }}<div class="form-text">{{ form.initial_department.help_text }}</div>{% for error in form.initial_department.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div><div class="col-12 col-md-4 d-flex align-items-end"><div class="form-check mb-2">{{ form.include_descendants }}<label class="form-check-label" for="{{ form.include_descendants.id_for_label }}">{{ form.include_descendants.label }}</label></div></div></div>
+    </section>
+
+    <section class="card-body" aria-labelledby="user-security-heading">
+      <h2 class="h5 mb-3" id="user-security-heading">密码与身份确认</h2>
+      <div class="row g-3">
+        {% for field in form %}{% if field.name == 'password' or field.name == 'password_confirm' or field.name == 'reason' or field.name == 'current_password' %}<div class="col-12 {% if field.name != 'reason' %}col-md-6{% endif %}"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}<span class="required-mark" aria-hidden="true">*</span><span class="visually-hidden">必填</span></label>{{ field }}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}{% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>{% endif %}{% endfor %}
+      </div>
+    </section>
+    <div class="card-footer d-flex gap-2"><button class="btn btn-primary" type="submit">创建用户</button><a class="btn btn-outline-secondary" href="{% url 'masterdata:user-permissions-list' %}">取消</a></div>
+  </form>
+</div>
+{% endblock %}

@@ -109,10 +109,15 @@ def _sanitize_value(value, *, excluded, active_containers):
 
 def request_audit_context(request):
     if request is None:
-        return {"ip_address": None, "user_agent": ""}
+        return {"ip_address": None, "user_agent": "", "correlation_id": None}
     return {
-        "ip_address": request.META.get("REMOTE_ADDR") or None,
+        "ip_address": getattr(
+            request,
+            "client_ip_address",
+            request.META.get("REMOTE_ADDR") or None,
+        ),
         "user_agent": request.META.get("HTTP_USER_AGENT", ""),
+        "correlation_id": getattr(request, "correlation_id", None),
     }
 
 

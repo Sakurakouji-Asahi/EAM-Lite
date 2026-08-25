@@ -1,17 +1,15 @@
 {% extends "base.html" %}
 {% block title %}{{ title }} - EAM-Lite{% endblock %}
 {% block content %}
-  <div class="row justify-content-center">
-    <div class="col-12 col-xl-8">
-      <h1 class="h3 mb-3">{{ title }}</h1>
+  <div class="app-narrow-page">
+      <header class="app-page-header"><div><h1 class="h3 mb-1">{{ title }}</h1><p class="text-secondary mb-0">请核对人员、资产和处理结果后提交。</p></div></header>
       {% if description %}<div class="alert alert-warning" role="status">{{ description }}</div>{% endif %}
-      <form method="post"{% if multipart %} enctype="multipart/form-data"{% endif %} class="card card-body shadow-sm">
-        {% include "offboarding/_form_fields.html" %}
-        <div class="d-flex flex-wrap gap-2">
+      <form method="post"{% if multipart %} enctype="multipart/form-data"{% endif %} class="card shadow-sm"><div class="card-body">
+        {% include "offboarding/_form_fields.html" %}</div>
+        <div class="card-footer d-flex flex-wrap gap-2">
           <button class="btn btn-{% if danger %}danger{% else %}primary{% endif %}" type="submit">{{ button_label|default:"确认" }}</button>
           <a class="btn btn-outline-secondary" href="{{ cancel_url }}">取消</a>
         </div>
       </form>
-    </div>
   </div>
 {% endblock %}

@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block title %}标签打印队列 - EAM-Lite{% endblock %}
 {% block content %}
-  <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-3">
+  <header class="app-page-header align-items-start">
     <div>
       <h1 class="h3 mb-1">标签打印队列</h1>
       <p class="text-secondary mb-0">生成预览不会改变标签状态；浏览器打印后仍需明确确认结果。</p>
     </div>
     <a class="btn btn-outline-secondary" href="{% url 'assets:label-batch-list' %}">打印批次</a>
-  </div>
+  </header>
 
   <nav class="nav nav-pills mb-3" aria-label="标签状态筛选">
     {% for value, label in status_choices %}

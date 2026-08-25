@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}生成手动备份 | EAM-Lite{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">生成手动加密备份</h1>
+<div class="alert alert-danger"><strong>请先保存加密口令。</strong>系统不会保存口令，遗失后无法恢复备份。</div>
+<form method="post" class="card card-body" novalidate>{% csrf_token %}
+  {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+  {% for field in form %}{% if not field.is_hidden %}<div class="mb-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}{{ field.errors }}</div>{% else %}{{ field }}{% endif %}{% endfor %}
+  <div class="d-flex gap-2"><button class="btn btn-danger" type="submit">确认生成备份</button><a class="btn btn-outline-secondary" href="{% url 'operations:backup-list' %}">取消</a></div>
+</form>
+{% endblock %}

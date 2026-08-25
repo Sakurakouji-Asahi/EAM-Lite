@@ -3,12 +3,12 @@
 {% block title %}T+ 人工对账导出 | EAM-Lite{% endblock %}
 
 {% block content %}
-<div class="mb-3">
+<header class="app-page-header">
   <h1 class="h3 mb-1">T+ 月末人工对账导出</h1>
   <p class="text-danger mb-0">仅供 T+ 人工对账，不代表已记账；不会同步、推送或写入 T+。</p>
-</div>
+</header>
 
-<section class="card shadow-sm mb-3">
+<section class="card shadow-sm mb-3 app-filter-card">
   <div class="card-body">
     <form method="post" class="row g-3" novalidate>
       {% csrf_token %}

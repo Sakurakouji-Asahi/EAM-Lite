@@ -1,13 +1,14 @@
 {% extends "base.html" %}
 {% block title %}{{ task.name }} - 盘点任务{% endblock %}
 {% block content %}
-  <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3"><div><div class="text-secondary">{{ task.task_code }}</div><h1 class="h3 mb-1">{{ task.name }}</h1><span class="badge text-bg-secondary">{{ task.get_status_display }}</span> <span class="badge text-bg-light">{{ task.get_inventory_type_display }}</span></div><a class="btn btn-outline-secondary" href="{% url 'inventory:task-list' %}">返回任务列表</a></div>
+  <header class="app-page-header align-items-start"><div><div class="text-secondary">{{ task.task_code }}</div><h1 class="h3 mb-1">{{ task.name }}</h1><span class="badge text-bg-secondary">{{ task.get_status_display }}</span> <span class="badge text-bg-light">{{ task.get_inventory_type_display }}</span></div><a class="btn btn-outline-secondary" href="{% url 'inventory:task-list' %}">返回任务列表</a></header>
+  <div class="workflow-guidance" role="status"><strong>当前步骤</strong>{% if task.status == 'draft' %}<span>核对盘点范围和执行人，确认后发布并生成不可变快照。</span>{% elif task.status == 'in_progress' %}<span>执行人可使用手机扫码；现场完成后由有权用户停止扫码并进入差异处理。</span>{% elif task.status == 'reconciliation' %}<span>处理未盘、异常和盘盈记录；全部形成结论后才能关闭任务。</span>{% elif task.status == 'closed' %}<span>任务已关闭，结果和证据只读保留；后续更正必须追加记录。</span>{% else %}<span>任务已取消，现有历史和证据继续保留。</span>{% endif %}</div>
   {% include "inventory/_summary.html" %}
   {% if summary %}<div class="row g-2 mb-3"><div class="col-6 col-md-3"><div class="alert alert-success mb-0">正常：{{ summary.normal }}</div></div><div class="col-6 col-md-3"><div class="alert alert-warning mb-0">盘盈：{{ summary.surplus }}</div></div><div class="col-12 col-md-3"><div class="alert {% if summary.unresolved %}alert-danger{% else %}alert-success{% endif %} mb-0">未解决：{{ summary.unresolved }}</div></div></div>{% endif %}
   <div class="d-flex flex-wrap gap-2 mb-3">
     {% if actions.edit %}<a class="btn btn-outline-primary" href="{% url 'inventory:task-edit' task.pk %}">编辑草稿</a>{% endif %}
     {% if actions.publish %}<a class="btn btn-primary" href="{% url 'inventory:task-publish' task.pk %}">发布并生成快照</a>{% endif %}
-    {% if actions.scan %}<a class="btn btn-success" href="{% url 'inventory:task-scan' task.pk %}">手机扫码盘点</a><a class="btn btn-outline-success" href="{% url 'inventory:surplus-create' task.pk %}">登记盘盈</a>{% endif %}
+    {% if actions.scan %}<a class="btn btn-primary" href="{% url 'inventory:task-scan' task.pk %}">手机扫码盘点</a><a class="btn btn-outline-primary" href="{% url 'inventory:surplus-create' task.pk %}">登记盘盈</a>{% endif %}
     {% if task.status == 'in_progress' and actions.reconcile %}<a class="btn btn-warning" href="{% url 'inventory:task-stop' task.pk %}">停止扫码</a>{% endif %}
     {% if actions.close %}<a class="btn btn-danger{% if summary.unresolved %} disabled{% endif %}"{% if not summary.unresolved %} href="{% url 'inventory:task-close' task.pk %}"{% endif %}>关闭任务</a>{% endif %}
     {% if actions.cancel %}<a class="btn btn-outline-danger" href="{% url 'inventory:task-cancel' task.pk %}">取消任务</a>{% endif %}

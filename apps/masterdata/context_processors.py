@@ -1,5 +1,6 @@
 from django.db.utils import OperationalError, ProgrammingError
 
+from apps.accounts.roles import ROLE_LABELS
 from apps.masterdata.permissions import (
     can_access_setup,
     can_manage_masterdata,
@@ -18,9 +19,11 @@ def masterdata_navigation(request):
     except (OperationalError, ProgrammingError):
         # Keeps ``manage.py migrate`` and pre-migration error pages renderable.
         company = None
+    role_names = sorted(role_names_for(user))
     return {
         "current_company": company,
-        "current_role_names": sorted(role_names_for(user)),
+        "current_role_names": role_names,
+        "current_role_labels": [ROLE_LABELS[name] for name in role_names],
         "masterdata_nav": {
             resource: can_view_masterdata(user, resource)
             for resource in (

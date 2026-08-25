@@ -43,7 +43,12 @@ class AuditLogFilterForm(forms.Form):
         queryset=get_user_model().objects.none(),
         empty_label="全部操作者",
     )
-    action = forms.CharField(label="动作（精确）", required=False, max_length=100)
+    action = forms.CharField(
+        label="动作代码（精确）",
+        required=False,
+        max_length=100,
+        help_text="可留空；需要精确筛选时，可从结果中的技术代码复制。",
+    )
     object_type = forms.ChoiceField(
         label="对象类型（精确）",
         required=False,

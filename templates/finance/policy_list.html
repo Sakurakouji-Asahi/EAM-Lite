@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}折旧政策 - EAM-Lite{% endblock %}
 {% block content %}
-  <div class="d-flex justify-content-between align-items-center mb-3"><div><h1 class="h3 mb-1">折旧政策</h1><p class="text-secondary mb-0">已启用或已被使用的版本不可破坏性修改；变更请克隆新版本。</p></div>{% if can_manage %}<a class="btn btn-primary" href="{% url 'finance:policy-create' %}">新建政策</a>{% endif %}</div>
+  <header class="app-page-header"><div><h1 class="h3 mb-1">折旧政策</h1><p class="text-secondary mb-0">已启用或已被使用的版本不可破坏性修改；变更请克隆新版本。</p></div>{% if can_manage %}<a class="btn btn-primary" href="{% url 'finance:policy-create' %}">新建政策</a>{% endif %}</header>
   <div class="table-responsive shadow-sm"><table class="table table-hover bg-white mb-0"><thead><tr><th>稳定键</th><th>版本</th><th>名称</th><th>方法</th><th>周期</th><th>残值</th><th>状态</th><th>默认</th></tr></thead><tbody>{% for policy in policies %}<tr><td><a href="{% url 'finance:policy-detail' policy.pk %}">{{ policy.policy_key }}</a></td><td>{{ policy.version }}</td><td>{{ policy.name }}</td><td>{{ policy.get_method_display }}</td><td>{{ policy.get_posting_period_display }}</td><td>{% if policy.default_salvage_mode == 'rate' %}{{ policy.default_salvage_rate }}{% else %}{{ policy.default_salvage_amount }}{% endif %}</td><td>{{ policy.get_status_display }}</td><td>{% if policy.is_default %}<span class="badge text-bg-success">公司默认</span>{% endif %}</td></tr>{% empty %}<tr><td colspan="8" class="text-center text-secondary py-4">尚无折旧政策。</td></tr>{% endfor %}</tbody></table></div>
   <div class="mt-3 d-flex gap-2"><a class="btn btn-outline-primary" href="{% url 'finance:settings' %}">财务提示参数</a>{% if can_manage %}<a class="btn btn-outline-primary" href="{% url 'finance:category-policy' %}">实物分类默认政策</a>{% endif %}</div>
 {% endblock %}

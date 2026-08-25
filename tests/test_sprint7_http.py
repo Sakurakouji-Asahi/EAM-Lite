@@ -146,7 +146,7 @@ def test_http_hidden_expected_status_forgery_cannot_escape_under_repair(
 
     send_asset_for_repair(
         actor=context["equipment"], asset=asset,
-        effective_at=timezone.now() - timedelta(seconds=1),
+        effective_at=timezone.now(),
         reason="建立维修中前置状态", idempotency_key=f"{url_name}-repair",
         expected_status="in_use",
     )

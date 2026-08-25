@@ -141,6 +141,8 @@ def test_create_edit_detail_and_dynamic_fields_work_without_financial_inputs(cli
     assert "COLOR 字段" in content
     assert "红" in content
     assert "财务确认和财务资料将在 Sprint 4" not in content
+    assert "当前步骤" in content
+    assert "继续补齐实物资料和资产照片" in content
 
     edit_data = form_data(
         category,

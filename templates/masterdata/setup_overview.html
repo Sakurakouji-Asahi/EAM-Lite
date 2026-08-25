@@ -1,18 +1,18 @@
 {% extends "base.html" %}
 {% block title %}初始化向导 - EAM-Lite{% endblock %}
 {% block content %}
-  <div class="mb-4"><h1 class="h3 mb-1">初始化向导</h1><p class="text-secondary mb-0">九个步骤均按当前真实数据计算；只有步骤 9 的显式最终校验会设置整体完成标记。</p></div>
+  <header class="app-page-header"><div><h1 class="h3 mb-1">初始化向导</h1><p class="text-secondary mb-0">九个步骤均按当前真实数据计算；只有步骤 9 的显式最终校验会设置整体完成标记。</p></div></header>
   {% if not company %}
     <div class="alert alert-warning"><strong>尚未配置公司。</strong> 请先创建 V1 唯一活动公司。</div>
     <a class="btn btn-primary" href="{% url 'masterdata:company-create' %}">开始配置公司</a>
   {% else %}
     <div class="list-group shadow-sm">
-      {% for item in steps %}<a class="list-group-item list-group-item-action d-flex align-items-center justify-content-between" href="{% url 'masterdata:setup-step' item.number %}"><span><strong>步骤 {{ item.number }}：{{ item.name }}</strong><br><small class="text-secondary">维护角色：{{ item.writer }}</small></span>{% if item.complete %}<span class="badge text-bg-success">已满足</span>{% else %}<span class="badge text-bg-warning">待完成</span>{% endif %}</a>{% endfor %}
+      {% for item in steps %}<a class="list-group-item list-group-item-action d-flex align-items-center justify-content-between" href="{% url 'masterdata:setup-step' item.number %}"><span><strong>步骤 {{ item.number }}：{{ item.name }}</strong><br><small class="text-secondary">维护角色：{{ item.writer_label }}</small></span>{% if item.complete %}<span class="badge text-bg-success">已满足</span>{% else %}<span class="badge text-bg-warning">待完成</span>{% endif %}</a>{% endfor %}
     </div>
     {% if setting.initialization_completed %}
       <div class="alert alert-success mt-4 mb-0">初始化已完成：{{ setting.completed_at|date:"Y-m-d H:i" }}。后续配置变更仍须通过对应受控页面并写审计。</div>
     {% else %}
-      <div class="alert alert-secondary mt-4 mb-0">完成所有真实条件后，由 <code>system_admin</code> 在步骤 9 执行最终校验；页面访问本身不会置为完成。</div>
+      <div class="alert alert-secondary mt-4 mb-0">完成所有真实条件后，由系统管理员在步骤 9 执行最终校验；页面访问本身不会置为完成。</div>
     {% endif %}
   {% endif %}
 {% endblock %}

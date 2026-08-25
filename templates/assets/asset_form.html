@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block title %}{% if asset %}编辑资产草稿{% else %}新增资产{% endif %} - EAM-Lite{% endblock %}
 {% block content %}
-  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <header class="app-page-header">
     <div>
       <h1 class="h3 mb-1">{% if asset %}编辑资产草稿 {{ asset.draft_number }}{% else %}新增资产草稿{% endif %}</h1>
       <p class="text-secondary mb-0">本页只维护实物资料；不会生成正式编号或财务资料。</p>
     </div>
     <a class="btn btn-outline-secondary" href="{{ cancel_url }}">返回</a>
-  </div>
+  </header>
 
   {% if form.errors %}
     <div class="alert alert-danger" role="alert">
@@ -22,7 +22,7 @@
   <form method="post" novalidate>
     {% csrf_token %}
     {% for section in form_sections %}
-      <section class="card shadow-sm mb-3" aria-labelledby="section-{{ forloop.counter }}">
+      <section class="card shadow-sm mb-3 app-form-section" aria-labelledby="section-{{ forloop.counter }}">
         <div class="card-header"><h2 class="h5 mb-0" id="section-{{ forloop.counter }}">{{ section.title }}</h2></div>
         <div class="card-body">
           <div class="row">
@@ -36,7 +36,7 @@
       </section>
     {% endfor %}
 
-    <section class="card shadow-sm mb-3" aria-labelledby="custom-fields-title">
+    <section class="card shadow-sm mb-3 app-form-section" aria-labelledby="custom-fields-title">
       <div class="card-header"><h2 class="h5 mb-0" id="custom-fields-title">分类扩展资料</h2></div>
       <div class="card-body">
         {% if custom_value_forms %}
@@ -56,7 +56,7 @@
     <div class="alert alert-info" role="note">
       照片与附件请先保存草稿，再从资产详情页上传。提交财务确认前至少需要一张有效资产照片。
     </div>
-    <div class="d-flex gap-2">
+    <div class="app-form-actions">
       <button class="btn btn-primary" type="submit">保存草稿</button>
       <a class="btn btn-outline-secondary" href="{{ cancel_url }}">取消</a>
     </div>

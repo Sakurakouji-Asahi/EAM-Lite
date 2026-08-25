@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}{{ backup.backup_set_id }} | 数据备份{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3"><h1 class="h3 mb-0">{{ backup.backup_set_id }}</h1><a class="btn btn-outline-secondary" href="{% url 'operations:backup-list' %}">返回</a></div>
+<section class="card mb-3"><div class="card-body"><dl class="row mb-0">
+  <dt class="col-sm-3">类型/状态</dt><dd class="col-sm-9">{{ backup.get_kind_display }} / {{ backup.get_status_display }}</dd>
+  <dt class="col-sm-3">数据快照</dt><dd class="col-sm-9">{{ backup.data_snapshot_at|date:'Y-m-d H:i:s'|default:'—' }}</dd>
+  <dt class="col-sm-3">文件大小</dt><dd class="col-sm-9">{% if backup.package_size != None %}{{ backup.package_size|filesizeformat }}{% else %}—{% endif %}</dd>
+  <dt class="col-sm-3">SHA-256</dt><dd class="col-sm-9 text-break">{{ backup.package_sha256|default:'—' }}</dd>
+  <dt class="col-sm-3">保留到期</dt><dd class="col-sm-9">{{ backup.expires_at|date:'Y-m-d H:i:s'|default:'—' }}</dd>
+  {% if backup.error_summary %}<dt class="col-sm-3">失败说明</dt><dd class="col-sm-9 text-danger">{{ backup.error_summary }}</dd>{% endif %}
+</dl></div></section>
+{% if backup.status == 'completed' %}<section class="card"><div class="card-header">授权下载</div><div class="card-body"><p>每次下载均重新验证当前密码，并签发一次性短时授权。</p><form method="post" action="{% url 'operations:backup-authorize-download' backup.pk %}">{% csrf_token %}{{ download_form.idempotency_key }}<div class="mb-3"><label class="form-label" for="{{ download_form.current_password.id_for_label }}">{{ download_form.current_password.label }}</label>{{ download_form.current_password }}{{ download_form.current_password.errors }}</div>{{ download_form.non_field_errors }}<button class="btn btn-primary" type="submit">验证并准备下载</button></form></div></section>{% endif %}
+{% endblock %}

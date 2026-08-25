@@ -3,13 +3,15 @@
 EAM-Lite 是公司局域网内使用的轻量级企业资产管理系统。本仓库根目录就是包含
 AGENTS.md、docs/、tasks/ 和 manage.py 的当前目录，不存在第二层项目仓库。
 
-当前实现范围覆盖到 Sprint 11，仍待本轮纠正项和最终验收闭合。现有范围包括身份与审计、
+当前实现已进入 Sprint 12 生产就绪与 UAT 收口。现有范围包括身份与审计、
 基础资料、导入、资产编码与主档、财务确认与折旧、二维码标签、调拨借用与处置、盘点、
 保养、离职清退、Dashboard、固定报表和 T+ 人工对账导出。T+ 仍是正式会计系统；本应用
 不调用 T+ API、不写 T+ 数据库，也不自动入账。
 
-Sprint 12 的生产部署、自动备份与保留、隔离恢复演练、HTTPS 上线验收和最终 UAT 尚未实施。
-因此当前状态只能用于开发和验收，不能声明为生产就绪。
+仓库已包含 Gunicorn/Caddy/PostgreSQL 18 Compose、生产 fail-closed 配置、加密数据库+附件
+备份、30 日保留、system_admin 一次性下载授权和隔离恢复命令。当前本地恢复演练已通过，
+但真实固定 DNS/受信任 HTTPS、独立 NAS、完整性能场景和多角色人工签字仍是外部上线门槛，
+因此当前可用于本地业务验收，仍不得声明为生产上线完成。
 
 ## 版本与依赖
 
@@ -25,6 +27,8 @@ Sprint 12 的生产部署、自动备份与保留、隔离恢复演练、HTTPS �
 - defusedxml：0.7.1，作为 XML 解析安全加固依赖
 - Pillow：12.3.0，用于附件图片真实解码、格式确认和像素上限保护
 - qrcode：8.2，用于本地生成带安静区的 SVG 二维码，不调用外网二维码服务
+- gunicorn：26.1.0，生产 Docker 容器中的 WSGI 服务
+- cryptography：50.0.0，用于 AES-256-GCM 加密备份包
 
 requirements/production.in 和 requirements/development.in 记录直接依赖的兼容范围；
 production.lock 和 development.lock 记录当前环境实际解析出的全部精确版本。安装和
@@ -61,6 +65,7 @@ python -m venv .venv
 
 ~~~powershell
 $env:SECRET_KEY = & .\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(64))"
+$env:EAM_ENVIRONMENT = "development"
 $env:DEBUG = "true"
 $env:DB_ENGINE = "postgresql"
 $env:DB_NAME = "eam_lite"
@@ -84,6 +89,13 @@ $env:SECURE_SSL_REDIRECT = "false"
 $env:SESSION_COOKIE_SECURE = "false"
 $env:CSRF_COOKIE_SECURE = "false"
 $env:TRUST_PROXY_SSL_HEADER = "false"
+$env:SECURE_HSTS_SECONDS = "0"
+$env:BACKUP_ROOT = "var/backups"
+$env:BACKUP_TEMP_ROOT = "var/backup-tmp"
+$env:BACKUP_MIRROR_ROOT = "var/backup-mirror"
+$env:BACKUP_PG_MODE = "docker"
+$env:BACKUP_POSTGRES_CONTAINER = "eam-lite-sprint0-pg"
+$env:BACKUP_KEY_FILE = "var/local/backup_key.txt"
 ~~~
 
 SECRET_KEY、DEBUG、ALLOWED_HOSTS 以及 PostgreSQL 连接信息是启动所需配置。
@@ -113,16 +125,44 @@ createuser --pwprompt eam_lite
 createdb --owner=eam_lite --encoding=UTF8 eam_lite
 ~~~
 
-上述兼任数据库 owner/迁移账号的 eam_lite 不是生产 runtime 账号方案。生产必须按
-docs/09 分离 schema/migration owner 与最小权限 runtime 账号；本 Sprint 不实现生产
-GRANT。运行 pytest 时 Django 会创建并删除独立测试数据库，因此测试账号需要
+上述兼任数据库 owner/迁移账号的 eam_lite 只用于开发。生产 Compose 由
+`deploy/postgres-init.sh` 分离 bootstrap、migration 与 runtime 三个身份，release 步骤迁移后
+执行 `grant_runtime_database_privileges`，并撤销关键历史表 DELETE/TRUNCATE。运行 pytest
+时 Django 会创建并删除独立测试数据库，因此测试账号需要
 CREATEDB；不要把这项权限授予生产 runtime 账号。
 
 当前 PostgreSQL 门禁使用的 transaction-local 自定义 GUC 只是受控 Service 的完整性与
 防误写标记；当同一个数据库身份既能直接修改业务表又能自行 `set_config` 时，它不构成
 安全授权边界。生产上线前必须使用非登录 owner/独立迁移身份与最小权限 runtime 身份，
 撤销 runtime 对敏感表的非必要直接 DML；确需的写入应通过经过评审、固定 `search_path`
-且严格授权的 `SECURITY DEFINER` 入口完成。该权限部署属于 Sprint 12 上线验收范围。
+且严格授权的 `SECURITY DEFINER` 入口完成。当前 Compose 已完成身份分离但尚未把全部关键
+写操作收敛为 SECURITY DEFINER；此项仍记录为正式上线阻断，不影响本地验收使用。
+
+## 一键本地启动
+
+Windows 本地验收可双击仓库根目录 `启动EAM-Lite.cmd`。启动器会等待 Docker Desktop、
+启动 PostgreSQL、执行迁移、检测局域网 IP、设置本地 QR 地址并打开浏览器。Secret 和自动
+备份密钥只写入被 Git 忽略的 `var/local/`，不会写入源码。黑色服务窗口必须保持打开，
+`Ctrl+C` 停止。该方式使用 DEBUG 和 HTTP，仅限本地验收，不是生产部署。
+
+## 生产部署、备份与恢复
+
+生产固定使用 `deploy/compose.yaml`、`deploy/Dockerfile`、`deploy/Caddyfile` 和仓库外 Secret；
+不得使用 runserver。完整的 DNS/CA、构建、release、启动停止、自动备份、30 日保留、手动
+下载、隔离恢复、回滚与监控步骤见：
+
+- `docs/Sprint-12-Operations-Runbook.md`
+- `docs/Sprint-12-UAT-Evidence.md`
+
+每日自动任务运行：
+
+~~~bash
+docker compose --env-file /etc/eam-lite/compose.env -f deploy/compose.yaml --profile backup run --rm backup
+~~~
+
+system_admin 也可从“系统设置 → 数据备份”生成手动加密备份。备份口令不会保存；浏览器
+下载使用当前密码复核和一次性短时授权。隔离恢复只允许目标名称含 restore/uat/test 的全新
+数据库及空附件目录，命令见运维手册。
 
 ## 迁移与检查
 
@@ -301,6 +341,11 @@ createsuperuser 除用户名、邮箱和密码外还会要求填写必填的 dis
 --actor-password-env ACTOR_VARIABLE 和 --password-env NEW_USER_VARIABLE 分别从进程
 环境读取两个密码；禁止把密码作为命令行明文参数，密码原文也不会进入审计。
 
+首批 `system_admin` 建立后，后续普通应用用户可在“系统设置 → 用户权限 → 新增用户”中
+创建。页面要求当前系统管理员再次输入本人密码，只允许选择固定角色；创建部门负责人时必须
+同时配置一个启用部门范围。用户、初始范围、角色和 AuditLog 在同一事务内提交，页面不会
+创建 Django staff、superuser 或自定义权限。
+
 ## 启动
 
 开发环境启动：
@@ -459,6 +504,13 @@ UUID、十进制字符串金额和原因，明确 0 也必须有原因。普通�
 部门/本人对象范围鉴权；扫码响应禁止缓存和 Referer，日志格式化器会遮蔽扫码路径中的完整
 Token。
 
+正式环境会拒绝以 IP、`localhost`、临时电脑名或非标准端口作为 `QR_BASE_URL`，并要求该
+固定 DNS HTTPS 根地址与 `ALLOWED_HOSTS`、`CSRF_TRUSTED_ORIGINS` 精确一致。服务器迁移时
+保持 DNS 名称不变，只在验收后切换 DNS 指向，因此既有正式标签无需因更换电脑而改变 URL。
+Windows 一键本地启动使用的 HTTP/IP 二维码仅供验收，打印页会明确标记“本地验收 · 部署后
+重印”；这类标签不得作为正式长期标签，最终部署完成后必须重新打印，必要时执行换标以吊销
+已经流出的旧地址标签。
+
 finance、equipment、warehouse 可从“标签打印与贴标”选择待打印资产。生成 A4 预览只建立
 不可变的 `generated` 批次、标签文字快照、页码和位置，不改变二维码状态；每页 24 张，QR
 按 100% 打印为 22 mm，并保留二维码安静区。浏览器打印后必须返回批次页明确点击“已完成
@@ -472,9 +524,9 @@ finance、equipment、warehouse 可从“标签打印与贴标”选择待打印
 改变既有业务状态。打印、取消、换标、贴标及越权扫码均记录审计，审计中不保存完整 Token。
 所有页面、SVG 生成和打印样式均由本应用本地提供，不依赖 CDN、远程字体或外网 QR 服务。
 
-## Sprint 11 当前边界
+## Sprint 12 当前边界
 
-当前实现范围已覆盖调拨借用、处置、盘点、保养、离职清退、固定报表、Dashboard 和 T+ 人工
-对账导出，但 Sprint 11 尚待本轮纠正项和最终验收闭合。生产部署、真实自动备份、恢复演练、
-HTTPS 上线验收和最终 UAT 尚未实现；完成 Sprint 12 及
-`docs/09-Security-Backup-and-Deployment.md` 的全部门槛前不得上线生产。
+当前实现范围已覆盖调拨借用、处置、盘点、保养、离职清退、固定报表、Dashboard、T+ 人工
+对账导出，以及 Sprint 12 的生产配置和备份恢复代码。当前结论仍为“暂不上线”：只有真实
+接受服务器的受信任 LAN HTTPS、异机备份、完整性能、Chrome/Edge/手机/A4 实测和全部业务
+签字均完成后，才能按 `docs/09-Security-Backup-and-Deployment.md` 建议上线。

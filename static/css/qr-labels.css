@@ -11,6 +11,17 @@
   font-family: system-ui, sans-serif;
 }
 
+.temporary-qr-warning {
+  margin: 0.75rem 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid #f1aeb5;
+  border-radius: 0.5rem;
+  color: #58151c;
+  background: #f8d7da;
+  font-family: system-ui, sans-serif;
+  line-height: 1.6;
+}
+
 .label-sheet {
   box-sizing: border-box;
   width: 194mm;
@@ -50,6 +61,15 @@
   font-size: 7pt;
   line-height: 1.22;
   overflow: hidden;
+}
+
+.temporary-qr-label {
+  margin-bottom: 0.4mm;
+  color: #b02a37;
+  font-size: 6pt;
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
 }
 
 .company-name,
@@ -94,6 +114,39 @@
   flex: 0 0 22mm;
   line-height: 0;
   text-decoration: none;
+}
+
+@media screen {
+  .screen-scan-hint {
+    margin: 0.75rem 0;
+    padding: 0.75rem 1rem;
+    border: 1px solid #9ec5fe;
+    border-radius: 0.5rem;
+    color: #052c65;
+    background: #cfe2ff;
+    line-height: 1.6;
+  }
+
+  .qr-label {
+    overflow: visible;
+  }
+
+  .qr-preview-link {
+    position: relative;
+    z-index: 1;
+    cursor: zoom-in;
+    transition: transform 120ms ease-out, box-shadow 120ms ease-out;
+  }
+
+  .qr-preview-link:hover,
+  .qr-preview-link:focus-visible {
+    z-index: 10;
+    transform: scale(2.5);
+    transform-origin: right center;
+    outline: 0;
+    background: #fff;
+    box-shadow: 0 0 0 2px #fff, 0 0.35rem 1rem rgb(0 0 0 / 35%);
+  }
 }
 
 .qr-scan-page {
@@ -158,6 +211,7 @@
 
   .qr-preview-link {
     text-decoration: none !important;
+    transform: none !important;
   }
 
   .qr-preview-link::after {

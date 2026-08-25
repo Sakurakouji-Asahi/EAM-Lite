@@ -330,6 +330,9 @@ def test_audit_http_scope_exact_registry_and_recursive_redaction(client):
     assert "FINANCE-OWN" in finance_html
     assert hr_log.object_id not in finance_html
     assert "987654.32" in finance_html
+    assert "财务资料变更" in finance_html
+    assert "资产财务资料" in finance_html
+    assert "原值" in finance_html
     for secret in ("SECRET-VALUE", "FILE-VALUE", "TOKEN-VALUE", "A1-AMOUNT"):
         assert secret not in finance_html
 

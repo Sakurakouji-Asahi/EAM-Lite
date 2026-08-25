@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}数据备份 | EAM-Lite{% endblock %}
+{% block content %}
+<header class="app-page-header">
+  <div><h1 class="h3 mb-1">数据备份</h1><p class="text-secondary mb-0">备份包包含 PostgreSQL 与受保护附件，并使用独立口令加密。</p></div>
+  <a class="btn btn-primary" href="{% url 'operations:backup-create' %}">生成手动备份</a>
+</header>
+<div class="alert alert-warning">浏览器下载不能替代每日自动备份、独立 NAS 副本和隔离恢复演练。</div>
+<div class="table-responsive shadow-sm"><table class="table align-middle mb-0">
+  <thead><tr><th>备份集</th><th>类型</th><th>状态</th><th>开始时间</th><th>快照时间</th><th>大小</th><th></th></tr></thead>
+  <tbody>{% for backup in backups %}<tr>
+    <td>{{ backup.backup_set_id }}</td><td>{{ backup.get_kind_display }}</td><td>{{ backup.get_status_display }}</td>
+    <td>{{ backup.started_at|date:'Y-m-d H:i:s' }}</td><td>{{ backup.data_snapshot_at|date:'Y-m-d H:i:s'|default:'—' }}</td>
+    <td>{% if backup.package_size != None %}{{ backup.package_size|filesizeformat }}{% else %}—{% endif %}</td>
+    <td><a class="btn btn-sm btn-outline-primary" href="{% url 'operations:backup-detail' backup.pk %}">查看</a></td>
+  </tr>{% empty %}<tr><td colspan="7" class="text-center text-secondary py-4">尚无备份记录。</td></tr>{% endfor %}</tbody>
+</table></div>
+{% endblock %}

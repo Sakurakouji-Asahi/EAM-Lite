@@ -6,7 +6,7 @@ from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.db import connection
 
-from config.env import parse_bool, parse_database_engine, read_int_env
+from config.env import parse_bool, parse_database_engine, read_int_env, read_secret_env
 
 
 def _load_settings(monkeypatch, *, debug, qr_base_url):
@@ -63,6 +63,33 @@ def test_business_locale_timezone_currency_and_selected_database():
     assert settings.LOGIN_FAILURE_PAIR_LIMIT > 0
 
 
+def test_django_server_access_logs_use_the_redacting_formatter():
+    server_logger = settings.LOGGING["loggers"]["django.server"]
+
+    assert server_logger["handlers"] == ["console"]
+    assert server_logger["propagate"] is False
+    assert settings.LOGGING["handlers"]["console"]["formatter"] == "safe"
+
+
+def test_local_launcher_readiness_uses_health_endpoint_not_visible_login_copy():
+    launcher = Path("scripts/start_eam_lite_local.ps1").read_text(encoding="utf-8")
+
+    assert '${localUrl}healthz/' in launcher
+    assert '"status"\\s*:\\s*"ok"' in launcher
+    assert "登录 EAM-Lite" not in launcher
+
+
+def test_secret_can_come_from_external_file_but_never_both_sources(monkeypatch, tmp_path):
+    secret_file = tmp_path / "secret.txt"
+    secret_file.write_text("file-secret-value\n", encoding="utf-8")
+    monkeypatch.delenv("SPRINT12_SECRET", raising=False)
+    monkeypatch.setenv("SPRINT12_SECRET_FILE", str(secret_file))
+    assert read_secret_env("SPRINT12_SECRET") == "file-secret-value"
+    monkeypatch.setenv("SPRINT12_SECRET", "direct-secret")
+    with pytest.raises(ImproperlyConfigured, match="只能配置其中一个"):
+        read_secret_env("SPRINT12_SECRET")
+
+
 def test_qr_base_url_allows_http_in_debug(monkeypatch):
     loaded = _load_settings(
         monkeypatch,
@@ -71,6 +98,17 @@ def test_qr_base_url_allows_http_in_debug(monkeypatch):
     )
 
     assert loaded["QR_BASE_URL"] == "http://192.168.1.10:8765"
+    assert loaded["QR_BASE_URL_IS_DURABLE"] is False
+
+
+def test_stable_dns_https_qr_base_is_marked_durable(monkeypatch):
+    loaded = _load_settings(
+        monkeypatch,
+        debug=False,
+        qr_base_url="https://eam.company.lan",
+    )
+
+    assert loaded["QR_BASE_URL_IS_DURABLE"] is True
 
 
 def test_qr_base_url_rejects_http_outside_debug(monkeypatch):

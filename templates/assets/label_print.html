@@ -11,8 +11,15 @@
 <body>
   <header class="label-print-controls">
     <h1>{{ batch.batch_code }} · A4 标签预览</h1>
+    {% if qr_origin_is_temporary %}
+      <div class="temporary-qr-warning" role="alert">
+        <strong>本地验收标签：</strong>当前二维码使用本机 HTTP/IP 地址，不能作为迁移到其他电脑后的正式长期标签。请仅用于本地测试；最终服务器完成固定 DNS 和受信任 HTTPS 后必须重新生成并打印正式标签。
+      </div>
+    {% endif %}
     <p>请使用浏览器打印（Ctrl+P），纸张选 A4、实际大小/100%、不要“适合页面”。浏览器打印不会自动标记为已打印；完成后请返回批次页确认结果。</p>
-    <p id="qr-screen-scan-hint" class="screen-scan-hint">屏幕扫码不易识别时，请点击标签内的二维码，在新窗口放大后再扫码。</p>
+    <div id="qr-screen-scan-hint" class="screen-scan-hint">
+      <strong>手机扫码：</strong>手机先连接与电脑相同的 Wi-Fi，并在 Safari、Chrome 或系统浏览器中登录 EAM-Lite；再用系统相机扫码并选择“在浏览器中打开”。微信、支付宝等内置扫码可能会拦截局域网地址。屏幕识别困难时，将鼠标移到二维码上即可放大，或点击二维码在新窗口打开。
+    </div>
     <p><a href="{% url 'assets:label-batch-detail' batch.pk %}">返回批次确认页</a></p>
   </header>
   {% regroup items by page_no as pages %}
@@ -21,6 +28,7 @@
       {% for item in page.list %}
         <article class="qr-label">
           <div class="label-copy">
+            {% if qr_origin_is_temporary %}<div class="temporary-qr-label">本地验收 · 部署后重印</div>{% endif %}
             <div class="company-name">{{ item.label_snapshot_json.company_short_name }}</div>
             <div class="asset-name">{{ item.label_snapshot_json.asset_name }}</div>
             <div class="asset-code">{{ item.label_snapshot_json.asset_code }}</div>

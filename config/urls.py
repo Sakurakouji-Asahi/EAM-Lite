@@ -2,11 +2,12 @@ from django.urls import include, path
 
 from apps.accounts.forms import ChineseAuthenticationForm
 from apps.accounts.views import ApplicationLoginView, ApplicationLogoutView
-from apps.core.views import home
+from apps.core.views import error_400, error_403, error_404, error_500, healthz, home
 from apps.masterdata.views import setup_overview, setup_step
 
 
 urlpatterns = [
+    path("healthz/", healthz, name="healthz"),
     path("", home, name="home"),
     path(
         "login/",
@@ -25,4 +26,10 @@ urlpatterns = [
     path("offboarding/", include("apps.offboarding.urls")),
     path("audit/", include("apps.audit.urls")),
     path("reports/", include("apps.reports.urls")),
+    path("operations/", include("apps.operations.urls")),
 ]
+
+handler400 = error_400
+handler403 = error_403
+handler404 = error_404
+handler500 = error_500

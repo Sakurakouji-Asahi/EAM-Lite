@@ -7,6 +7,11 @@ from collections.abc import Mapping
 
 from apps.audit.permissions import FINANCE_AUDIT_OBJECT_TYPES, scoped_audit_logs
 from apps.audit.services import REDACTED, SENSITIVE_AUDIT_FIELD_PARTS
+from apps.audit.display import (
+    audit_action_label,
+    audit_object_label,
+    localize_audit_payload,
+)
 from apps.core.logging import redact_log_text
 from apps.masterdata.permissions import role_names_for
 
@@ -132,16 +137,32 @@ def project_audit_log(log, *, user):
     new_data = redact_audit_payload(
         log.new_data_json, user=user, object_type=log.object_type
     )
+    raw_old_data = json.dumps(old_data, ensure_ascii=False, indent=2, default=str)
+    raw_new_data = json.dumps(new_data, ensure_ascii=False, indent=2, default=str)
     return {
         "created_at": log.created_at,
         "actor": (
             (log.user.display_name or log.user.username) if log.user else "系统/已停用用户"
         ),
         "action": log.action,
+        "action_label": audit_action_label(log.action),
         "object_type": log.object_type,
+        "object_type_label": audit_object_label(log.object_type),
         "object_id": log.object_id,
-        "old_data": json.dumps(old_data, ensure_ascii=False, indent=2, default=str),
-        "new_data": json.dumps(new_data, ensure_ascii=False, indent=2, default=str),
+        "old_data": json.dumps(
+            localize_audit_payload(old_data),
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        ),
+        "new_data": json.dumps(
+            localize_audit_payload(new_data),
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        ),
+        "old_data_technical": raw_old_data,
+        "new_data_technical": raw_new_data,
         "correlation_id": log.correlation_id,
     }
 

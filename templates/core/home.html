@@ -3,15 +3,24 @@
 {% block title %}首页 | EAM-Lite{% endblock %}
 
 {% block content %}
-<section class="card shadow-sm">
-  <div class="card-body p-4 d-flex flex-wrap justify-content-between align-items-center gap-2">
-    <div>
-      <h1 class="h3 mb-1">EAM-Lite 企业资产管理系统</h1>
-      {% if initialized and dashboard %}<p class="text-secondary mb-0">数据截止时间 {{ dashboard.data_snapshot_at|date:'Y-m-d H:i:s' }}，所有指标按当前用户数据范围统计。</p>{% else %}<p class="text-secondary mb-0">系统初始化尚未完成。</p>{% endif %}
-    </div>
-    {% if reports_nav.can_view %}<a class="btn btn-outline-primary" href="{% url 'reports:report-center' %}?report_type={{ reports_nav.default_report_type }}">{% if dashboard.physical %}进入报表中心{% else %}查看离职未清报表{% endif %}</a>{% endif %}
+<header class="dashboard-header">
+  <div>
+    <h1 class="h3 mb-1">EAM-Lite 企业资产管理系统</h1>
+    {% if initialized and dashboard %}<p class="text-secondary mb-0">数据截止时间 {{ dashboard.data_snapshot_at|date:'Y-m-d H:i:s' }}，所有指标按当前用户数据范围统计。</p>{% else %}<p class="text-secondary mb-0">系统初始化尚未完成。</p>{% endif %}
   </div>
-</section>
+  {% if reports_nav.can_view %}<a class="btn btn-outline-primary" href="{% url 'reports:report-center' %}?report_type={{ reports_nav.default_report_type }}">{% if dashboard.physical %}进入报表中心{% else %}查看离职未清报表{% endif %}</a>{% endif %}
+</header>
+
+{% if initialized and dashboard %}
+<nav class="dashboard-shortcuts" aria-label="常用操作">
+  {% if asset_nav.can_view %}<a href="{% url 'assets:asset-list' %}"><strong>资产总账</strong><span>查询资产和当前状态</span></a>{% endif %}
+  {% if asset_nav.can_create %}<a href="{% url 'assets:asset-create' %}"><strong>新增资产</strong><span>建立一条资产草稿</span></a>{% endif %}
+  {% if asset_nav.can_manage_labels %}<a href="{% url 'assets:label-queue' %}"><strong>标签与贴标</strong><span>打印和确认二维码</span></a>{% endif %}
+  {% if inventory_nav.can_view %}<a href="{% url 'inventory:task-list' %}"><strong>盘点任务</strong><span>查看执行进度和差异</span></a>{% endif %}
+  {% if maintenance_nav.can_view %}<a href="{% url 'maintenance:due-list' %}"><strong>待保养</strong><span>处理到期保养事项</span></a>{% endif %}
+  {% if reports_nav.can_view %}<a href="{% url 'reports:report-center' %}"><strong>报表中心</strong><span>筛选、预览和导出</span></a>{% endif %}
+</nav>
+{% endif %}
 
 {% if initialized and dashboard %}
   {% if dashboard.physical %}

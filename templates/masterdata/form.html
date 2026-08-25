@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block title %}{{ title }} - EAM-Lite{% endblock %}
 {% block content %}
-  <div class="d-flex align-items-center justify-content-between mb-3">
+  <header class="app-page-header">
     <h1 class="h3 mb-0">{{ title }}</h1>
     <a class="btn btn-outline-secondary" href="{{ cancel_url }}">返回</a>
-  </div>
-  <div class="card shadow-sm">
+  </header>
+  <div class="card shadow-sm app-form-section">
     <div class="card-body">
       {% if form.non_field_errors %}
         <div class="alert alert-danger" role="alert">
@@ -47,20 +47,20 @@
           {% if field.field.widget.input_type == 'checkbox' %}
             <div class="form-check mb-3">
               {{ field }}
-              <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+              <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %}<span class="required-mark" aria-hidden="true">*</span><span class="visually-hidden">必填</span>{% endif %}</label>
               {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
               {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
             </div>
           {% else %}
             <div class="mb-3">
-              <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+              <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %}<span class="required-mark" aria-hidden="true">*</span><span class="visually-hidden">必填</span>{% endif %}</label>
               {{ field }}
               {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
               {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
             </div>
           {% endif %}
         {% endfor %}
-        <div class="d-flex gap-2">
+        <div class="app-form-actions app-form-actions-contained">
           <button class="btn btn-primary" type="submit">{% if department_scope_impact %}确认改挂并保存{% else %}保存{% endif %}</button>
           <a class="btn btn-outline-secondary" href="{{ cancel_url }}">取消</a>
         </div>

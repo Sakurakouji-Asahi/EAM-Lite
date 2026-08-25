@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}资产总账 - EAM-Lite{% endblock %}
 {% block content %}
-  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <header class="app-page-header">
     <div>
       <h1 class="h3 mb-1">资产总账</h1>
       <p class="text-secondary mb-0">仅显示当前公司及当前账号数据范围内的资产。</p>
@@ -13,9 +13,9 @@
         <a class="btn btn-primary" href="{% url 'assets:asset-create' %}">新增资产</a>
       </div>
     {% endif %}
-  </div>
+  </header>
 
-  <form method="get" class="card shadow-sm mb-3" aria-label="资产搜索和筛选">
+  <form method="get" class="card shadow-sm mb-3 app-filter-card" aria-label="资产搜索和筛选">
     <div class="card-body">
       <div class="row g-3">
         <div class="col-12 col-lg-4">
@@ -72,7 +72,11 @@
     </div>
   </form>
 
-  <div class="card shadow-sm">
+  <div class="card shadow-sm app-data-card">
+    <div class="card-header app-data-card-header">
+      <strong>资产列表</strong>
+      <span>共 {{ page.paginator.count }} 条</span>
+    </div>
     <div class="table-responsive">
       <table class="table table-hover align-middle mb-0">
         <thead class="table-light">
@@ -106,7 +110,7 @@
               <td><a class="btn btn-sm btn-outline-primary" href="{% url 'assets:asset-detail' asset.pk %}">查看</a></td>
             </tr>
           {% empty %}
-            <tr><td colspan="10" class="text-center text-secondary py-4">没有符合当前条件的资产。</td></tr>
+            <tr><td colspan="10"><div class="app-empty-state"><strong>没有符合当前条件的资产</strong><span>可以清除筛选后重新查询。{% if can_create %}也可以直接建立新的资产草稿。{% endif %}</span><div><a class="btn btn-sm btn-outline-secondary" href="{% url 'assets:asset-list' %}">清除筛选</a>{% if can_create %} <a class="btn btn-sm btn-primary" href="{% url 'assets:asset-create' %}">新增资产</a>{% endif %}</div></div></td></tr>
           {% endfor %}
         </tbody>
       </table>

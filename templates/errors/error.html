@@ -1,0 +1,4 @@
+{% extends "base.html" %}
+{% block title %}{{ status_code }} {{ error_title }} | EAM-Lite{% endblock %}
+{% block content %}{% include "errors/_error_card.html" %}{% endblock %}
+{% block anonymous_content %}{% include "errors/_error_card.html" %}{% endblock %}

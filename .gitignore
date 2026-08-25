@@ -20,6 +20,7 @@ media/
 *.dump
 *.backup
 *.log
+*.zip
 .idea/
 .vscode/
 ~$*

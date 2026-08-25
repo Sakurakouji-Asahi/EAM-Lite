@@ -20,6 +20,32 @@ def read_env(name, default=_MISSING, *, allow_blank=False):
     return value
 
 
+def read_secret_env(name):
+    """Read one secret from NAME or an externally mounted NAME_FILE.
+
+    Exactly one source is accepted so deployment cannot silently prefer a stale
+    plaintext environment value over the mounted secret file.
+    """
+    direct = os.environ.get(name)
+    file_name = os.environ.get(f"{name}_FILE")
+    if direct is not None and file_name is not None:
+        raise ImproperlyConfigured(
+            f"{name} 与 {name}_FILE 只能配置其中一个"
+        )
+    if file_name is not None:
+        path = Path(file_name)
+        if not path.is_file():
+            raise ImproperlyConfigured(f"Secret 文件不存在：{name}_FILE")
+        value = path.read_text(encoding="utf-8").strip()
+    elif direct is not None:
+        value = direct.strip()
+    else:
+        raise ImproperlyConfigured(f"缺少必需 Secret：{name} 或 {name}_FILE")
+    if not value:
+        raise ImproperlyConfigured(f"Secret {name} 不得为空")
+    return value
+
+
 def parse_bool(value, *, name):
     normalized = value.strip().lower()
     if normalized in _TRUE_VALUES:

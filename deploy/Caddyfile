@@ -1,0 +1,28 @@
+http://{$EAM_HOSTNAME} {
+	redir https://{$EAM_HOSTNAME}{uri} 308
+}
+
+{$EAM_HOSTNAME} {
+	tls internal
+	encode zstd gzip
+
+	handle_path /static/* {
+		root * /srv/static
+		file_server
+		header Cache-Control "public, max-age=604800, immutable"
+	}
+
+	handle {
+		reverse_proxy app:8000 {
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+		X-Frame-Options DENY
+	}
+}

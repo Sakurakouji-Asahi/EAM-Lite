@@ -14,6 +14,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
+from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, connection, transaction
 from django.db.models import Q
@@ -1058,6 +1059,118 @@ def set_user_roles(
         request=request,
     )
     refresh_initialization_progress(company=company, actor=actor, request=request)
+    return user
+
+
+@transaction.atomic
+def create_application_user(
+    *,
+    actor,
+    company,
+    username,
+    display_name,
+    password,
+    roles,
+    reason,
+    current_password,
+    email="",
+    mobile="",
+    initial_department=None,
+    include_descendants=True,
+    request=None,
+):
+    """Create one ordinary application user through controlled permissions."""
+
+    require_manage_masterdata(actor, "user_permissions")
+    _require_current_company(company)
+    if not actor.check_password(current_password):
+        raise ValidationError({"current_password": "当前操作人密码验证失败。"})
+
+    reason = str(reason).strip()
+    if not reason:
+        raise ValidationError({"reason": "创建用户必须填写原因。"})
+
+    normalized_roles = set(roles)
+    if not normalized_roles:
+        raise ValidationError({"roles": "新用户至少需要一个固定角色。"})
+    unknown = normalized_roles - set(ROLE_NAMES)
+    if unknown:
+        raise ValidationError({"roles": f"不允许的角色：{', '.join(sorted(unknown))}"})
+    if "department_manager" in normalized_roles and initial_department is None:
+        raise ValidationError(
+            {"initial_department": "部门负责人必须同时配置一个启用部门范围。"}
+        )
+    if "department_manager" not in normalized_roles and initial_department is not None:
+        raise ValidationError(
+            {"initial_department": "只有部门负责人需要在创建时配置部门范围。"}
+        )
+
+    User = get_user_model()
+    username = User.normalize_username(str(username).strip())
+    display_name = str(display_name).strip()
+    if not username or not display_name:
+        raise ValidationError("用户名和显示名称不得为空。")
+    if User.objects.filter(username__iexact=username).exists():
+        raise ValidationError({"username": "该用户名已存在。"})
+
+    user = User(
+        username=username,
+        display_name=display_name,
+        email=str(email).strip(),
+        mobile=str(mobile).strip(),
+        is_active=True,
+        is_staff=False,
+        is_superuser=False,
+    )
+    validate_password(password, user=user)
+    user.full_clean(exclude={"password"})
+    ensure_fixed_roles()
+    user.set_password(password)
+    try:
+        user.save()
+    except IntegrityError as exc:
+        raise ValidationError({"username": "该用户名已存在。"}) from exc
+
+    _audit(
+        company=company,
+        actor=actor,
+        action="user_create",
+        instance=user,
+        new_data={
+            "username": user.username,
+            "display_name": user.display_name,
+            "email": user.email,
+            "mobile": user.mobile,
+            "is_active": user.is_active,
+            "roles": sorted(normalized_roles),
+            "initial_department": (
+                initial_department.pk if initial_department is not None else None
+            ),
+            "include_descendants": bool(include_descendants),
+            "reason": reason,
+        },
+        request=request,
+    )
+
+    if initial_department is not None:
+        assign_department_scope(
+            actor=actor,
+            company=company,
+            user=user,
+            department=initial_department,
+            include_descendants=include_descendants,
+            reason=reason,
+            request=request,
+        )
+    set_user_roles(
+        actor=actor,
+        company=company,
+        user=user,
+        roles=normalized_roles,
+        reason=reason,
+        current_password=current_password,
+        request=request,
+    )
     return user
 
 

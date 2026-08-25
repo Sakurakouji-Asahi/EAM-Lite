@@ -167,7 +167,7 @@ def test_snapshot_stays_fixed_after_formal_assignment_change():
     change_asset_assignment(
         actor=context["equipment"], asset=asset,
         to_department=department, to_responsible_employee=employee,
-        to_location=location, effective_at=timezone.now() - timedelta(seconds=1),
+        to_location=location, effective_at=timezone.now(),
         reason="盘点发布后调拨", idempotency_key="S8SNAPMOVE-move",
         expected_status="in_use", expected_department_id=asset.department_id,
         expected_responsible_employee_id=asset.responsible_employee_id,

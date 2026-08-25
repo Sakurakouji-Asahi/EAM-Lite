@@ -8,11 +8,18 @@ from django.contrib.auth.models import Group
 from django.core.management import call_command
 from django.core.management.base import CommandError
 
-from apps.accounts.roles import ROLE_NAMES
+from apps.accounts.roles import ROLE_CHOICES, ROLE_LABELS, ROLE_NAMES
 from apps.audit.models import AuditLog
 
 
 pytestmark = pytest.mark.django_db
+
+
+def test_every_fixed_role_has_a_stable_chinese_display_label():
+    assert tuple(name for name, _label in ROLE_CHOICES) == ROLE_NAMES
+    assert set(ROLE_LABELS) == set(ROLE_NAMES)
+    assert ROLE_LABELS["system_admin"] == "系统管理员"
+    assert ROLE_LABELS["finance"] == "财务"
 
 
 def test_custom_user_model_is_active_from_initial_migration():

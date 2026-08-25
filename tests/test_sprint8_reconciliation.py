@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import timedelta
-
 import pytest
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.utils import timezone
@@ -137,7 +135,7 @@ def test_master_updated_resolution_reuses_lifecycle_movement_service():
         resolution_type="master_updated", conclusion="按现场执行正式调拨",
         idempotency_key="S8MASTER-resolve", to_department=department,
         to_responsible_employee=employee, to_location=location,
-        effective_at=timezone.now() - timedelta(seconds=1),
+        effective_at=timezone.now(),
     )
     asset.refresh_from_db()
     assert resolution.movement_id is not None

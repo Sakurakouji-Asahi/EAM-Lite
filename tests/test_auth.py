@@ -153,6 +153,18 @@ def test_anonymous_user_is_redirected_from_home(client):
     assert response.url.startswith(reverse("login"))
 
 
+def test_login_page_uses_accessible_responsive_product_shell(client):
+    response = client.get(reverse("login"))
+    content = response.content.decode()
+
+    assert response.status_code == 200
+    assert 'class="login-layout"' in content
+    assert 'class="skip-link"' in content
+    assert 'autocomplete="username"' in content
+    assert 'autocomplete="current-password"' in content
+    assert "资产有据可查，责任清晰可见" in content
+
+
 def test_authenticated_user_can_access_home(client):
     user = create_user()
     client.force_login(user)
@@ -163,6 +175,9 @@ def test_authenticated_user_can_access_home(client):
     content = response.content.decode()
     assert "EAM-Lite 企业资产管理系统" in content
     assert "系统初始化尚未完成" in content
+    assert 'class="app-layout"' in content
+    assert 'id="mobile-navigation"' in content
+    assert 'aria-current="page"' in content
 
 
 def test_logout_requires_post_and_invalidates_session(client):

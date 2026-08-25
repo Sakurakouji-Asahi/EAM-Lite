@@ -93,6 +93,7 @@ urlpatterns = [
     ),
     path("system-settings/", views.system_settings, name="system-settings"),
     path("user-permissions/", views.user_permissions_list, name="user-permissions-list"),
+    path("user-permissions/new/", views.user_create, name="user-create"),
     path(
         "user-permissions/<int:user_id>/",
         views.user_permissions_detail,

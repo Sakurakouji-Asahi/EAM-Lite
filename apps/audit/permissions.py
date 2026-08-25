@@ -32,6 +32,8 @@ AUDIT_OBJECT_TYPE_REGISTRY = {
     "AssetQrIdentity": "资产二维码身份",
     "AssetValueAdjustment": "资产价值调整",
     "AssetWorkUsage": "资产工作量",
+    "BackupDownloadGrant": "备份下载授权",
+    "BackupSet": "数据备份集",
     "Attachment": "附件",
     "AttachmentLink": "附件关联",
     "Company": "公司",

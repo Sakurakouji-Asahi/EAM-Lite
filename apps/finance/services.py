@@ -1009,9 +1009,11 @@ def _insert_counter_if_missing(*, company, scheme, scope_key):
     table = connection.ops.quote_name(Counter._meta.db_table)
     now = timezone.now()
     # PostgreSQL's ON CONFLICT primitive is required for first-use concurrency.
+    # The only interpolated identifier is ORM model metadata quoted by the
+    # active database backend; every business value remains parameter-bound.
     with connection.cursor() as cursor:
         cursor.execute(
-            f"INSERT INTO {table} (company_id, coding_scheme_id, scope_key, current_value, created_at, updated_at) "
+            f"INSERT INTO {table} (company_id, coding_scheme_id, scope_key, current_value, created_at, updated_at) "  # nosec B608
             "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
             [company.pk, scheme.pk, scope_key, initial, now, now],
         )

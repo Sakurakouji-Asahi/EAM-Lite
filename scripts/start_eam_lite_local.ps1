@@ -12,15 +12,16 @@ $databaseName = "eam_lite_sprint1_browser"
 $databasePort = "54320"
 $serverPort = 8765
 $localUrl = "http://127.0.0.1:$serverPort/"
+$healthUrl = "${localUrl}healthz/"
 
 if ($OpenBrowserWhenReady) {
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
         try {
-            $response = Invoke-WebRequest -Uri "${localUrl}login/" -UseBasicParsing -TimeoutSec 1
+            $response = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 1
             if (
                 $response.StatusCode -ge 200 -and
                 $response.StatusCode -lt 400 -and
-                $response.Content -match "登录 EAM-Lite"
+                $response.Content -match '"status"\s*:\s*"ok"'
             ) {
                 Start-Process -FilePath $localUrl
                 exit 0
@@ -47,6 +48,39 @@ function Invoke-QuietNativeCommand {
     }
 }
 
+function Test-DockerReady {
+    param(
+        [Parameter(Mandatory = $true)][string]$DockerExe,
+        [int]$TimeoutMilliseconds = 5000
+    )
+
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $DockerExe
+    $startInfo.Arguments = "info"
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) {
+            return $false
+        }
+        if (-not $process.WaitForExit($TimeoutMilliseconds)) {
+            try { $process.Kill() } catch { }
+            return $false
+        }
+        return $process.ExitCode -eq 0
+    }
+    catch {
+        return $false
+    }
+    finally {
+        $process.Dispose()
+    }
+}
+
 try {
     $repoRoot = Split-Path -Parent $PSScriptRoot
     $managePy = Join-Path $repoRoot "manage.py"
@@ -62,11 +96,11 @@ try {
     if ($existingListener) {
         $eamAlreadyRunning = $false
         try {
-            $existingResponse = Invoke-WebRequest -Uri "${localUrl}login/" -UseBasicParsing -TimeoutSec 3
+            $existingResponse = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 3
             $eamAlreadyRunning = (
                 $existingResponse.StatusCode -ge 200 -and
                 $existingResponse.StatusCode -lt 400 -and
-                $existingResponse.Content -match "登录 EAM-Lite"
+                $existingResponse.Content -match '"status"\s*:\s*"ok"'
             )
         }
         catch {
@@ -90,7 +124,7 @@ try {
     }
     $dockerExe = $dockerCommand.Source
 
-    $dockerReady = ((Invoke-QuietNativeCommand { & $dockerExe info }) -eq 0)
+    $dockerReady = Test-DockerReady -DockerExe $dockerExe
     if (-not $dockerReady) {
         $dockerDesktopProcess = Get-Process -Name "Docker Desktop" -ErrorAction SilentlyContinue
         if (-not $dockerDesktopProcess) {
@@ -109,7 +143,9 @@ try {
             }
 
             Write-Host "正在启动 Docker Desktop，请稍候……" -ForegroundColor Cyan
-            Start-Process -FilePath $dockerDesktopExe -WindowStyle Hidden
+            # Docker Desktop must remain visible so startup/WSL failures are
+            # actionable instead of looking like an EAM-Lite hang.
+            Start-Process -FilePath $dockerDesktopExe
         }
         else {
             Write-Host "Docker Desktop 正在启动，请稍候……" -ForegroundColor Cyan
@@ -117,7 +153,7 @@ try {
 
         for ($attempt = 0; $attempt -lt 90; $attempt++) {
             Start-Sleep -Seconds 2
-            if ((Invoke-QuietNativeCommand { & $dockerExe info }) -eq 0) {
+            if (Test-DockerReady -DockerExe $dockerExe) {
                 $dockerReady = $true
                 break
             }
@@ -193,6 +229,7 @@ try {
 
     $localVarDir = Join-Path $repoRoot "var\local"
     $secretKeyPath = Join-Path $localVarDir "secret_key.txt"
+    $backupKeyPath = Join-Path $localVarDir "backup_key.txt"
     New-Item -ItemType Directory -Path $localVarDir -Force | Out-Null
     if (Test-Path -LiteralPath $secretKeyPath -PathType Leaf) {
         $secretKey = [System.IO.File]::ReadAllText($secretKeyPath).Trim()
@@ -213,8 +250,25 @@ try {
     if ([string]::IsNullOrWhiteSpace($secretKey)) {
         throw "本地 SECRET_KEY 文件为空：$secretKeyPath"
     }
+    if (-not (Test-Path -LiteralPath $backupKeyPath -PathType Leaf)) {
+        $backupBytes = New-Object byte[] 64
+        $backupRandom = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+        try {
+            $backupRandom.GetBytes($backupBytes)
+        }
+        finally {
+            $backupRandom.Dispose()
+        }
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText(
+            $backupKeyPath,
+            [Convert]::ToBase64String($backupBytes),
+            $utf8NoBom
+        )
+    }
 
     $env:SECRET_KEY = $secretKey
+    $env:EAM_ENVIRONMENT = "development"
     $env:DEBUG = "true"
     $env:ALLOWED_HOSTS = "127.0.0.1,localhost,$lanIp"
     $env:QR_BASE_URL = "http://${lanIp}:$serverPort"
@@ -224,6 +278,17 @@ try {
     $env:DB_PASSWORD = $postgresPassword
     $env:DB_HOST = "127.0.0.1"
     $env:DB_PORT = $databasePort
+    $env:BACKUP_PG_MODE = "docker"
+    $env:BACKUP_DOCKER_BIN = $dockerExe
+    $env:BACKUP_POSTGRES_CONTAINER = $containerName
+    $env:BACKUP_ROOT = "var/backups"
+    $env:BACKUP_TEMP_ROOT = "var/backup-tmp"
+    $env:BACKUP_MIRROR_ROOT = "var/backup-mirror"
+    $env:BACKUP_KEY_FILE = $backupKeyPath
+    $env:APP_COMMIT_SHA = [string](& git -C $repoRoot rev-parse HEAD 2>$null)
+    if ([string]::IsNullOrWhiteSpace($env:APP_COMMIT_SHA)) {
+        $env:APP_COMMIT_SHA = "unknown"
+    }
 
     Write-Host "正在执行数据库迁移……" -ForegroundColor Cyan
     & $pythonExe $managePy migrate --noinput

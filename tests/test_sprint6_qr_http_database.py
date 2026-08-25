@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 from django.core.exceptions import ValidationError
 from django.db import DatabaseError, close_old_connections, connection, transaction
-from django.test import Client
+from django.test import Client, override_settings
 from django.urls import reverse
 
 from apps.assets.models import Asset, AssetMovement, AssetQrIdentity
@@ -152,11 +152,32 @@ def test_print_view_is_local_a4_snapshot_and_browser_get_does_not_confirm(client
     assert f'href="{qr_url}"' in text
     assert f'src="{qr_url}"' in text
     assert 'target="_blank"' in text and 'rel="noopener"' in text
-    assert "点击标签内的二维码，在新窗口放大后再扫码" in text
+    assert "手机先连接与电脑相同的 Wi-Fi" in text
+    assert "微信、支付宝等内置扫码可能会拦截局域网地址" in text
+    assert "将鼠标移到二维码上即可放大" in text
     batch.refresh_from_db()
     qr_identity.refresh_from_db()
     assert batch.status == "generated" and batch.printed_at is None
     assert qr_identity.label_status == "ready_to_print"
+
+
+@override_settings(QR_BASE_URL_IS_DURABLE=False)
+def test_print_view_marks_machine_bound_qr_labels_as_temporary(client):
+    context, asset, _qr_identity = formal_asset_context("S6TEMPQR")
+    batch = generate_print_batch(
+        actor=context["finance"],
+        assets=[asset],
+        idempotency_key="S6TEMPQR-batch",
+    )
+    client.force_login(context["finance"])
+
+    response = client.get(reverse("assets:label-batch-print", args=[batch.pk]))
+    text = response.content.decode()
+
+    assert response.status_code == 200
+    assert "本地验收标签" in text
+    assert "不能作为迁移到其他电脑后的正式长期标签" in text
+    assert "本地验收 · 部署后重印" in text
 
 
 def test_qr_svg_endpoint_is_authenticated_scoped_and_noncacheable(client):
@@ -211,6 +232,8 @@ def test_print_css_fixes_a4_geometry_qr_minimum_size_and_360px_layout():
     assert "@media print" in css
     assert ".qr-preview-link" in css
     assert ".screen-scan-hint" in css
+    assert "transform: scale(2.5)" in css
+    assert "cursor: zoom-in" in css
     assert "content: none !important" in css
     assert "http://" not in css and "https://" not in css
 

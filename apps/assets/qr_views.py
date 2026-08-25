@@ -5,6 +5,7 @@ from __future__ import annotations
 import secrets
 from decimal import Decimal
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -337,7 +338,15 @@ def label_batch_print(request, pk):
     )
     if not items or any(not _item_has_current_printable_identity(item) for item in items):
         raise PermissionDenied("批次含已失效或非当前二维码身份，不得继续打印。")
-    return render(request, "assets/label_print.html", {"batch": batch, "items": items})
+    return render(
+        request,
+        "assets/label_print.html",
+        {
+            "batch": batch,
+            "items": items,
+            "qr_origin_is_temporary": not settings.QR_BASE_URL_IS_DURABLE,
+        },
+    )
 
 
 @require_POST

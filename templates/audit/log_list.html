@@ -3,14 +3,14 @@
 {% block title %}操作日志 | EAM-Lite{% endblock %}
 
 {% block content %}
-<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+<header class="app-page-header">
   <div>
     <h1 class="h3 mb-1">操作日志</h1>
     <p class="text-secondary mb-0">只读查询；所有时间按上海时区解释，变更摘要按当前字段权限再次脱敏。</p>
   </div>
-</div>
+</header>
 
-<section class="card shadow-sm mb-3">
+<section class="card shadow-sm mb-3 app-filter-card">
   <div class="card-body">
     <form method="get" class="row g-3" novalidate>
       {% if form.non_field_errors %}
@@ -20,6 +20,7 @@
         <div class="col-12 col-md-6 col-xl-3">
           <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
           {{ field }}
+          {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
           {% for error in field.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
         </div>
       {% endfor %}
@@ -55,10 +56,10 @@
           <tr>
             <td class="text-nowrap">{{ log.created_at|date:"Y-m-d H:i:s" }}</td>
             <td>{{ log.actor }}</td>
-            <td><code>{{ log.action }}</code></td>
-            <td><span class="text-nowrap">{{ log.object_type }}</span><br><small class="text-secondary text-break">{{ log.object_id|default:"—" }}</small></td>
-            <td><pre class="audit-json mb-0">{{ log.old_data }}</pre></td>
-            <td><pre class="audit-json mb-0">{{ log.new_data }}</pre></td>
+            <td><strong>{{ log.action_label }}</strong><details class="audit-technical"><summary>技术代码</summary><code>{{ log.action }}</code></details></td>
+            <td><span class="text-nowrap">{{ log.object_type_label }}</span><br><small class="text-secondary text-break">{{ log.object_id|default:"—" }}</small><details class="audit-technical"><summary>对象代码</summary><code>{{ log.object_type }}</code></details></td>
+            <td>{% if log.old_data == '{}' %}<span class="text-secondary">无变更前数据</span>{% else %}<pre class="audit-json mb-0">{{ log.old_data }}</pre><details class="audit-technical"><summary>原始字段</summary><pre class="audit-json mb-0">{{ log.old_data_technical }}</pre></details>{% endif %}</td>
+            <td>{% if log.new_data == '{}' %}<span class="text-secondary">无变更后数据</span>{% else %}<pre class="audit-json mb-0">{{ log.new_data }}</pre><details class="audit-technical"><summary>原始字段</summary><pre class="audit-json mb-0">{{ log.new_data_technical }}</pre></details>{% endif %}</td>
             <td><code class="small">{{ log.correlation_id }}</code></td>
           </tr>
         {% empty %}

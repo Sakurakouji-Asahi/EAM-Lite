@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}下载备份 | EAM-Lite{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">备份下载已授权</h1>
+<div class="alert alert-warning">授权只能使用一次，并将在 {{ grant.expires_at|date:'Y-m-d H:i:s' }} 失效。下载包仍需要创建时输入的加密口令才能恢复。</div>
+<form method="post" action="{% url 'operations:backup-download' grant.pk %}">{% csrf_token %}<button type="submit" class="btn btn-primary">立即下载 {{ backup.backup_set_id }}</button></form>
+{% endblock %}

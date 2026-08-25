@@ -8,6 +8,7 @@ from apps.masterdata.models import Company, Department, Employee, UserDepartment
 from apps.masterdata.permissions import resolve_department_ids
 from apps.masterdata.services import (
     assign_department_scope,
+    create_application_user,
     create_department,
     create_employee,
     revoke_department_scope,
@@ -21,6 +22,7 @@ from apps.offboarding.services import initiate_clearance
 
 pytestmark = pytest.mark.django_db
 PASSWORD = "Valid-Password-2026!"
+NEW_USER_PASSWORD = "Long-Random-7p!vQ2zN-2026"
 
 
 def make_user(username, *roles):
@@ -40,6 +42,73 @@ def make_company():
         name="测试公司",
         short_name="测试",
     )
+
+
+def test_system_admin_creates_application_user_roles_scope_and_audit_atomically():
+    company = make_company()
+    admin = make_user("admin", "system_admin")
+    department = create_department(
+        actor=admin,
+        company=company,
+        data={"code": "MANAGED", "name": "管理部门"},
+    )
+
+    user = create_application_user(
+        actor=admin,
+        company=company,
+        username="new-manager",
+        display_name="新部门负责人",
+        email="manager@example.test",
+        mobile="13800000001",
+        password=NEW_USER_PASSWORD,
+        roles={"department_manager"},
+        initial_department=department,
+        include_descendants=True,
+        reason="建立部门负责人账号",
+        current_password=PASSWORD,
+    )
+
+    assert user.check_password(NEW_USER_PASSWORD)
+    assert not user.is_staff and not user.is_superuser and user.is_active
+    assert set(user.groups.values_list("name", flat=True)) == {"department_manager"}
+    scope = UserDepartmentScope.objects.get(user=user, is_active=True)
+    assert scope.department == department and scope.include_descendants
+    audit = AuditLog.objects.get(action="user_create", object_id=str(user.pk))
+    assert audit.company == company and audit.user == admin
+    assert NEW_USER_PASSWORD not in str(audit.new_data_json)
+    assert "password" not in str(audit.new_data_json).lower()
+
+
+def test_application_user_creation_rejects_wrong_actor_password_and_non_admin():
+    company = make_company()
+    admin = make_user("admin", "system_admin")
+    equipment = make_user("equipment", "equipment")
+
+    with pytest.raises(ValidationError, match="密码验证失败"):
+        create_application_user(
+            actor=admin,
+            company=company,
+            username="wrong-password-user",
+            display_name="错误密码用户",
+            password=NEW_USER_PASSWORD,
+            roles={"equipment"},
+            reason="测试错误密码",
+            current_password="wrong",
+        )
+    with pytest.raises(PermissionDenied):
+        create_application_user(
+            actor=equipment,
+            company=company,
+            username="forbidden-user",
+            display_name="无权用户",
+            password=NEW_USER_PASSWORD,
+            roles={"equipment"},
+            reason="测试越权",
+            current_password=PASSWORD,
+        )
+    assert not get_user_model().objects.filter(
+        username__in={"wrong-password-user", "forbidden-user"}
+    ).exists()
 
 
 def test_employee_status_service_clears_manager_and_audits_with_company():
