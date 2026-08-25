@@ -3,12 +3,15 @@
 状态：进行中；当前结论 **暂不上线**。本文只记录已经实际执行的证据，未执行项不以自动
 测试代替人工签字。
 
+软件功能冻结基线：`v0.1.0`；业务需求基线：`Requirements V1.1`。软件标签只固定代码范围，
+不替代本文要求的生产环境、恢复、性能、浏览器和多角色人工签字。
+
 ## 1. 环境
 
 - 日期：2026-08-24，业务时区 Asia/Shanghai。
 - OS：Windows 本地验收主机 + Docker Desktop 29.4.3。
 - Python：3.14.7；Django 5.2.17；PostgreSQL 18.4。
-- 基线提交：`57d29a1e7f36f3200387ae269fdfbcaf837aedb9`；Sprint 12 改动尚未形成最终提交。
+- 软件基线：Git 标签 `v0.1.0`；Sprint 0–12、Requirements V1.0/V1.1 及本地可用性修复均已纳入。
 - 数据：非生产 `eam_lite_sprint1_browser`，恢复到独立
   `eam_lite_sprint12_restore_20260824a`。
 
@@ -16,7 +19,7 @@
 
 | 项目 | 结果 |
 |---|---|
-| 最终 PostgreSQL 全量（含 Sprint 12） | `1059 passed, 3 skipped`，780.29 秒 |
+| 最终 PostgreSQL 全量（含 Sprint 12 与 V1 收口） | `1085 passed, 3 skipped`，960.89 秒 |
 | 跳过说明 | 2 个 legacy SQLite direct-delete fixture；1 个 SQLite 读侧回归，PostgreSQL 由提交约束覆盖 |
 | SQLite 专用补跑 | 上述跳过相关文件/节点 `9 passed`，26.79 秒 |
 | Sprint 12 备份/安全/性能/settings 定向 | `43 passed`；资产列表 p95 0.4518s、Dashboard p95 0.4533s、详情 p95 0.1420s、500 标签 3.3475s |
