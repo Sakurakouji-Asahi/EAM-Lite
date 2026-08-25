@@ -271,8 +271,8 @@ def label_queue(request):
         except (PermissionDenied, ValidationError) as exc:
             _service_error(form, exc)
         else:
-            messages.success(request, f"打印批次 {batch.batch_code} 已生成，尚未标记为已打印。")
-            return redirect("assets:label-batch-detail", pk=batch.pk)
+            messages.success(request, f"打印批次 {batch.batch_code} 已记录并打开 A4 预览。")
+            return redirect("assets:label-batch-print", pk=batch.pk)
 
     return render(
         request,
@@ -335,8 +335,8 @@ def label_batch_print(request, pk):
         return login_response
     company = _company()
     batch = _batch_for_user(request.user, company, pk)
-    if batch.status != AssetLabelPrintBatch.Status.GENERATED:
-        raise PermissionDenied("只有尚未确认完成的已生成批次可打开打印视图。")
+    if batch.status != AssetLabelPrintBatch.Status.PRINTED:
+        raise PermissionDenied("只有已记录打印操作的批次可打开打印视图。")
     items = list(
         batch.items.select_related("qr_identity__asset").order_by(
             "page_no", "position_no"
@@ -366,9 +366,9 @@ def label_batch_confirm(request, pk):
         batch = confirm_print_batch(actor=request.user, batch=batch, request=request)
     except ValidationError as exc:
         messages.error(request, "；".join(exc.messages))
-    else:
-        messages.success(request, "已确认打印完成；资产仍不会自动视为已贴标。")
-    return redirect("assets:label-batch-detail", pk=batch.pk)
+        return redirect("assets:label-batch-detail", pk=batch.pk)
+    messages.success(request, "打印操作已记录；无需再次确认打印。")
+    return redirect("assets:label-batch-print", pk=batch.pk)
 
 
 @require_POST
@@ -410,7 +410,7 @@ def label_item_qr_svg(request, pk):
         batch__company=company,
     )
     require_label_action(request.user, item.qr_identity.asset)
-    if item.batch.status != AssetLabelPrintBatch.Status.GENERATED:
+    if item.batch.status != AssetLabelPrintBatch.Status.PRINTED:
         raise PermissionDenied("该批次当前不可输出打印二维码。")
     if not _item_has_current_printable_identity(item):
         raise PermissionDenied("二维码身份已失效或已非资产当前身份。")
@@ -664,6 +664,15 @@ def qr_attach(request, token):
                 scanned_token=token,
                 target_status=form.cleaned_data.get("target_status") or None,
                 idempotency_key=form.cleaned_data["idempotency_key"],
+                confirmation_method=(
+                    "scan_opaque_origin"
+                    if getattr(
+                        request,
+                        "qr_opaque_origin_csrf_compatibility",
+                        False,
+                    )
+                    else "scan"
+                ),
                 request=request,
             )
         except (PermissionDenied, ValidationError) as exc:
@@ -748,7 +757,7 @@ def qr_web_attach(request, pk):
     if request.method == "POST":
         form.is_valid()
         if not can_confirm:
-            form.add_error(None, "只有已确认打印的当前二维码才能在 Web 端确认贴标。")
+            form.add_error(None, "只有已执行打印操作的当前二维码才能在 Web 端确认贴标。")
         if (
             form.is_valid()
             and form.cleaned_data["qr_identity_id"] != qr_identity.pk

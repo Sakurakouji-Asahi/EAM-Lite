@@ -4,7 +4,7 @@
   <header class="app-page-header align-items-start">
     <div>
       <h1 class="h3 mb-1">标签打印队列</h1>
-      <p class="text-secondary mb-0">生成预览不会改变标签状态；浏览器打印后仍需明确确认结果。</p>
+      <p class="text-secondary mb-0">点击生成后立即记录打印操作并打开 A4 预览；实际贴到实物后再确认贴标。</p>
     </div>
     <a class="btn btn-outline-secondary" href="{% url 'assets:label-batch-list' %}">打印批次</a>
   </header>
@@ -54,7 +54,7 @@
           {% if selected_status == 'printed' %}<div class="col-12 form-check ms-2">{{ form.explicit_reprint }} <label class="form-check-label" for="{{ form.explicit_reprint.id_for_label }}">我明确要求重新打印；沿用当前 Token 并新增批次记录</label></div>{% endif %}
         </div>
       </div>
-      <div class="card-footer"><button class="btn btn-primary" type="submit">生成 A4 预览</button></div>
+      <div class="card-footer"><button class="btn btn-primary" type="submit">打印二维码并打开 A4 预览</button></div>
     {% endif %}
   </form>
 {% endblock %}

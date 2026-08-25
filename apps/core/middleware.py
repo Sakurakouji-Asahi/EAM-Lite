@@ -1,7 +1,77 @@
+import re
 import uuid
 from ipaddress import ip_address, ip_network
+from urllib.parse import urlsplit
 
 from django.conf import settings
+from django.core.exceptions import DisallowedHost, SuspiciousOperation
+from django.http import UnreadablePostError
+
+
+_QR_CONFIRM_PATH = re.compile(
+    r"^/assets/scan/[A-Za-z0-9_-]{22,128}/confirm/$"
+)
+
+
+class QrOpaqueOriginCsrfCompatibilityMiddleware:
+    """Let Django validate tokens for Edge QR pages with an opaque origin.
+
+    Edge on Android can open a scanned LAN URL in an opaque browser context
+    and submit ``Origin: null`` even though the visible URL is the EAM host.
+    The compatibility path is intentionally narrow: it only treats that
+    origin as absent for the QR attachment POST, with the configured QR host,
+    session cookie, CSRF cookie and submitted CSRF token all still required.
+    Django's normal CsrfViewMiddleware performs the actual token validation.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+        configured = urlsplit(settings.QR_BASE_URL)
+        self.expected_host = configured.netloc.casefold()
+        self.expected_origin = (
+            f"{configured.scheme.casefold()}://{configured.netloc.casefold()}"
+        )
+
+    def __call__(self, request):
+        if self._is_compatible_request(request):
+            request.qr_opaque_origin_csrf_compatibility = True
+            request.META.pop("HTTP_ORIGIN", None)
+        return self.get_response(request)
+
+    def _is_compatible_request(self, request):
+        if request.method != "POST":
+            return False
+        if request.META.get("HTTP_ORIGIN", "").strip().casefold() != "null":
+            return False
+        if not _QR_CONFIRM_PATH.fullmatch(request.path_info):
+            return False
+        try:
+            if request.get_host().casefold() != self.expected_host:
+                return False
+        except DisallowedHost:
+            return False
+        if not request.COOKIES.get(settings.SESSION_COOKIE_NAME):
+            return False
+        if not request.COOKIES.get(settings.CSRF_COOKIE_NAME):
+            return False
+        submitted_token = request.META.get(settings.CSRF_HEADER_NAME, "").strip()
+        if not submitted_token:
+            try:
+                submitted_token = request.POST.get("csrfmiddlewaretoken", "").strip()
+            except (SuspiciousOperation, UnreadablePostError):
+                return False
+        if not submitted_token:
+            return False
+        referer = request.META.get("HTTP_REFERER", "").strip()
+        if referer:
+            parsed = urlsplit(referer)
+            if parsed.scheme.casefold() in {"http", "https"}:
+                referer_origin = (
+                    f"{parsed.scheme.casefold()}://{parsed.netloc.casefold()}"
+                )
+                if referer_origin != self.expected_origin:
+                    return False
+        return True
 
 
 class TrustedProxyClientIpMiddleware:

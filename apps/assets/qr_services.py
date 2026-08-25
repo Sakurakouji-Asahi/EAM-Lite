@@ -190,6 +190,12 @@ def generate_print_batch(
             or bool(audit.new_data_json.get("explicit_reprint")) != bool(explicit_reprint)
         ):
             raise ValidationError("相同幂等键已用于不同资产集合或排版选项。")
+        if existing.status == "generated":
+            return confirm_print_batch(
+                actor=actor,
+                batch=existing,
+                request=request,
+            )
         return existing
     identities = {}
     for asset in locked:
@@ -248,7 +254,7 @@ def generate_print_batch(
                          include_model=include_model,
                          explicit_reprint=explicit_reprint,
                      )}, request=request)
-    return batch
+    return confirm_print_batch(actor=actor, batch=batch, request=request)
 
 
 @transaction.atomic
@@ -262,7 +268,7 @@ def confirm_print_batch(*, actor, batch, request=None):
     if batch.status == "printed":
         return batch
     if batch.status != "generated":
-        raise ValidationError("只有已生成的打印批次可确认完成。")
+        raise ValidationError("只有历史遗留的已生成批次可补记打印操作。")
     now = timezone.now()
     locked_qrs = []
     for item in items:
@@ -282,7 +288,11 @@ def confirm_print_batch(*, actor, batch, request=None):
                            "eam_lite.controlled_label_batch_mutation")
     batch.refresh_from_db()
     _audit(actor=actor, action="asset_label.print_confirmed", instance=batch,
-           old_data={"status": "generated"}, new_data={"status": "printed", "asset_count": len(items)},
+           old_data={"status": "generated"}, new_data={
+               "status": "printed",
+               "asset_count": len(items),
+               "automatic": True,
+           },
            request=request)
     return batch
 
@@ -366,6 +376,7 @@ def confirm_label_attachment(
     from apps.assets.models import (
         Asset,
         AssetLabelAttachmentRequest,
+        AssetLabelPrintBatch,
         AssetLabelPrintItem,
         AssetMovement,
         AssetQrIdentity,
@@ -375,14 +386,58 @@ def confirm_label_attachment(
     if not key:
         raise ValidationError({"idempotency_key": "确认贴标必须提供幂等键。"})
     method = str(confirmation_method or "").strip().casefold()
-    if method not in {"scan", "web"}:
+    if method not in {"scan", "scan_opaque_origin", "web"}:
         raise ValidationError({"confirmation_method": "贴标确认方式无效。"})
     asset = Asset.objects.select_for_update(of=("self",)).select_related(
         "department", "responsible_employee", "location"
     ).get(pk=asset.pk, company=company)
     require_label_action(actor, asset)
-    qr = AssetQrIdentity.objects.select_for_update().filter(asset=asset, status="active").first()
-    if qr is None or not secrets.compare_digest(qr.public_token, str(scanned_token or "")):
+    qr_candidate = AssetQrIdentity.objects.filter(
+        asset=asset,
+        status="active",
+    ).first()
+    if qr_candidate is None or not secrets.compare_digest(
+        qr_candidate.public_token,
+        str(scanned_token or ""),
+    ):
+        raise PermissionDenied("所扫二维码不是该资产当前有效标签。")
+    generated_batch_ids = AssetLabelPrintItem.objects.filter(
+        qr_identity=qr_candidate,
+        batch__status="generated",
+        print_status="generated",
+    ).values_list("batch_id", flat=True)
+    generated_batches = list(
+        AssetLabelPrintBatch.objects.select_for_update()
+        .filter(
+            company=company,
+            pk__in=generated_batch_ids,
+            status="generated",
+        )
+        .order_by("created_at", "pk")
+    )
+    generated_items = list(
+        AssetLabelPrintItem.objects.select_for_update()
+        .filter(batch__in=generated_batches)
+        .order_by("batch_id", "position_no", "pk")
+    )
+    items_by_batch = {}
+    for item in generated_items:
+        items_by_batch.setdefault(item.batch_id, []).append(item)
+    if any(
+        len(items_by_batch.get(batch.pk, ())) != 1
+        or items_by_batch[batch.pk][0].qr_identity_id != qr_candidate.pk
+        or items_by_batch[batch.pk][0].print_status != "generated"
+        for batch in generated_batches
+    ):
+        raise ValidationError(
+            "当前二维码属于尚未确认的多资产打印批次，请先在打印批次页确认或取消。"
+        )
+    qr = AssetQrIdentity.objects.select_for_update().get(pk=qr_candidate.pk)
+    if (
+        qr.status != "active"
+        or qr.asset_id != asset.pk
+        or not secrets.compare_digest(qr.public_token, str(scanned_token or ""))
+    ):
         raise PermissionDenied("所扫二维码不是该资产当前有效标签。")
     normalized_target = str(target_status or "")
     request_hash = hashlib.sha256(
@@ -436,40 +491,47 @@ def confirm_label_attachment(
         return qr
     if qr.label_status == "attached" and asset.asset_status in {"in_use", "idle"}:
         raise ValidationError("该标签已经完成贴标；新请求不得冒充原幂等请求。")
-        """
-        activation = AssetMovement.objects.filter(
-            asset=asset, movement_type="label_activation"
-        ).first()
-        if (
-            activation is not None
-            and activation.idempotency_key == key
-            and activation.to_status == target_status
-        ):
-            return qr
-        raise ValidationError(
-            "该标签已经完成贴标；新请求不得冒充原幂等请求。"
-        )
-        """
     if qr.label_status != "printed":
-        raise ValidationError("标签必须先确认打印成功。")
-    if AssetLabelPrintItem.objects.filter(
-        qr_identity=qr,
-        batch__status="generated",
-        print_status="generated",
-    ).exists():
-        raise ValidationError("当前二维码仍有未确认的打印批次，请先确认或取消该批次。")
+        raise ValidationError("当前二维码尚未执行打印操作。")
     if not asset.asset_code:
         raise ValidationError("确认贴标前资产必须已有正式编号。")
     if not all((asset.department_id, asset.responsible_employee_id, asset.location_id)):
         raise ValidationError("确认贴标前必须补齐部门、责任人和位置。")
     now = timezone.now()
+    for batch in generated_batches:
+        item = items_by_batch[batch.pk][0]
+        _controlled_update(
+            AssetLabelPrintBatch,
+            batch.pk,
+            {"status": "cancelled"},
+            "eam_lite.controlled_label_batch_mutation",
+        )
+        _controlled_update(
+            AssetLabelPrintItem,
+            item.pk,
+            {"print_status": "cancelled"},
+            "eam_lite.controlled_label_batch_mutation",
+        )
+        _audit(
+            actor=actor,
+            action="asset_label.print_cancelled",
+            instance=batch,
+            old_data={"status": "generated"},
+            new_data={
+                "status": "cancelled",
+                "reason": "确认实际贴标时自动关闭未完成的单项打印预览",
+                "automatic": True,
+                "asset_id": str(asset.pk),
+            },
+            request=request,
+        )
     if asset.asset_status == "pending_label":
         if target_status not in {"in_use", "idle"}:
             raise ValidationError({"target_status": "首次贴标只能选择在用或闲置。"})
         confirmation_reason = (
-            "现场扫码确认首次贴标"
-            if method == "scan"
-            else "Web 端逐项确认首次贴标"
+            "Web 端逐项确认首次贴标"
+            if method == "web"
+            else "现场扫码确认首次贴标"
         )
         movement = AssetMovement(
             company=company, asset=asset, movement_type="label_activation", effective_at=now,
@@ -508,5 +570,6 @@ def confirm_label_attachment(
                "asset_status": new_status,
                "label_status": "attached",
                "confirmation_method": method,
+               "auto_cancelled_preview_batches": len(generated_batches),
            }, request=request)
     return qr

@@ -59,6 +59,7 @@ MIDDLEWARE = [
     "apps.core.middleware.CorrelationIdMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "apps.core.middleware.QrOpaqueOriginCsrfCompatibilityMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "apps.operations.middleware.BackupWriteFreezeMiddleware",

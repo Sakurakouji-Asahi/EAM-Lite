@@ -16,11 +16,11 @@
         <strong>本地验收标签：</strong>当前二维码使用本机 HTTP/IP 地址，不能作为迁移到其他电脑后的正式长期标签。请仅用于本地测试；最终服务器完成固定 DNS 和受信任 HTTPS 后必须重新生成并打印正式标签。
       </div>
     {% endif %}
-    <p>请使用浏览器打印（Ctrl+P），纸张选 A4、实际大小/100%、不要“适合页面”。浏览器打印不会自动标记为已打印；完成后请返回批次页确认结果。</p>
+    <p>请使用浏览器打印（Ctrl+P），纸张选 A4、实际大小/100%、不要“适合页面”。打印操作已经记录，无需再次确认；实际贴到实物后再确认贴标。</p>
     <div id="qr-screen-scan-hint" class="screen-scan-hint">
       <strong>手机扫码：</strong>手机先连接与电脑相同的 Wi-Fi，并在 Safari、Chrome 或系统浏览器中登录 EAM-Lite；再用系统相机扫码并选择“在浏览器中打开”。微信、支付宝等内置扫码可能会拦截局域网地址。屏幕识别困难时，将鼠标移到二维码上即可放大，或点击二维码在新窗口打开。
     </div>
-    <p><a href="{% url 'assets:label-batch-detail' batch.pk %}">返回批次确认页</a></p>
+    <p><a href="{% url 'assets:label-batch-detail' batch.pk %}">返回批次与贴标页</a></p>
   </header>
   {% regroup items by page_no as pages %}
   {% for page in pages %}

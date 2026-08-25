@@ -265,7 +265,7 @@ is_default=true` 至多一行，当前可用性再由 Service 按上海业务日
 
 批次字段：`id, company_id, batch_code, template_version, status, created_by_id, created_at, printed_by_id, printed_at, idempotency_key`；`UNIQUE(company_id,batch_code)`、`UNIQUE(company_id,idempotency_key)`；状态 `draft/generated/printed/cancelled`。
 
-明细字段：`id, batch_id, qr_identity_id, page_no, position_no, print_status, created_at`；外键批次 `CASCADE`、QR `PROTECT`；`UNIQUE(batch_id, qr_identity_id)` 和 `UNIQUE(batch_id,page_no,position_no)`；`print_status in (generated,printed,cancelled)` 并与父批次最终状态一致。预览生成不改变 QR label_status；只有用户确认完成的原子事务把批次/明细/当前 QR 改为 printed。打印只更新标签状态，不改变资产编号。
+明细字段：`id, batch_id, qr_identity_id, page_no, position_no, print_status, created_at`；外键批次 `CASCADE`、QR `PROTECT`；`UNIQUE(batch_id, qr_identity_id)` 和 `UNIQUE(batch_id,page_no,position_no)`；`print_status in (generated,printed,cancelled)` 并与父批次最终状态一致。Service 可在同一事务内部短暂建立 `generated` 批次/明细以固定快照，但用户点击打印并生成 A4 预览的事务提交前必须直接写入操作人/时间，并把批次、明细和当前 QR 转为 `printed`；页面不再提供独立“确认打印”。历史遗留的单项 `generated` 预览可在实际贴标确认时自动取消并保留审计，多资产旧预览仍要求在批次页明确处理。打印只更新标签状态，不改变资产编号。
 
 ### 4.5 `AssetExternalReference`
 

@@ -1838,7 +1838,7 @@ def correct_asset_code(
         batch__status="generated",
         print_status="generated",
     ).exists():
-        raise ValidationError("当前二维码存在未确认打印批次，请先确认或取消。")
+        raise ValidationError("当前二维码存在旧版未完成打印预览，请先取消该预览。")
     _base_update(AssetQrIdentity, old_qr.pk, {
         "status": "revoked",
         "revoked_at": now,

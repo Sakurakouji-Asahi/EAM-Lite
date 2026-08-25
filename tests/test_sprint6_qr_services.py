@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import pytest
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db import connection
+from django.db import connection, transaction
 
 from apps.assets.models import (
     Asset,
@@ -32,6 +32,7 @@ from tests.test_sprint3_support import (
     make_category,
     make_company,
 )
+from tests.test_sprint4_acceptance import _confirm_nonfixed, _pending_asset
 from tests.test_sprint6_support import formal_asset_context
 
 
@@ -45,6 +46,34 @@ def _generated(context, asset, key, **options):
         idempotency_key=key,
         **options,
     )
+
+
+def _legacy_generated(context, assets, key):
+    assets = list(assets if isinstance(assets, (list, tuple)) else [assets])
+    with transaction.atomic():
+        batch = AssetLabelPrintBatch.objects.create(
+            company=context["company"],
+            batch_code=f"LEGACY-{key}",
+            template_version="a4-v1",
+            status="generated",
+            created_by=context["finance"],
+            idempotency_key=key,
+        )
+        for index, asset in enumerate(assets, start=1):
+            AssetLabelPrintItem.objects.create(
+                batch=batch,
+                qr_identity=asset.qr_identities.get(status="active"),
+                page_no=1,
+                position_no=index,
+                print_status="generated",
+                label_snapshot_json={
+                    "company_short_name": context["company"].short_name,
+                    "asset_name": asset.asset_name,
+                    "asset_code": asset.asset_code,
+                    "department": asset.department.name,
+                },
+            )
+    return batch
 
 
 def _printed(context, asset, key):
@@ -101,7 +130,7 @@ def test_qr_payload_contains_only_https_lan_root_and_opaque_token():
     assert "<svg" in svg
 
 
-def test_generate_batch_is_idempotent_and_freezes_nonfinancial_snapshot():
+def test_generate_batch_is_idempotent_and_records_print_without_second_confirmation():
     context, asset, qr_identity = formal_asset_context("S6SNAP")
     batch = _generated(
         context,
@@ -124,9 +153,9 @@ def test_generate_batch_is_idempotent_and_freezes_nonfinancial_snapshot():
     assert repeated.pk == batch.pk
     assert AssetLabelPrintBatch.objects.count() == 1
     assert AssetLabelPrintItem.objects.count() == 1
-    assert batch.status == "generated"
-    assert batch.printed_by_id is None
-    assert batch.printed_at is None
+    assert batch.status == "printed"
+    assert batch.printed_by_id == context["finance"].pk
+    assert batch.printed_at is not None
     assert item.page_no == 1 and item.position_no == 1
     assert item.label_snapshot_json == {
         "company_short_name": context["company"].short_name,
@@ -143,8 +172,10 @@ def test_generate_batch_is_idempotent_and_freezes_nonfinancial_snapshot():
         {"original_cost", "book_value", "public_token", "employee_no"}
     )
     qr_identity.refresh_from_db()
-    assert qr_identity.label_status == "ready_to_print"
+    assert item.print_status == "printed"
+    assert qr_identity.label_status == "printed"
     assert AuditLog.objects.filter(action="asset_label.print_generated").count() == 1
+    assert AuditLog.objects.filter(action="asset_label.print_confirmed").count() == 1
 
 
 def test_same_print_idempotency_key_rejects_different_request():
@@ -205,7 +236,7 @@ def test_role_without_label_action_is_rejected_even_with_global_asset_scope():
 
 def test_confirm_print_atomically_marks_batch_items_and_qr_but_not_asset():
     context, asset, qr_identity = formal_asset_context("S6PRINT")
-    batch = _generated(context, asset, "S6PRINT-key")
+    batch = _legacy_generated(context, asset, "S6PRINT-key")
     confirmed = confirm_print_batch(actor=context["finance"], batch=batch)
     repeated = confirm_print_batch(actor=context["finance"], batch=confirmed)
     asset.refresh_from_db()
@@ -224,7 +255,7 @@ def test_confirm_print_atomically_marks_batch_items_and_qr_but_not_asset():
 
 def test_cancel_batch_is_idempotent_and_does_not_falsely_mark_qr_printed():
     context, asset, qr_identity = formal_asset_context("S6CANCEL")
-    batch = _generated(context, asset, "S6CANCEL-key")
+    batch = _legacy_generated(context, asset, "S6CANCEL-key")
     cancelled = cancel_print_batch(
         actor=context["finance"], batch=batch, reason="打印机卡纸"
     )
@@ -243,7 +274,7 @@ def test_cancel_batch_is_idempotent_and_does_not_falsely_mark_qr_printed():
 
 def test_cancel_requires_reason_and_rolls_back_state():
     context, asset, _qr = formal_asset_context("S6CANREASON")
-    batch = _generated(context, asset, "S6CANREASON-key")
+    batch = _legacy_generated(context, asset, "S6CANREASON-key")
 
     with pytest.raises(ValidationError):
         cancel_print_batch(actor=context["finance"], batch=batch, reason="  ")
@@ -296,6 +327,26 @@ def test_attach_requires_printed_current_token_and_failure_is_atomic():
     assert qr_identity.label_status == "ready_to_print"
     assert not AssetMovement.objects.exists()
     assert not AuditLog.objects.filter(action="asset_label.attached").exists()
+
+
+def test_attachment_rejects_unknown_confirmation_method_without_state_change():
+    context, asset, qr_identity = formal_asset_context("S6METHOD")
+
+    with pytest.raises(ValidationError):
+        confirm_label_attachment(
+            actor=context["finance"],
+            asset=asset,
+            scanned_token=qr_identity.public_token,
+            target_status="in_use",
+            idempotency_key="S6METHOD-key",
+            confirmation_method="untrusted_mode",
+        )
+
+    asset.refresh_from_db()
+    qr_identity.refresh_from_db()
+    assert asset.asset_status == "pending_label"
+    assert qr_identity.label_status == "ready_to_print"
+    assert not AssetMovement.objects.exists()
 
 
 def test_first_attachment_creates_exact_snapshot_once_and_is_idempotent():
@@ -464,14 +515,48 @@ def test_relabel_confirmation_keeps_business_status_and_adds_no_second_movement(
 
 
 @pytest.mark.django_db(transaction=True)
-def test_generated_batch_must_be_closed_before_attachment_or_rotation():
+def test_attachment_auto_cancels_single_asset_generated_preview_before_rotation():
     context, asset, qr_identity = formal_asset_context("S6OPENBATCH")
     _printed(context, asset, "S6OPENBATCH-first")
-    generated = _generated(
+    generated = _legacy_generated(context, asset, "S6OPENBATCH-reprint")
+    qr_identity.refresh_from_db()
+
+    confirm_label_attachment(
+        actor=context["finance"],
+        asset=asset,
+        scanned_token=qr_identity.public_token,
+        target_status="in_use",
+        idempotency_key="S6OPENBATCH-attach",
+    )
+    generated.refresh_from_db()
+    assert generated.status == "cancelled"
+    assert generated.items.get().print_status == "cancelled"
+    cancelled_audit = AuditLog.objects.get(
+        action="asset_label.print_cancelled",
+        object_id=str(generated.pk),
+    )
+    assert cancelled_audit.new_data_json["automatic"] is True
+    replacement = rotate_qr_identity(
+        actor=context["finance"],
+        asset=asset,
+        reason="旧标签损坏",
+    )
+    assert replacement.version == qr_identity.version + 1
+
+
+def test_attachment_keeps_multi_asset_generated_batch_blocking_explicit():
+    context, asset, qr_identity = formal_asset_context("S6MULTIBATCH")
+    second = _confirm_nonfixed(
         context,
-        asset,
-        "S6OPENBATCH-reprint",
-        explicit_reprint=True,
+        _pending_asset(context, "S6MULTIBATCH-SECOND"),
+        cost=Decimal("567.89"),
+        key="S6MULTIBATCH-second-formalize",
+    )
+    _printed(context, asset, "S6MULTIBATCH-first-print")
+    generated = _legacy_generated(
+        context,
+        [asset, second],
+        "S6MULTIBATCH-preview",
     )
     qr_identity.refresh_from_db()
 
@@ -481,23 +566,12 @@ def test_generated_batch_must_be_closed_before_attachment_or_rotation():
             asset=asset,
             scanned_token=qr_identity.public_token,
             target_status="in_use",
-            idempotency_key="S6OPENBATCH-attach",
+            idempotency_key="S6MULTIBATCH-attach",
         )
 
-    cancel_print_batch(actor=context["finance"], batch=generated, reason="取消多余重印")
-    confirm_label_attachment(
-        actor=context["finance"],
-        asset=asset,
-        scanned_token=qr_identity.public_token,
-        target_status="in_use",
-        idempotency_key="S6OPENBATCH-attach",
-    )
-    replacement = rotate_qr_identity(
-        actor=context["finance"],
-        asset=asset,
-        reason="旧标签损坏",
-    )
-    assert replacement.version == qr_identity.version + 1
+    generated.refresh_from_db()
+    assert generated.status == "generated"
+    assert set(generated.items.values_list("print_status", flat=True)) == {"generated"}
 
 
 def test_audit_rows_for_print_and_attachment_never_contain_full_token():

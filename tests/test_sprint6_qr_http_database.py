@@ -128,7 +128,7 @@ def test_equipment_scan_shows_physical_summary_but_not_financial_amount(client):
     assert response.headers["Referrer-Policy"] == "no-referrer"
 
 
-def test_print_view_is_local_a4_snapshot_and_browser_get_does_not_confirm(client):
+def test_print_action_records_batch_and_opens_local_a4_snapshot_without_second_confirm(client):
     context, asset, qr_identity = formal_asset_context("S6A4")
     batch = generate_print_batch(
         actor=context["finance"],
@@ -157,8 +157,11 @@ def test_print_view_is_local_a4_snapshot_and_browser_get_does_not_confirm(client
     assert "将鼠标移到二维码上即可放大" in text
     batch.refresh_from_db()
     qr_identity.refresh_from_db()
-    assert batch.status == "generated" and batch.printed_at is None
-    assert qr_identity.label_status == "ready_to_print"
+    assert batch.status == "printed" and batch.printed_at is not None
+    assert batch.printed_by_id == context["finance"].pk
+    assert batch.items.get().print_status == "printed"
+    assert qr_identity.label_status == "printed"
+    assert "无需再次确认" in text
 
 
 @override_settings(QR_BASE_URL_IS_DURABLE=False)
@@ -243,7 +246,8 @@ def test_asset_direct_print_creates_a_single_item_controlled_batch(client):
     batch = asset.qr_identities.get(status="active").print_items.get().batch
     assert response.status_code == 302
     assert response.url == reverse("assets:label-batch-print", args=[batch.pk])
-    assert batch.status == "generated"
+    assert batch.status == "printed"
+    assert batch.printed_at is not None
     assert batch.items.count() == 1
     assert batch.items.get().qr_identity.asset_id == asset.pk
 
@@ -256,7 +260,9 @@ def test_asset_direct_print_creates_a_single_item_controlled_batch(client):
     confirm_print_batch(actor=context["finance"], batch=batch)
     printed_detail = client.get(reverse("assets:label-batch-detail", args=[batch.pk]))
     assert printed_detail.status_code == 200
-    assert reverse("assets:qr-web-attach", args=[asset.pk]) in printed_detail.content.decode()
+    printed_text = printed_detail.content.decode()
+    assert reverse("assets:qr-web-attach", args=[asset.pk]) in printed_text
+    assert "确认已完成打印" not in printed_text
 
 
 def test_web_attachment_requires_checks_and_records_confirmation_method(client):
@@ -318,7 +324,7 @@ def test_web_attachment_is_not_available_before_print_confirmation(client):
 
     page = client.get(url)
     assert page.status_code == 200
-    assert "尚未确认打印完成" in page.content.decode()
+    assert "尚未执行打印操作" in page.content.decode()
 
     response = client.post(
         url,
@@ -335,6 +341,103 @@ def test_web_attachment_is_not_available_before_print_confirmation(client):
     qr_identity.refresh_from_db()
     assert asset.asset_status == "pending_label"
     assert qr_identity.label_status == "ready_to_print"
+
+
+@override_settings(
+    QR_BASE_URL="http://testserver",
+    ALLOWED_HOSTS=["testserver", "alternate.test"],
+)
+def test_edge_opaque_origin_scan_confirmation_keeps_standard_csrf_checks():
+    context, asset, qr_identity = formal_asset_context("S6EDGEOPAQUE")
+    _print(context, asset, "S6EDGEOPAQUE-print")
+    qr_identity.refresh_from_db()
+    csrf_client = Client(enforce_csrf_checks=True)
+    csrf_client.force_login(context["finance"])
+    scan_url = reverse("assets:qr-scan", args=[qr_identity.public_token])
+    assert csrf_client.get(scan_url).status_code == 200
+    csrf_token = csrf_client.cookies["csrftoken"].value
+    confirm_url = reverse("assets:qr-attach", args=[qr_identity.public_token])
+    form_data = {
+        "csrfmiddlewaretoken": csrf_token,
+        "scanned_token": qr_identity.public_token,
+        "label_attached": "on",
+        "responsibility_confirmed": "on",
+        "target_status": "in_use",
+        "idempotency_key": "S6EDGEOPAQUE-attach",
+    }
+
+    response = csrf_client.post(
+        confirm_url,
+        form_data,
+        HTTP_ORIGIN="null",
+    )
+
+    assert response.status_code == 302
+    asset.refresh_from_db()
+    qr_identity.refresh_from_db()
+    audit = AuditLog.objects.get(action="asset_label.attached", object_id=str(asset.pk))
+    assert asset.asset_status == "in_use"
+    assert qr_identity.label_status == "attached"
+    assert audit.new_data_json["confirmation_method"] == "scan_opaque_origin"
+
+
+@override_settings(
+    QR_BASE_URL="http://testserver",
+    ALLOWED_HOSTS=["testserver", "alternate.test"],
+)
+def test_edge_opaque_origin_compatibility_is_limited_to_valid_qr_form():
+    context, asset, qr_identity = formal_asset_context("S6EDGEBORDER")
+    _print(context, asset, "S6EDGEBORDER-print")
+    qr_identity.refresh_from_db()
+    csrf_client = Client(enforce_csrf_checks=True)
+    csrf_client.force_login(context["finance"])
+    scan_url = reverse("assets:qr-scan", args=[qr_identity.public_token])
+    assert csrf_client.get(scan_url).status_code == 200
+    csrf_token = csrf_client.cookies["csrftoken"].value
+    confirm_url = reverse("assets:qr-attach", args=[qr_identity.public_token])
+    valid_data = {
+        "csrfmiddlewaretoken": csrf_token,
+        "scanned_token": qr_identity.public_token,
+        "label_attached": "on",
+        "responsibility_confirmed": "on",
+        "target_status": "in_use",
+        "idempotency_key": "S6EDGEBORDER-attach",
+    }
+
+    without_token = dict(valid_data)
+    without_token.pop("csrfmiddlewaretoken")
+    assert csrf_client.post(
+        confirm_url,
+        without_token,
+        HTTP_ORIGIN="null",
+    ).status_code == 403
+    assert csrf_client.post(
+        confirm_url,
+        valid_data,
+        HTTP_ORIGIN="null",
+        HTTP_HOST="alternate.test",
+    ).status_code == 403
+    assert csrf_client.post(
+        confirm_url,
+        valid_data,
+        HTTP_ORIGIN="null",
+        HTTP_REFERER="http://evil.example/opaque/",
+    ).status_code == 403
+    assert csrf_client.post(
+        confirm_url,
+        valid_data,
+        HTTP_ORIGIN="https://evil.example",
+    ).status_code == 403
+    assert csrf_client.post(
+        reverse("logout"),
+        {"csrfmiddlewaretoken": csrf_token},
+        HTTP_ORIGIN="null",
+    ).status_code == 403
+
+    asset.refresh_from_db()
+    qr_identity.refresh_from_db()
+    assert asset.asset_status == "pending_label"
+    assert qr_identity.label_status == "printed"
 
 
 def test_generated_batch_refuses_a_noncurrent_identity(client):
