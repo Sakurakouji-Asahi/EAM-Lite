@@ -32,7 +32,9 @@ from apps.assets.qr_forms import (
     LabelAttachmentForm,
     LabelPrintForm,
     PrintResultForm,
+    SingleLabelPrintForm,
     TokenRotationForm,
+    WebLabelAttachmentForm,
 )
 from apps.assets.qr_permissions import (
     QR_ACTION_ROLES,
@@ -314,7 +316,11 @@ def label_batch_detail(request, pk):
         return login_response
     company = _company()
     batch = _batch_for_user(request.user, company, pk)
-    items = list(batch.items.select_related("qr_identity").order_by("page_no", "position_no"))
+    items = list(
+        batch.items.select_related("qr_identity__asset").order_by(
+            "page_no", "position_no"
+        )
+    )
     return render(
         request,
         "assets/qr_batch_detail.html",
@@ -414,6 +420,74 @@ def label_item_qr_svg(request, pk):
     response["Referrer-Policy"] = "no-referrer"
     response["X-Content-Type-Options"] = "nosniff"
     return response
+
+
+@require_http_methods(["GET"])
+def asset_current_qr_svg(request, pk):
+    login_response = _require_login(request)
+    if login_response:
+        return login_response
+    company = _company()
+    _require_label_role(request.user)
+    asset = get_object_or_404(
+        scoped_printable_assets(
+            request.user,
+            company,
+            Asset.objects.select_related("company"),
+        ),
+        pk=pk,
+    )
+    identity = get_object_or_404(
+        AssetQrIdentity,
+        asset=asset,
+        status=AssetQrIdentity.Status.ACTIVE,
+    )
+    response = HttpResponse(render_qr_svg(identity), content_type="image/svg+xml")
+    response["Cache-Control"] = "private, no-store"
+    response["Content-Disposition"] = 'inline; filename="asset-qr.svg"'
+    response["Referrer-Policy"] = "no-referrer"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@require_POST
+def asset_label_print(request, pk):
+    login_response = _require_login(request)
+    if login_response:
+        return login_response
+    company = _company()
+    _require_label_role(request.user)
+    asset = get_object_or_404(
+        scoped_printable_assets(
+            request.user,
+            company,
+            Asset.objects.select_related("company"),
+        ),
+        pk=pk,
+    )
+    qr_identity = get_object_or_404(
+        AssetQrIdentity,
+        asset=asset,
+        status=AssetQrIdentity.Status.ACTIVE,
+    )
+    form = SingleLabelPrintForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, "打印请求无效，请刷新资产页后重试。")
+        return redirect("assets:asset-detail", pk=asset.pk)
+    try:
+        batch = generate_print_batch(
+            actor=request.user,
+            assets=[asset],
+            idempotency_key=form.cleaned_data["idempotency_key"],
+            explicit_reprint=(
+                qr_identity.label_status == AssetQrIdentity.LabelStatus.PRINTED
+            ),
+            request=request,
+        )
+    except (PermissionDenied, ValidationError) as exc:
+        messages.error(request, "；".join(getattr(exc, "messages", [str(exc)])))
+        return redirect("assets:asset-detail", pk=asset.pk)
+    return redirect("assets:label-batch-print", pk=batch.pk)
 
 
 def _lookup_scanned_identity(token):
@@ -637,6 +711,77 @@ def qr_attach(request, token):
             **(_maintenance_context(request.user, asset) if asset.record_status != Asset.RecordStatus.ARCHIVED else {}),
         },
         status=400,
+    )
+    return _scan_response(response)
+
+
+@require_http_methods(["GET", "POST"])
+def qr_web_attach(request, pk):
+    login_response = _require_login(request)
+    if login_response:
+        return login_response
+    company = _company()
+    _require_label_role(request.user)
+    asset = get_object_or_404(
+        scoped_printable_assets(
+            request.user,
+            company,
+            Asset.objects.select_related(
+                "company", "category", "department", "responsible_employee", "location"
+            ),
+        ),
+        pk=pk,
+    )
+    require_label_action(request.user, asset)
+    qr_identity = get_object_or_404(
+        AssetQrIdentity,
+        asset=asset,
+        status=AssetQrIdentity.Status.ACTIVE,
+    )
+    first_attachment = asset.asset_status == Asset.AssetStatus.PENDING_LABEL
+    can_confirm = qr_identity.label_status == AssetQrIdentity.LabelStatus.PRINTED
+    form = WebLabelAttachmentForm(
+        request.POST or None,
+        first_attachment=first_attachment,
+        qr_identity_id=qr_identity.pk,
+    )
+    if request.method == "POST":
+        form.is_valid()
+        if not can_confirm:
+            form.add_error(None, "只有已确认打印的当前二维码才能在 Web 端确认贴标。")
+        if (
+            form.is_valid()
+            and form.cleaned_data["qr_identity_id"] != qr_identity.pk
+        ):
+            form.add_error("qr_identity_id", "页面中的二维码已变化，请刷新后重新核对。")
+        if form.is_valid():
+            try:
+                confirm_label_attachment(
+                    actor=request.user,
+                    asset=asset,
+                    scanned_token=qr_identity.public_token,
+                    target_status=form.cleaned_data.get("target_status") or None,
+                    idempotency_key=form.cleaned_data["idempotency_key"],
+                    confirmation_method="web",
+                    request=request,
+                )
+            except (PermissionDenied, ValidationError) as exc:
+                _service_error(form, exc)
+            else:
+                messages.success(request, "Web 端贴标确认已完成，并已记录操作方式和审计。")
+                return redirect("assets:asset-detail", pk=asset.pk)
+    response = render(
+        request,
+        "assets/qr_web_attach.html",
+        {
+            "asset": asset,
+            "qr_identity": qr_identity,
+            "form": form,
+            "first_attachment": first_attachment,
+            "can_confirm": can_confirm,
+            "location_path": _location_path(asset.location),
+        },
+        status=400 if request.method == "POST" and form.errors else 200,
     )
     return _scan_response(response)
 

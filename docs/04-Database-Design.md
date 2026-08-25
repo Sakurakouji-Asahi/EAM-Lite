@@ -258,6 +258,7 @@ is_default=true` 至多一行，当前可用性再由 Service 按上海业务日
 - `UNIQUE(public_token)`；Token 至少包含 128 bit CSPRNG 随机熵。它必须可供授权的标签打印流程重复读取，因此作为受保护的公开标识保存；它不是授权凭据，扫码后仍须登录和鉴权。
 - `status in (active, revoked)`。
 - `label_status in (not_generated, ready_to_print, printed, attached)`，时间字段必须与状态一致。
+- `printed -> attached` 可由扫描当前 Token 或有标签操作权限的 Web 资产页逐项确认触发；两种入口必须调用同一原子 Service，校验当前 active 身份、打印状态、资产责任资料和幂等键，并在 AuditLog 中记录确认方式。Web 页面不得提供无实物核对的批量附着动作。
 - 换标在一个事务内先锁资产并撤销旧身份，再创建/激活新版本，满足任一时点最多一个 active 的约束；事务提交前外部不可见。旧 Token 永久失效且记录保留。
 
 ### 4.4 `AssetLabelPrintBatch` / `AssetLabelPrintItem`

@@ -16,7 +16,15 @@
       {% if can_withdraw %}<a class="btn btn-outline-warning" href="{% url 'assets:asset-withdraw' asset.pk %}">撤回/退回</a>{% endif %}
       {% if can_set_scheme %}<a class="btn btn-outline-primary" href="{% url 'assets:asset-requested-scheme' asset.pk %}">指定编码方案</a>{% endif %}
       {% if can_manage_labels %}
-        {% if current_qr and current_qr.label_status == 'attached' %}<a class="btn btn-outline-danger" href="{% url 'assets:qr-rotate' asset.pk %}">换标</a>{% elif current_qr %}<a class="btn btn-primary" href="{% url 'assets:label-queue' %}">打印/确认贴标</a>{% endif %}
+        {% if current_qr %}<a class="btn btn-outline-primary" href="{% url 'assets:asset-current-qr' asset.pk %}" target="_blank" rel="noopener noreferrer">查看二维码</a>{% endif %}
+        {% if current_qr and current_qr.label_status == 'attached' %}
+          <a class="btn btn-outline-danger" href="{% url 'assets:qr-rotate' asset.pk %}">换标</a>
+        {% elif current_qr and current_qr.label_status == 'printed' %}
+          <a class="btn btn-primary" href="{% url 'assets:qr-web-attach' asset.pk %}">Web 确认贴标</a>
+          {% if direct_label_print_form %}<form method="post" action="{% url 'assets:asset-label-print' asset.pk %}">{% csrf_token %}{{ direct_label_print_form.idempotency_key }}<button class="btn btn-outline-primary" type="submit">重新打印二维码</button></form>{% endif %}
+        {% elif current_qr and direct_label_print_form %}
+          <form method="post" action="{% url 'assets:asset-label-print' asset.pk %}">{% csrf_token %}{{ direct_label_print_form.idempotency_key }}<button class="btn btn-primary" type="submit">打印二维码</button></form>
+        {% endif %}
       {% endif %}
       {% if can_financial and asset.asset_status == "pending_finance" %}<a class="btn btn-primary" href="{% url 'finance:finance-confirm' asset.pk %}">财务确认</a>{% endif %}
       {% if can_financial and asset.asset_status != "draft" and asset.asset_status != "pending_finance" %}<a class="btn btn-outline-primary" href="{% url 'finance:asset-finance-detail' asset.pk %}">财务与折旧</a>{% endif %}
@@ -35,9 +43,9 @@
     {% elif asset.asset_status == "pending_finance" %}
       <span>当前等待 finance 明确会计认定。确认后系统生成正式编号和二维码身份。</span>
     {% elif asset.asset_status == "pending_label" %}
-      <span>正式编号已生成，下一步是打印标签并在现场扫码确认贴标。</span>
+      <span>正式编号和二维码已生成。请先查看并打印二维码，再通过扫码或 Web 逐项确认贴标。</span>
     {% elif current_qr and current_qr.label_status != "attached" %}
-      <span>当前标签尚未完成贴标，请先完成打印或现场确认。</span>
+      <span>当前标签尚未完成贴标，请先完成打印，再通过扫码或 Web 逐项确认。</span>
     {% else %}
       <span>资产已进入正式管理，可继续使用现有调拨、盘点、保养或处置流程。</span>
     {% endif %}
@@ -142,6 +150,20 @@
     </div>
 
     <div class="col-12 col-xl-4">
+      {% if can_manage_labels and current_qr %}
+        <section class="card shadow-sm qr-detail-card mb-3" aria-labelledby="asset-qr-title">
+          <div class="card-header d-flex align-items-center justify-content-between gap-2">
+            <h2 class="h5 mb-0" id="asset-qr-title">当前二维码</h2>
+            <span class="badge text-bg-primary">{{ current_qr.get_label_status_display }}</span>
+          </div>
+          <div class="card-body text-center">
+            <a class="asset-qr-link" href="{% url 'assets:asset-current-qr' asset.pk %}" target="_blank" rel="noopener noreferrer" title="在新窗口查看二维码原图">
+              <img class="asset-current-qr" src="{% url 'assets:asset-current-qr' asset.pk %}" width="192" height="192" alt="{{ asset.asset_code }} 的当前二维码">
+            </a>
+            <p class="small text-secondary mt-3 mb-0">点击二维码可放大查看。已贴标后如需重打，请先执行换标。</p>
+          </div>
+        </section>
+      {% endif %}
       {% if can_p1 %}
         <section class="card shadow-sm" aria-labelledby="attachments-title">
           <div class="card-header d-flex align-items-center justify-content-between gap-2">

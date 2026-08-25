@@ -210,14 +210,20 @@ def test_audit_file_payload_fields_are_redacted_on_write_and_again_on_read():
             },
         },
     )
-    projected = json.loads(project_audit_log(legacy, user=actor)["new_data"])
-    assert projected["file_content"] == REDACTED
-    assert projected["file_contents"] == REDACTED
-    assert projected["content_bytes"] == REDACTED
-    assert projected["nested"]["binary_content"] == REDACTED
-    assert projected["nested"]["file_blob"] == REDACTED
-    assert projected["nested"]["file_body"] == REDACTED
-    assert projected["nested"]["safe"] == "visible"
+    projection = project_audit_log(legacy, user=actor)
+    technical = json.loads(projection["new_data_technical"])
+    assert projection["new_data"].count("已脱敏") == 6
+    assert "READ-FILE" not in projection["new_data"]
+    assert "READ-CONTENT" not in projection["new_data"]
+    assert "READ-BINARY" not in projection["new_data"]
+    assert technical["file_content"] == REDACTED
+    assert technical["file_contents"] == REDACTED
+    assert technical["content_bytes"] == REDACTED
+    assert technical["nested"]["binary_content"] == REDACTED
+    assert technical["nested"]["file_blob"] == REDACTED
+    assert technical["nested"]["file_body"] == REDACTED
+    assert "visible" in projection["new_data"]
+    assert technical["nested"]["safe"] == "visible"
 
 
 @pytest.mark.parametrize(

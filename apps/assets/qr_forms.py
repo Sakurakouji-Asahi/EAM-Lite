@@ -39,6 +39,20 @@ class PrintResultForm(forms.Form):
         return value
 
 
+class SingleLabelPrintForm(forms.Form):
+    idempotency_key = forms.CharField(
+        max_length=128, widget=forms.HiddenInput, required=False
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not self.is_bound:
+            self.initial.setdefault("idempotency_key", uuid.uuid4().hex)
+
+    def clean_idempotency_key(self):
+        return (self.cleaned_data.get("idempotency_key") or uuid.uuid4().hex).strip()
+
+
 class TokenRotationForm(forms.Form):
     REASONS = (
         ("damaged", "损坏"),
@@ -80,3 +94,15 @@ class LabelAttachmentForm(forms.Form):
             cleaned.get("idempotency_key") or uuid.uuid4().hex
         ).strip()
         return cleaned
+
+
+class WebLabelAttachmentForm(LabelAttachmentForm):
+    """Explicit Web confirmation without exposing the QR token in form HTML."""
+
+    qr_identity_id = forms.UUIDField(label="当前二维码身份", widget=forms.HiddenInput)
+
+    def __init__(self, *args, qr_identity_id=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields.pop("scanned_token", None)
+        if not self.is_bound and qr_identity_id is not None:
+            self.initial["qr_identity_id"] = qr_identity_id

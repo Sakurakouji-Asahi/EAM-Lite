@@ -1559,3 +1559,35 @@ form[data-eam-submitting="true"] button[type="submit"]::after {
     border-right-color: currentColor;
   }
 }
+
+.asset-qr-link {
+  display: inline-flex;
+  max-width: 100%;
+  border-radius: var(--eam-radius);
+}
+
+.asset-current-qr {
+  display: block;
+  width: min(12rem, 100%);
+  height: auto;
+  aspect-ratio: 1;
+  padding: 0.5rem;
+  border: 1px solid var(--eam-line-strong);
+  border-radius: var(--eam-radius);
+  background: #fff;
+}
+
+.asset-qr-link:focus-visible {
+  outline: 3px solid rgb(13 110 253 / 35%);
+  outline-offset: 3px;
+}
+
+.qr-table-thumb {
+  display: block;
+  width: 4.5rem;
+  height: 4.5rem;
+  padding: 0.2rem;
+  border: 1px solid var(--eam-line);
+  border-radius: var(--eam-radius-sm);
+  background: #fff;
+}

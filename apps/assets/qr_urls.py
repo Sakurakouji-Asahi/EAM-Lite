@@ -33,6 +33,21 @@ urlpatterns = [
         qr_views.label_item_qr_svg,
         name="label-item-qr",
     ),
+    path(
+        "<uuid:pk>/labels/current-qr.svg",
+        qr_views.asset_current_qr_svg,
+        name="asset-current-qr",
+    ),
+    path(
+        "<uuid:pk>/labels/print/",
+        qr_views.asset_label_print,
+        name="asset-label-print",
+    ),
+    path(
+        "<uuid:pk>/labels/confirm/",
+        qr_views.qr_web_attach,
+        name="qr-web-attach",
+    ),
     path("scan/<str:token>/", qr_views.qr_scan, name="qr-scan"),
     path("scan/<str:token>/confirm/", qr_views.qr_attach, name="qr-attach"),
     path(

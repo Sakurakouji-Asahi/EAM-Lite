@@ -128,7 +128,7 @@
 | 财务认定、退回更正、正式化 | — | ✓ | — | — | — | — | — | — |
 | 修改正式资产非流转 P1 字段 | — | ✓ | ✓ | — | — | — | — | — |
 | A4 标签打印、打印重试 | — | ✓ | ✓ | — | — | ✓ | — | — |
-| 现场确认贴标、换标 | — | ✓ | ✓ | — | — | ✓ | — | — |
+| 扫码或 Web 逐项确认贴标、换标 | — | ✓ | ✓ | — | — | ✓ | — | — |
 | 草稿/待财务确认资产指定编码方案版本 | ✓ | — | — | — | — | — | — | — |
 | 正式编号更正（永久保留旧号） | ✓ | — | — | — | — | — | — | — |
 | 部门/责任人/位置变动 | — | ✓ | ✓ | 范围 | — | 仅归还接收和位置 | — | — |
@@ -225,7 +225,7 @@ system_admin 可在 draft/pending_finance 上只修改 `requested_coding_scheme`
 | 撤回/退回更正 | `pending_finance → draft` | 原提交人可撤回；finance 可退回 | 必须记录原因；不产生编号 |
 | 财务确认 | `pending_finance → pending_label` | finance | 所有会计认定均须有不小于 0 的原值；累计折旧和减值可明确为 0；固定资产另须固定资产类别及折旧资料完整；同一事务发放永久编号、创建二维码身份、写审计日志 |
 | 打印 | 标签 `ready_to_print → printed` | finance/equipment/warehouse | 记录 A4 打印批次、打印人和时间 |
-| 贴标启用 | `pending_label → in_use/idle`，标签 `printed → attached` | finance/equipment/warehouse | 必须扫描当前 Token；再次校验责任人/部门/位置；同一事务更新状态和审计 |
+| 贴标启用 | `pending_label → in_use/idle`，标签 `printed → attached` | finance/equipment/warehouse | 扫描当前 Token，或在受权限保护的 Web 资产页查看当前二维码并逐项勾选确认；再次校验当前 active 身份、printed 状态、责任人/部门/位置；同一事务更新状态并记录确认方式和审计 |
 
 财务确认只是财务角色直接确认会计处理和资料完整性的业务动作，不是审批。V1.1 不实现审批定义、审批实例、审批节点、会签、抄送、审批意见或钉钉接口。
 
@@ -236,7 +236,7 @@ system_admin 可在 draft/pending_finance 上只修改 `requested_coding_scheme`
 - 未贴标前的打印重试沿用当前 Token，新增打印批次记录。
 - 已贴标后选择“换标”，填写原因并在同一事务吊销旧 Token、创建新 Token、把标签状态改为 `ready_to_print`。
 - 资产业务状态不改变；旧 Token 永久返回“标签已失效”，不跳转到资产详情。
-- 新标签再次经过打印和现场扫码确认。待办“待贴二维码”包含此类在用但等待换标的资产。
+- 新标签再次经过打印，并通过扫码或 Web 逐项确认。待办“待贴二维码”包含此类在用但等待换标的资产。
 
 ## 7. 正式资产变动工作流
 

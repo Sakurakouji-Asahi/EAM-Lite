@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Web 确认贴标 - {{ asset.asset_code }}{% endblock %}
+{% block content %}
+  <div class="app-narrow-page">
+    <header class="app-page-header align-items-start">
+      <div>
+        <div class="text-secondary">{{ asset.asset_code }}</div>
+        <h1 class="h3 mb-1">Web 确认贴标</h1>
+        <p class="text-secondary mb-0">{{ asset.asset_name }}</p>
+      </div>
+      <a class="btn btn-outline-secondary" href="{% url 'assets:asset-detail' asset.pk %}">返回资产</a>
+    </header>
+
+    <div class="workflow-guidance" role="status">
+      <strong>当前步骤</strong>
+      <span>核对页面显示的当前二维码和实物，完成两项勾选后逐项确认贴标。</span>
+    </div>
+
+    <div class="row g-3">
+      <div class="col-12 col-lg-5">
+        <section class="card shadow-sm qr-detail-card h-100" aria-labelledby="web-qr-title">
+          <div class="card-header"><h2 class="h5 mb-0" id="web-qr-title">当前二维码</h2></div>
+          <div class="card-body text-center">
+            <a class="asset-qr-link" href="{% url 'assets:asset-current-qr' asset.pk %}" target="_blank" rel="noopener noreferrer" title="在新窗口查看二维码原图">
+              <img class="asset-current-qr" src="{% url 'assets:asset-current-qr' asset.pk %}" width="192" height="192" alt="{{ asset.asset_code }} 的当前二维码">
+            </a>
+            <div class="mt-3"><span class="badge text-bg-primary">{{ qr_identity.get_label_status_display }}</span></div>
+            <p class="small text-secondary mt-2 mb-0">二维码仅包含应用地址和随机标识，不包含资产敏感资料。</p>
+          </div>
+        </section>
+      </div>
+
+      <div class="col-12 col-lg-7">
+        <section class="card shadow-sm h-100" aria-labelledby="web-confirm-title">
+          <div class="card-header"><h2 class="h5 mb-0" id="web-confirm-title">实物核对与确认</h2></div>
+          <div class="card-body">
+            <dl class="row mb-4">
+              <dt class="col-sm-4 text-secondary">资产名称</dt><dd class="col-sm-8">{{ asset.asset_name }}</dd>
+              <dt class="col-sm-4 text-secondary">部门</dt><dd class="col-sm-8">{{ asset.department.name|default:"未填写" }}</dd>
+              <dt class="col-sm-4 text-secondary">责任人</dt><dd class="col-sm-8">{{ asset.responsible_employee.name|default:"未填写" }}</dd>
+              <dt class="col-sm-4 text-secondary">位置</dt><dd class="col-sm-8">{{ location_path }}</dd>
+            </dl>
+
+            {% if can_confirm %}
+              {% if form.errors %}
+                <div class="alert alert-danger" role="alert">
+                  <strong>尚未完成确认，请检查：</strong>
+                  <ul class="mb-0 mt-2">
+                    {% for field in form %}{% for error in field.errors %}<li>{{ field.label }}：{{ error }}</li>{% endfor %}{% endfor %}
+                    {% for error in form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
+                  </ul>
+                </div>
+              {% endif %}
+              <form method="post">
+                {% csrf_token %}
+                {{ form.qr_identity_id }}
+                {{ form.idempotency_key }}
+                <div class="form-check mb-3">
+                  {{ form.label_attached }}
+                  <label class="form-check-label" for="{{ form.label_attached.id_for_label }}">{{ form.label_attached.label }}</label>
+                </div>
+                <div class="form-check mb-3">
+                  {{ form.responsibility_confirmed }}
+                  <label class="form-check-label" for="{{ form.responsibility_confirmed.id_for_label }}">{{ form.responsibility_confirmed.label }}</label>
+                </div>
+                {% if first_attachment %}
+                  <div class="mb-3">
+                    <label class="form-label" for="{{ form.target_status.id_for_label }}">{{ form.target_status.label }}</label>
+                    {{ form.target_status }}
+                    <div class="form-text">首次贴标后，资产将进入所选的正式状态。</div>
+                  </div>
+                {% endif %}
+                <div class="alert alert-warning">确认后将记录贴标人、时间、Web 确认方式和资产状态变化。请先确保标签已经实际贴到对应实物。</div>
+                <button class="btn btn-primary w-100 scan-primary-action" type="submit">确认已贴标</button>
+              </form>
+            {% else %}
+              <div class="alert alert-warning mb-3">当前二维码尚未确认打印完成，暂不能确认贴标。</div>
+              <a class="btn btn-primary" href="{% url 'assets:asset-detail' asset.pk %}">返回并打印二维码</a>
+            {% endif %}
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+{% endblock %}

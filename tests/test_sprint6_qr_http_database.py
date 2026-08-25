@@ -202,6 +202,141 @@ def test_qr_svg_endpoint_is_authenticated_scoped_and_noncacheable(client):
     assert b"<svg" in response.content
 
 
+def test_asset_current_qr_is_visible_to_label_roles_and_protected(client):
+    context, asset, _qr = formal_asset_context("S6ASSETQR")
+    url = reverse("assets:asset-current-qr", args=[asset.pk])
+
+    anonymous = client.get(url)
+    assert anonymous.status_code == 302
+
+    client.force_login(context["admin"])
+    forbidden = client.get(url)
+    assert forbidden.status_code == 403
+
+    client.force_login(context["finance"])
+    response = client.get(url)
+    assert response.status_code == 200
+    assert response.headers["Content-Type"].startswith("image/svg+xml")
+    assert response.headers["Cache-Control"] == "private, no-store"
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert b"<svg" in response.content
+
+    detail = client.get(reverse("assets:asset-detail", args=[asset.pk]))
+    text = detail.content.decode()
+    assert detail.status_code == 200
+    assert url in text
+    assert "查看二维码" in text
+    assert "打印二维码" in text
+    assert "Web 确认贴标" not in text
+
+
+def test_asset_direct_print_creates_a_single_item_controlled_batch(client):
+    context, asset, _qr = formal_asset_context("S6DIRECTPRINT")
+    client.force_login(context["finance"])
+
+    response = client.post(
+        reverse("assets:asset-label-print", args=[asset.pk]),
+        {"idempotency_key": "S6DIRECTPRINT-key"},
+    )
+
+    batch = asset.qr_identities.get(status="active").print_items.get().batch
+    assert response.status_code == 302
+    assert response.url == reverse("assets:label-batch-print", args=[batch.pk])
+    assert batch.status == "generated"
+    assert batch.items.count() == 1
+    assert batch.items.get().qr_identity.asset_id == asset.pk
+
+    detail = client.get(response.url)
+    assert detail.status_code == 200
+    assert reverse(
+        "assets:label-item-qr", args=[batch.items.get().pk]
+    ) in detail.content.decode()
+
+    confirm_print_batch(actor=context["finance"], batch=batch)
+    printed_detail = client.get(reverse("assets:label-batch-detail", args=[batch.pk]))
+    assert printed_detail.status_code == 200
+    assert reverse("assets:qr-web-attach", args=[asset.pk]) in printed_detail.content.decode()
+
+
+def test_web_attachment_requires_checks_and_records_confirmation_method(client):
+    context, asset, qr_identity = formal_asset_context("S6WEBATTACH")
+    _print(context, asset, "S6WEBATTACH-print")
+    qr_identity.refresh_from_db()
+    client.force_login(context["finance"])
+    url = reverse("assets:qr-web-attach", args=[asset.pk])
+
+    page = client.get(url)
+    text = page.content.decode()
+    assert page.status_code == 200
+    assert reverse("assets:asset-current-qr", args=[asset.pk]) in text
+    assert "Web 确认贴标" in text
+    assert "确认已贴标" in text
+    assert qr_identity.public_token not in text
+
+    incomplete = client.post(
+        url,
+        {
+            "qr_identity_id": str(qr_identity.pk),
+            "target_status": "in_use",
+            "idempotency_key": "S6WEBATTACH-incomplete",
+        },
+    )
+    assert incomplete.status_code == 400
+    asset.refresh_from_db()
+    qr_identity.refresh_from_db()
+    assert asset.asset_status == "pending_label"
+    assert qr_identity.label_status == "printed"
+
+    confirmed = client.post(
+        url,
+        {
+            "qr_identity_id": str(qr_identity.pk),
+            "label_attached": "on",
+            "responsibility_confirmed": "on",
+            "target_status": "in_use",
+            "idempotency_key": "S6WEBATTACH-confirm",
+        },
+    )
+    assert confirmed.status_code == 302
+    assert confirmed.url == reverse("assets:asset-detail", args=[asset.pk])
+
+    asset.refresh_from_db()
+    qr_identity.refresh_from_db()
+    movement = AssetMovement.objects.get(asset=asset, movement_type="label_activation")
+    audit = AuditLog.objects.get(action="asset_label.attached", object_id=str(asset.pk))
+    assert asset.asset_status == "in_use"
+    assert qr_identity.label_status == "attached"
+    assert movement.reason == "Web 端逐项确认首次贴标"
+    assert audit.new_data_json["confirmation_method"] == "web"
+
+
+def test_web_attachment_is_not_available_before_print_confirmation(client):
+    context, asset, qr_identity = formal_asset_context("S6WEBEARLY")
+    client.force_login(context["finance"])
+    url = reverse("assets:qr-web-attach", args=[asset.pk])
+
+    page = client.get(url)
+    assert page.status_code == 200
+    assert "尚未确认打印完成" in page.content.decode()
+
+    response = client.post(
+        url,
+        {
+            "qr_identity_id": str(qr_identity.pk),
+            "label_attached": "on",
+            "responsibility_confirmed": "on",
+            "target_status": "in_use",
+            "idempotency_key": "S6WEBEARLY-key",
+        },
+    )
+    assert response.status_code == 400
+    asset.refresh_from_db()
+    qr_identity.refresh_from_db()
+    assert asset.asset_status == "pending_label"
+    assert qr_identity.label_status == "ready_to_print"
+
+
 def test_generated_batch_refuses_a_noncurrent_identity(client):
     context, asset, qr_identity = formal_asset_context("S6STALE")
     batch = generate_print_batch(

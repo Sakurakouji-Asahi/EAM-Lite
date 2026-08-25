@@ -353,8 +353,16 @@ def rotate_qr_identity(*, actor, asset, reason, request=None):
 
 
 @transaction.atomic
-def confirm_label_attachment(*, actor, asset, scanned_token, target_status=None,
-                             idempotency_key, request=None):
+def confirm_label_attachment(
+    *,
+    actor,
+    asset,
+    scanned_token,
+    target_status=None,
+    idempotency_key,
+    confirmation_method="scan",
+    request=None,
+):
     from apps.assets.models import (
         Asset,
         AssetLabelAttachmentRequest,
@@ -366,6 +374,9 @@ def confirm_label_attachment(*, actor, asset, scanned_token, target_status=None,
     key = str(idempotency_key or "").strip()
     if not key:
         raise ValidationError({"idempotency_key": "确认贴标必须提供幂等键。"})
+    method = str(confirmation_method or "").strip().casefold()
+    if method not in {"scan", "web"}:
+        raise ValidationError({"confirmation_method": "贴标确认方式无效。"})
     asset = Asset.objects.select_for_update(of=("self",)).select_related(
         "department", "responsible_employee", "location"
     ).get(pk=asset.pk, company=company)
@@ -455,12 +466,17 @@ def confirm_label_attachment(*, actor, asset, scanned_token, target_status=None,
     if asset.asset_status == "pending_label":
         if target_status not in {"in_use", "idle"}:
             raise ValidationError({"target_status": "首次贴标只能选择在用或闲置。"})
+        confirmation_reason = (
+            "现场扫码确认首次贴标"
+            if method == "scan"
+            else "Web 端逐项确认首次贴标"
+        )
         movement = AssetMovement(
             company=company, asset=asset, movement_type="label_activation", effective_at=now,
             from_department=asset.department, to_department=asset.department,
             from_employee=asset.responsible_employee, to_employee=asset.responsible_employee,
             from_location=asset.location, to_location=asset.location,
-            from_status="pending_label", to_status=target_status, reason="现场扫码确认首次贴标",
+            from_status="pending_label", to_status=target_status, reason=confirmation_reason,
             idempotency_key=key, operated_by=actor,
         )
         movement.full_clean()
@@ -488,5 +504,9 @@ def confirm_label_attachment(*, actor, asset, scanned_token, target_status=None,
     )
     _audit(actor=actor, action="asset_label.attached", instance=asset,
            old_data={"asset_status": asset.asset_status, "label_status": "printed"},
-           new_data={"asset_status": new_status, "label_status": "attached"}, request=request)
+           new_data={
+               "asset_status": new_status,
+               "label_status": "attached",
+               "confirmation_method": method,
+           }, request=request)
     return qr

@@ -44,6 +44,7 @@ from apps.assets.permissions import (
     scoped_assets,
     scoped_assets_p1,
 )
+from apps.assets.qr_forms import SingleLabelPrintForm
 from apps.assets.qr_permissions import can_manage_labels
 from apps.assets.lifecycle_permissions import (
     TERMINAL_STATUSES,
@@ -495,6 +496,7 @@ def asset_detail(request, pk):
     can_financial = can_view_financial_fields(request.user)
     roles = role_names_for(request.user)
     current_qr = asset.qr_identities.filter(status="active").first()
+    can_manage_label_actions = can_manage_labels(request.user, asset)
     archived = asset.record_status == Asset.RecordStatus.ARCHIVED
     terminal = asset.asset_status in TERMINAL_STATUSES
     active_loan = asset.loans.filter(status="active").first() if can_p1 else None
@@ -590,8 +592,15 @@ def asset_detail(request, pk):
             "can_set_scheme": can_set_requested_coding_scheme(request.user, asset),
             "can_upload_a0": can_create_attachment_link(request.user, asset, "A0"),
             "can_upload_a1": can_create_attachment_link(request.user, asset, "A1"),
-            "can_manage_labels": can_manage_labels(request.user, asset),
+            "can_manage_labels": can_manage_label_actions,
             "current_qr": current_qr,
+            "direct_label_print_form": (
+                SingleLabelPrintForm()
+                if current_qr
+                and current_qr.label_status in {"ready_to_print", "printed"}
+                and can_manage_label_actions
+                else None
+            ),
             "archived": archived,
             "terminal": terminal,
             "active_loan": active_loan,
