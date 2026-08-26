@@ -1386,6 +1386,7 @@ class ImportBatch(models.Model):
         EMPLOYEE = "employee", "人员"
         ASSET_INITIALIZATION = "asset_initialization", "资产初始化"
         ITEM_MASTER = "item_master", "低值物品档案"
+        OPENING_STOCK = "opening_stock", "低值物品期初库存"
 
     class Status(models.TextChoices):
         UPLOADED = "uploaded", "已上传"
@@ -1512,6 +1513,7 @@ class ImportBatch(models.Model):
                         "employee",
                         "asset_initialization",
                         "item_master",
+                        "opening_stock",
                     )
                 ),
                 name="ck_import_batch_type_valid",

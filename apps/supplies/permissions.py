@@ -6,13 +6,27 @@ from django.core.exceptions import PermissionDenied
 
 from apps.masterdata.permissions import role_names_for
 
-from .models import SupplyCategory, SupplyItem, SupplyItemType, SupplyWarehouse
+from .models import (
+    SupplyCategory,
+    SupplyDocument,
+    SupplyItem,
+    SupplyItemType,
+    SupplyStockBalance,
+    SupplyStockLedger,
+    SupplyWarehouse,
+)
 
 
 SUPPLY_VIEW_ROLES = frozenset(
     {"system_admin", "finance", "warehouse", "equipment", "management"}
 )
 SUPPLY_FULL_MANAGE_ROLES = frozenset({"system_admin", "finance", "warehouse"})
+SUPPLY_DOCUMENT_MANAGE_ROLES = frozenset(
+    {"system_admin", "finance", "warehouse"}
+)
+SUPPLY_COST_VIEW_ROLES = frozenset(
+    {"system_admin", "finance", "warehouse", "equipment", "management"}
+)
 
 
 def can_view_supply_master_data(user) -> bool:
@@ -56,6 +70,42 @@ def require_manage_supply_item(user, item_type=None) -> None:
         )
 
 
+def can_view_supply_documents(user) -> bool:
+    return bool(role_names_for(user).intersection(SUPPLY_VIEW_ROLES))
+
+
+def require_view_supply_documents(user) -> None:
+    if not can_view_supply_documents(user):
+        raise PermissionDenied("您没有查看低值物品库存单据的权限。")
+
+
+def can_create_supply_document(user) -> bool:
+    return bool(role_names_for(user).intersection(SUPPLY_DOCUMENT_MANAGE_ROLES))
+
+
+def require_create_supply_document(user) -> None:
+    if not can_create_supply_document(user):
+        raise PermissionDenied("您没有创建、编辑或取消低值物品库存单据的权限。")
+
+
+def can_post_supply_document(user) -> bool:
+    return can_create_supply_document(user)
+
+
+def require_post_supply_document(user) -> None:
+    if not can_post_supply_document(user):
+        raise PermissionDenied("您没有过账低值物品库存单据的权限。")
+
+
+def can_view_supply_cost(user) -> bool:
+    return bool(role_names_for(user).intersection(SUPPLY_COST_VIEW_ROLES))
+
+
+def require_view_supply_cost(user) -> None:
+    if not can_view_supply_cost(user):
+        raise PermissionDenied("您没有查看低值物品库存成本的权限。")
+
+
 def scoped_supply_categories(user, company, queryset=None):
     queryset = queryset if queryset is not None else SupplyCategory.objects.all()
     queryset = queryset.filter(company=company)
@@ -76,5 +126,29 @@ def scoped_supply_items(user, company, queryset=None):
     queryset = queryset if queryset is not None else SupplyItem.objects.all()
     queryset = queryset.filter(company=company)
     if not can_view_supply_master_data(user):
+        return queryset.none()
+    return queryset
+
+
+def scoped_supply_documents(user, company, queryset=None):
+    queryset = queryset if queryset is not None else SupplyDocument.objects.all()
+    queryset = queryset.filter(company=company)
+    if not can_view_supply_documents(user):
+        return queryset.none()
+    return queryset
+
+
+def scoped_supply_stock_balances(user, company, queryset=None):
+    queryset = queryset if queryset is not None else SupplyStockBalance.objects.all()
+    queryset = queryset.filter(company=company)
+    if not can_view_supply_documents(user):
+        return queryset.none()
+    return queryset
+
+
+def scoped_supply_stock_ledgers(user, company, queryset=None):
+    queryset = queryset if queryset is not None else SupplyStockLedger.objects.all()
+    queryset = queryset.filter(company=company)
+    if not can_view_supply_documents(user):
         return queryset.none()
     return queryset

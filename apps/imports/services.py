@@ -212,6 +212,22 @@ TEMPLATE_REGISTRY = {
             Column("备注", "remark"),
         ),
     ),
+    "opening_stock": TemplateDefinition(
+        import_type="opening_stock",
+        label="低值物品期初库存",
+        version="supply-opening-stock-v1",
+        sheet_name="期初库存导入",
+        has_example_sheet=True,
+        columns=(
+            Column("公司编码", "company_code", True),
+            Column("仓库编码", "warehouse_code", True),
+            Column("物品编码", "item_code", True),
+            Column("数量", "quantity", True),
+            Column("单位成本", "unit_cost", True),
+            Column("0成本原因", "zero_cost_reason"),
+            Column("备注", "remark"),
+        ),
+    ),
 }
 
 
@@ -266,6 +282,11 @@ def require_import_permission(
         from apps.supplies.permissions import require_manage_supply_item
 
         require_manage_supply_item(actor, SupplyItemType.DURABLE_QUANTITY)
+        return
+    if import_type == "opening_stock":
+        from apps.supplies.permissions import require_create_supply_document
+
+        require_create_supply_document(actor)
         return
     resource = {"department": "department", "employee": "employee"}.get(import_type)
     if resource is None:
@@ -360,6 +381,31 @@ def build_template_workbook(import_type: str, company=None) -> bytes:
             f"{sheet.cell(2, minimum_column).coordinate}:"
             f"{sheet.cell(1001, minimum_column).coordinate}"
         )
+    if import_type == "opening_stock":
+        quantity_validation = DataValidation(
+            type="decimal",
+            operator="greaterThan",
+            formula1="0",
+            allow_blank=False,
+        )
+        cost_validation = DataValidation(
+            type="decimal",
+            operator="greaterThanOrEqual",
+            formula1="0",
+            allow_blank=False,
+        )
+        sheet.add_data_validation(quantity_validation)
+        sheet.add_data_validation(cost_validation)
+        quantity_column = definition.headers.index("数量") + 1
+        cost_column = definition.headers.index("单位成本") + 1
+        quantity_validation.add(
+            f"{sheet.cell(2, quantity_column).coordinate}:"
+            f"{sheet.cell(1001, quantity_column).coordinate}"
+        )
+        cost_validation.add(
+            f"{sheet.cell(2, cost_column).coordinate}:"
+            f"{sheet.cell(1001, cost_column).coordinate}"
+        )
     instructions = workbook.create_sheet("填写说明")
     instructions.append(["项目", "说明"])
     policies = [
@@ -393,7 +439,7 @@ def build_template_workbook(import_type: str, company=None) -> bytes:
                     ("动态字段", "自定义列按“自定义:<code>”精确匹配当前启用字段"),
                 )
             )
-        else:
+        elif import_type == "item_master":
             policies.extend(
                 (
                     ("匹配键", "分类和默认仓库按当前公司的规范化编码匹配"),
@@ -401,6 +447,17 @@ def build_template_workbook(import_type: str, company=None) -> bytes:
                     ("数量精度", "最低库存最多 4 位小数，留空按 0 处理"),
                     ("确认结果", "整批创建物品档案，不创建库存余额或库存流水"),
                     ("逐件物品", "需要逐件二维码、序列号或单件责任时不要导入本表，改用资产模块"),
+                )
+            )
+        elif import_type == "opening_stock":
+            policies.extend(
+                (
+                    ("匹配键", "公司、仓库和物品按当前公司的规范化编码匹配"),
+                    ("数量精度", "数量必须大于 0，最多 4 位小数"),
+                    ("成本精度", "单位成本不得小于 0，最多 6 位小数"),
+                    ("0 成本", "单位成本为 0 时必须填写明确的 0 成本原因"),
+                    ("确认结果", "按仓库生成期初入库草稿，不自动过账或改变库存"),
+                    ("过账", "确认导入后仍须进入每张期初单核对并执行过账"),
                 )
             )
     for row in policies:
@@ -419,6 +476,15 @@ def build_template_workbook(import_type: str, company=None) -> bytes:
                 "单位": "箱",
                 "最低库存": 5,
                 "默认仓库编码": "OFFICE-WH",
+            }
+        elif import_type == "opening_stock":
+            sample = {
+                "公司编码": getattr(company, "code", "COMPANY"),
+                "仓库编码": "OFFICE-WH",
+                "物品编码": "PAPER-A4",
+                "数量": 10,
+                "单位成本": 100,
+                "备注": "示例，请勿直接导入",
             }
         else:
             sample = {
@@ -1265,6 +1331,143 @@ def _inflate_supply_item_row(*, company, normalized, lock=False):
     }
 
 
+def _normalize_opening_stock_rows(*, company, loaded_rows, definition):
+    from apps.supplies.models import SupplyItem, SupplyWarehouse
+
+    warehouses = {
+        warehouse.normalized_code: warehouse
+        for warehouse in SupplyWarehouse.objects.filter(company=company, is_active=True)
+    }
+    items = {
+        item.normalized_item_code: item
+        for item in SupplyItem.objects.filter(company=company, is_active=True)
+    }
+    prepared = []
+    for row_number, values, raw, formulas in loaded_rows:
+        errors = []
+        if formulas:
+            errors.extend(
+                _error(field, raw.get(field), "禁止公式单元格。")
+                for field in formulas
+            )
+        company_code = _text(values["company_code"])
+        warehouse_code = _text(values["warehouse_code"])
+        item_code = _text(values["item_code"])
+        normalized_company = normalize_identifier(company_code)
+        normalized_warehouse = normalize_identifier(warehouse_code)
+        normalized_item = normalize_identifier(item_code)
+        warehouse = warehouses.get(normalized_warehouse)
+        item = items.get(normalized_item)
+        for label, value in (
+            ("公司编码", company_code),
+            ("仓库编码", warehouse_code),
+            ("物品编码", item_code),
+        ):
+            if not value:
+                errors.append(_error(label, value, "必填。"))
+        if normalized_company != company.normalized_code:
+            errors.append(
+                _error("公司编码", company_code, "必须精确匹配当前启用公司编码。")
+            )
+        if warehouse is None:
+            errors.append(
+                _error("仓库编码", warehouse_code, "当前公司不存在该启用仓库。")
+            )
+        if item is None:
+            errors.append(
+                _error("物品编码", item_code, "当前公司不存在该启用物品。")
+            )
+        quantity = _decimal_value(
+            values["quantity"],
+            "数量",
+            errors,
+            places=4,
+            required=True,
+            minimum=Decimal("0.0001"),
+        )
+        unit_cost = _decimal_value(
+            values["unit_cost"],
+            "单位成本",
+            errors,
+            places=6,
+            required=True,
+            minimum=Decimal("0"),
+        )
+        zero_cost_reason = _text(values["zero_cost_reason"])
+        remark = _text(values["remark"])
+        if unit_cost == Decimal("0") and not zero_cost_reason:
+            errors.append(
+                _error("0成本原因", values["zero_cost_reason"], "0 成本入库必须填写明确原因。")
+            )
+        normalized = {
+            "company_code": company_code,
+            "normalized_company_code": normalized_company,
+            "warehouse_id": str(warehouse.pk) if warehouse else None,
+            "warehouse_code": warehouse_code,
+            "normalized_warehouse_code": normalized_warehouse,
+            "item_id": str(item.pk) if item else None,
+            "item_code": item_code,
+            "normalized_item_code": normalized_item,
+            "quantity": str(quantity) if quantity is not None else None,
+            "unit_cost": str(unit_cost) if unit_cost is not None else None,
+            "zero_cost_reason": zero_cost_reason,
+            "remark": remark,
+        }
+        prepared.append(
+            {
+                "row_number": row_number,
+                "raw": raw,
+                "normalized": normalized,
+                "errors": errors,
+                "warnings": [],
+            }
+        )
+    return prepared
+
+
+def _inflate_opening_stock_row(*, company, normalized, lock=False):
+    from apps.supplies.models import SupplyItem, SupplyWarehouse
+
+    if normalized["normalized_company_code"] != company.normalized_code:
+        raise ValidationError("公司编码在确认前已发生变化，请重新上传验证。")
+    warehouse_query = (
+        SupplyWarehouse.objects.select_for_update()
+        if lock
+        else SupplyWarehouse.objects
+    )
+    item_query = SupplyItem.objects.select_for_update() if lock else SupplyItem.objects
+    warehouse = warehouse_query.filter(
+        pk=normalized["warehouse_id"],
+        company=company,
+        normalized_code=normalized["normalized_warehouse_code"],
+        is_active=True,
+    ).first()
+    if warehouse is None:
+        raise ValidationError("仓库在确认前已停用、改码或不再属于当前公司。")
+    item = item_query.filter(
+        pk=normalized["item_id"],
+        company=company,
+        normalized_item_code=normalized["normalized_item_code"],
+        is_active=True,
+    ).first()
+    if item is None:
+        raise ValidationError("物品在确认前已停用、改码或不再属于当前公司。")
+    reason = normalized["zero_cost_reason"]
+    remark = normalized["remark"]
+    line_parts = []
+    if reason:
+        line_parts.append(f"0成本原因：{reason}")
+    if remark:
+        line_parts.append(remark)
+    return {
+        "warehouse": warehouse,
+        "item": item,
+        "quantity": Decimal(normalized["quantity"]),
+        "entered_unit_cost": Decimal(normalized["unit_cost"]),
+        "line_remark": "；".join(line_parts),
+    }
+
+
 def _asset_theoretical_summary(result, *, as_of_date=None):
     lines = result.get("lines", ()) if isinstance(result, dict) else result.lines
     cutoff_exclusive = as_of_date + timedelta(days=1) if as_of_date else None
@@ -1928,6 +2131,53 @@ def _preflight_business_rows(*, actor, company, import_type, prepared):
                         _error("数据", None, message)
                         for message in _validation_messages(exc)
                     )
+        elif import_type == "opening_stock":
+            from apps.supplies.services import create_supply_document
+
+            groups = {}
+            for item in prepared:
+                try:
+                    row_data = _inflate_opening_stock_row(
+                        company=company,
+                        normalized=item["normalized"],
+                    )
+                except (ValidationError, PermissionDenied) as exc:
+                    item["errors"].extend(
+                        _error("数据", None, message)
+                        for message in _validation_messages(exc)
+                    )
+                    continue
+                groups.setdefault(row_data["warehouse"].pk, []).append(
+                    (item, row_data)
+                )
+            for grouped in groups.values():
+                try:
+                    create_supply_document(
+                        actor=actor,
+                        company=company,
+                        document_type="opening",
+                        data={
+                            "business_date": timezone.localdate(),
+                            "target_warehouse": grouped[0][1]["warehouse"],
+                            "idempotency_key": f"opening-preflight-{uuid.uuid4()}",
+                            "remark": "期初库存导入预检",
+                        },
+                        lines=[
+                            {
+                                "item": row_data["item"],
+                                "quantity": row_data["quantity"],
+                                "entered_unit_cost": row_data["entered_unit_cost"],
+                                "line_remark": row_data["line_remark"],
+                            }
+                            for _, row_data in grouped
+                        ],
+                    )
+                except (ValidationError, PermissionDenied) as exc:
+                    for item, _ in grouped:
+                        item["errors"].extend(
+                            _error("数据", None, message)
+                            for message in _validation_messages(exc)
+                        )
         elif import_type == "department":
             existing = {
                 value.normalized_code: value
@@ -2082,6 +2332,12 @@ def upload_and_validate_import(
     elif import_type == "item_master":
         prepared = _normalize_supply_item_rows(
             actor=actor,
+            company=company,
+            loaded_rows=loaded_rows,
+            definition=definition,
+        )
+    elif import_type == "opening_stock":
+        prepared = _normalize_opening_stock_rows(
             company=company,
             loaded_rows=loaded_rows,
             definition=definition,
@@ -2392,6 +2648,53 @@ def _confirm_import_batch_atomic(*, actor, batch, request=None):
             )
             row.created_object_type = "SupplyItem"
             row.created_object_id = str(item.pk)
+    elif batch.import_type == "opening_stock":
+        from apps.supplies.services import create_supply_document
+
+        grouped_rows = {}
+        for row in rows:
+            row_data = _inflate_opening_stock_row(
+                company=batch.company,
+                normalized=row.normalized_data_json,
+                lock=True,
+            )
+            grouped_rows.setdefault(row_data["warehouse"].pk, []).append(
+                (row, row_data)
+            )
+        for warehouse_id in sorted(grouped_rows, key=str):
+            grouped = grouped_rows[warehouse_id]
+            warehouse = grouped[0][1]["warehouse"]
+            document = create_supply_document(
+                actor=actor,
+                company=batch.company,
+                document_type="opening",
+                data={
+                    "business_date": timezone.localdate(),
+                    "target_warehouse": warehouse,
+                    "idempotency_key": (
+                        f"opening-stock-import:{batch.pk}:{warehouse.pk}"
+                    ),
+                    "remark": f"由期初库存导入批次 {batch.pk} 生成，尚未过账。",
+                },
+                lines=[
+                    {
+                        "item": row_data["item"],
+                        "quantity": row_data["quantity"],
+                        "entered_unit_cost": row_data["entered_unit_cost"],
+                        "line_remark": row_data["line_remark"],
+                    }
+                    for _, row_data in grouped
+                ],
+                request=request,
+            )
+            created_lines = list(document.lines.order_by("line_no"))
+            if len(created_lines) != len(grouped):
+                raise ValidationError("期初导入生成的单据明细数量不一致，已整批回滚。")
+            for (row, _), document_line in zip(
+                grouped, created_lines, strict=True
+            ):
+                row.created_object_type = "SupplyDocumentLine"
+                row.created_object_id = str(document_line.pk)
     elif batch.import_type == "department":
         existing = {
             value.normalized_code: value

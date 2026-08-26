@@ -131,6 +131,7 @@ def batch_detail(request, pk):
             "definition": _definition_or_404(batch.import_type, company=company),
             "is_asset_initialization": batch.import_type == "asset_initialization",
             "is_item_master": batch.import_type == "item_master",
+            "is_opening_stock": batch.import_type == "opening_stock",
         },
     )
 

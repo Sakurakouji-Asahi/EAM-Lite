@@ -33,8 +33,22 @@
 1. 将本包内 `docs/`、`tasks/` 和根目录补充文件复制到 EAM-Lite 仓库根目录。
 2. 先审阅业务口径，尤其是“逐件低值耐用品”和“数量型低值耐用品”的区分。
 3. 把 `CODEX-FIRST-INSTRUCTION.md` 中的指令交给 Codex。
-4. 每次只执行一个 Sprint；当前首个实施任务是 Sprint 13。
-5. Sprint 13 验收后，再单独下达 Sprint 14，依次推进到 Sprint 18。
+4. 每次只执行一个 Sprint；Sprint 13 已建立基础档案，Sprint 14 已建立库存入库引擎。
+5. 后续仍须逐 Sprint 单独下达任务；不得从 Sprint 14 自动进入 Sprint 15。
+
+## Sprint 14 已开放能力
+
+- 期初入库与日常入库草稿、编辑、取消和原子过账；
+- 公司内按年度、单据类型并发安全编号：`QC-YYYY-000001` / `RK-YYYY-000001`；
+- 移动加权平均成本、只读库存余额和不可变库存流水；
+- “导入中心 → 低值物品期初库存”标准 `.xlsx` 模板、预览和整批确认；确认只按仓库生成期初草稿，不自动过账；
+- 只读余额核对命令：
+
+~~~powershell
+.\.venv\Scripts\python.exe manage.py reconcile_supply_balances --company <公司编码>
+~~~
+
+核对命令发现差异时以非 0 状态退出，只报告流水汇总与余额缓存差异，不会修复、重建或写入库存。
 
 ## 明确不做
 

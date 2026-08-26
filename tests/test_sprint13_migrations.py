@@ -7,6 +7,7 @@ from apps.masterdata.models import Company
 
 @pytest.mark.django_db(transaction=True)
 def test_sprint13_migrates_from_previous_baseline_and_preserves_company():
+    leaf_nodes = MigrationExecutor(connection).loader.graph.leaf_nodes()
     company = Company.objects.create(
         code="MIG-S13",
         normalized_code="mig-s13",
@@ -55,4 +56,4 @@ def test_sprint13_migrates_from_previous_baseline_and_preserves_company():
         )
         assert ("item_master", "低值物品档案") in import_type_field.choices
     finally:
-        MigrationExecutor(connection).migrate([target_new])
+        MigrationExecutor(connection).migrate(leaf_nodes)

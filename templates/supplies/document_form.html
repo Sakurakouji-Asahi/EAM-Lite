@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}{{ title }} - EAM-Lite{% endblock %}
+{% block content %}
+<header class="app-page-header">
+  <div><h1 class="h3 mb-1">{{ title }}</h1><p class="text-secondary mb-0">草稿不会改变库存；单位成本为 0 时必须在明细备注中写明原因。</p></div>
+  <a class="btn btn-outline-secondary" href="{% if document %}{% url 'supplies:document-detail' document.pk %}{% else %}{% url 'supplies:document-list' %}{% endif %}">返回</a>
+</header>
+<form method="post" novalidate>
+  {% csrf_token %}
+  {{ form.idempotency_key }}
+  {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+  <section class="card shadow-sm mb-4"><div class="card-body">
+    <h2 class="h5 mb-3">基本信息</h2>
+    <div class="row g-3">
+      {% for field in form.visible_fields %}
+      <div class="{% if field.name == 'remark' %}col-12{% else %}col-md-6{% endif %}">
+        <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %}<span class="required-mark">*</span>{% endif %}</label>
+        {{ field }}{% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+  </div></section>
+  <section class="card shadow-sm mb-4"><div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-3"><h2 class="h5 mb-0">单据明细</h2><div class="d-flex align-items-center gap-2"><span class="text-secondary small">可填写多行，空白行会忽略</span><button class="btn btn-sm btn-outline-primary" type="button" id="add-supply-line">新增明细行</button></div></div>
+    {{ formset.management_form }}
+    {% if formset.non_form_errors %}<div class="alert alert-danger">{{ formset.non_form_errors }}</div>{% endif %}
+    <div class="table-responsive"><table class="table align-middle">
+      <thead><tr><th style="min-width:15rem">物品</th><th style="min-width:9rem">数量</th><th style="min-width:10rem">单位成本</th><th style="min-width:16rem">备注 / 0 成本原因</th><th>删除</th></tr></thead>
+      <tbody id="supply-line-rows">{% for line_form in formset %}<tr>
+        <td>{{ line_form.item }}{% for error in line_form.item.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</td>
+        <td>{{ line_form.quantity }}{% for error in line_form.quantity.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</td>
+        <td>{{ line_form.entered_unit_cost }}{% for error in line_form.entered_unit_cost.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</td>
+        <td>{{ line_form.line_remark }}{% for error in line_form.line_remark.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}{% for error in line_form.non_field_errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</td>
+        <td>{% if line_form.DELETE %}<div class="form-check">{{ line_form.DELETE }}<label class="form-check-label" for="{{ line_form.DELETE.id_for_label }}">删除</label></div>{% endif %}</td>
+      </tr>{% endfor %}</tbody>
+    </table></div>
+    <template id="empty-supply-line"><tr>
+      <td>{{ formset.empty_form.item }}</td>
+      <td>{{ formset.empty_form.quantity }}</td>
+      <td>{{ formset.empty_form.entered_unit_cost }}</td>
+      <td>{{ formset.empty_form.line_remark }}</td>
+      <td><div class="form-check">{{ formset.empty_form.DELETE }}<label class="form-check-label" for="{{ formset.empty_form.DELETE.id_for_label }}">删除</label></div></td>
+    </tr></template>
+  </div></section>
+  <div class="app-form-actions app-form-actions-contained"><button class="btn btn-primary" type="submit">保存草稿</button><a class="btn btn-outline-secondary" href="{% url 'supplies:document-list' %}">取消</a></div>
+</form>
+<script src="{% static 'js/supply-document-form.js' %}" defer></script>
+{% endblock %}

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}库存单据 - EAM-Lite{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3 mb-1">库存单据</h1><p class="text-secondary mb-0">Sprint 14 仅开放期初入库与日常入库。</p></div>{% if can_manage %}<div class="d-flex gap-2"><a class="btn btn-outline-primary" href="{% url 'supplies:opening-stock-import' %}">期初 Excel 导入</a><a class="btn btn-outline-primary" href="{% url 'supplies:document-create' 'opening' %}">新建期初入库</a><a class="btn btn-primary" href="{% url 'supplies:document-create' 'receipt' %}">新建日常入库</a></div>{% endif %}</header>
+<form method="get" class="card shadow-sm mb-3"><div class="card-body row g-2">
+  <div class="col-md-3"><label class="form-label">单据号/外部参考</label><input class="form-control" name="q" value="{{ query }}"></div>
+  <div class="col-md-2"><label class="form-label">类型</label><select class="form-select" name="document_type"><option value="">全部</option>{% for value,label in document_types %}<option value="{{ value }}"{% if selected_document_type == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+  <div class="col-md-2"><label class="form-label">状态</label><select class="form-select" name="status"><option value="">全部</option>{% for value,label in statuses %}<option value="{{ value }}"{% if selected_status == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+  <div class="col-md-3"><label class="form-label">仓库</label><select class="form-select" name="warehouse"><option value="">全部</option>{% for value in warehouses %}<option value="{{ value.pk }}"{% if selected_warehouse == value.pk|stringformat:'s' %} selected{% endif %}>{{ value }}</option>{% endfor %}</select></div>
+  <div class="col-md-2"><label class="form-label">物品编码</label><input class="form-control" name="item" value="{{ selected_item }}" placeholder="精确编码"></div>
+  <div class="col-md-2"><label class="form-label">开始日期</label><input class="form-control" type="date" name="date_from" value="{{ date_from }}"></div>
+  <div class="col-md-2"><label class="form-label">结束日期</label><input class="form-control" type="date" name="date_to" value="{{ date_to }}"></div>
+  <div class="col-md-auto align-self-end"><button class="btn btn-primary" type="submit">筛选</button><a class="btn btn-link" href="{% url 'supplies:document-list' %}">清空</a></div>
+</div></form>
+<div class="table-responsive card shadow-sm"><table class="table table-hover align-middle mb-0"><thead><tr><th>业务日期</th><th>单据号</th><th>类型</th><th>目标仓库</th><th>状态</th><th>明细数</th><th>创建人</th><th>操作</th></tr></thead><tbody>
+{% for object in page_obj %}<tr><td>{{ object.business_date }}</td><td><a href="{% url 'supplies:document-detail' object.pk %}">{{ object.document_no }}</a></td><td>{{ object.get_document_type_display }}</td><td>{{ object.target_warehouse|default:'—' }}</td><td>{{ object.get_status_display }}</td><td>{{ object.lines.all|length }}</td><td>{{ object.created_by|default:'—' }}</td><td>{% if object.status == 'draft' and can_manage %}<a href="{% url 'supplies:document-edit' object.pk %}">编辑</a> · <a href="{% url 'supplies:document-cancel' object.pk %}">取消</a>{% if can_post %} · <a href="{% url 'supplies:document-post' object.pk %}">过账</a>{% endif %}{% else %}<a href="{% url 'supplies:document-detail' object.pk %}">查看</a>{% endif %}</td></tr>{% empty %}<tr><td colspan="8" class="text-center text-secondary py-4">暂无库存单据</td></tr>{% endfor %}
+</tbody></table></div>{% include "supplies/_pagination.html" %}
+{% endblock %}

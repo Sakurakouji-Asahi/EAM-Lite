@@ -9,6 +9,7 @@ class ImportUploadForm(forms.Form):
         ("employee", "人员"),
         ("asset_initialization", "资产初始化"),
         ("item_master", "低值物品档案"),
+        ("opening_stock", "低值物品期初库存"),
     )
 
     import_type = forms.ChoiceField(label="导入类型", choices=IMPORT_CHOICES)

@@ -32,4 +32,29 @@ urlpatterns = [
         name="item-deactivate",
     ),
     path("imports/items/", views.item_import, name="item-import"),
+    path("documents/", views.document_list, name="document-list"),
+    path(
+        "documents/new/<str:document_type>/",
+        views.document_create,
+        name="document-create",
+    ),
+    path("documents/<uuid:pk>/", views.document_detail, name="document-detail"),
+    path(
+        "documents/<uuid:pk>/edit/", views.document_edit, name="document-edit"
+    ),
+    path(
+        "documents/<uuid:pk>/cancel/",
+        views.document_cancel,
+        name="document-cancel",
+    ),
+    path(
+        "documents/<uuid:pk>/post/", views.document_post, name="document-post"
+    ),
+    path("stock/", views.stock_balance_list, name="stock-balance-list"),
+    path("stock/ledger/", views.stock_ledger_list, name="stock-ledger-list"),
+    path(
+        "imports/opening-stock/",
+        views.opening_stock_import,
+        name="opening-stock-import",
+    ),
 ]
