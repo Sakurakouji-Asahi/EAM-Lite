@@ -95,23 +95,86 @@ try {
     $existingListener = Get-NetTCPConnection -LocalPort $serverPort -State Listen -ErrorAction SilentlyContinue
     if ($existingListener) {
         $eamAlreadyRunning = $false
-        try {
-            $existingResponse = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 3
-            $eamAlreadyRunning = (
-                $existingResponse.StatusCode -ge 200 -and
-                $existingResponse.StatusCode -lt 400 -and
-                $existingResponse.Content -match '"status"\s*:\s*"ok"'
-            )
-        }
-        catch {
-        }
-        if (-not $eamAlreadyRunning) {
-            throw "端口 $serverPort 已被其他程序占用，请先关闭该程序后重试。"
+        for ($healthAttempt = 0; $healthAttempt -lt 3; $healthAttempt++) {
+            try {
+                $existingResponse = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 2
+                $eamAlreadyRunning = (
+                    $existingResponse.StatusCode -ge 200 -and
+                    $existingResponse.StatusCode -lt 400 -and
+                    $existingResponse.Content -match '"status"\s*:\s*"ok"'
+                )
+                if ($eamAlreadyRunning) {
+                    break
+                }
+            }
+            catch {
+            }
+            Start-Sleep -Milliseconds 400
         }
 
-        Write-Host "检测到 EAM-Lite 已在运行，正在打开浏览器。" -ForegroundColor Green
-        Start-Process -FilePath $localUrl
-        exit 0
+        if ($eamAlreadyRunning) {
+            Write-Host "检测到 EAM-Lite 已在运行，正在打开浏览器。" -ForegroundColor Green
+            Start-Process -FilePath $localUrl
+            exit 0
+        }
+
+        $listenerPids = @(
+            $existingListener |
+                Select-Object -ExpandProperty OwningProcess -Unique
+        )
+        $staleEamPids = @()
+        $foreignListeners = @()
+        $managePathPattern = [Regex]::Escape(
+            [System.IO.Path]::GetFullPath($managePy)
+        )
+        $runserverPattern = "(?i)\brunserver\s+0\.0\.0\.0:$serverPort(?:\s|$)"
+        foreach ($listenerPid in $listenerPids) {
+            $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $listenerPid" -ErrorAction SilentlyContinue
+            $commandLine = [string]$processInfo.CommandLine
+            $isThisEam = (
+                -not [string]::IsNullOrWhiteSpace($commandLine) -and
+                $commandLine -match "(?i)$managePathPattern" -and
+                $commandLine -match $runserverPattern
+            )
+            if ($isThisEam) {
+                $staleEamPids += $listenerPid
+            }
+            else {
+                $processName = "未知程序"
+                try {
+                    $processName = (Get-Process -Id $listenerPid -ErrorAction Stop).ProcessName
+                }
+                catch {
+                }
+                $foreignListeners += "PID $listenerPid（$processName）"
+            }
+        }
+
+        if ($foreignListeners.Count -gt 0 -or $staleEamPids.Count -ne $listenerPids.Count) {
+            $details = if ($foreignListeners.Count -gt 0) {
+                $foreignListeners -join "、"
+            }
+            else {
+                "无法识别占用进程"
+            }
+            throw "端口 $serverPort 被非 EAM-Lite 程序占用：$details。请先关闭该程序后重试。"
+        }
+
+        Write-Host "检测到旧的 EAM-Lite 服务已失去响应，正在安全重启……" -ForegroundColor Yellow
+        foreach ($stalePid in $staleEamPids) {
+            Stop-Process -Id $stalePid -Force -ErrorAction Stop
+        }
+        $portReleased = $false
+        for ($attempt = 0; $attempt -lt 40; $attempt++) {
+            if (-not (Get-NetTCPConnection -LocalPort $serverPort -State Listen -ErrorAction SilentlyContinue)) {
+                $portReleased = $true
+                break
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        if (-not $portReleased) {
+            throw "旧 EAM-Lite 服务已停止，但端口 $serverPort 未及时释放，请稍后重试。"
+        }
     }
 
     if (-not (Test-Path -LiteralPath $pythonExe -PathType Leaf)) {
