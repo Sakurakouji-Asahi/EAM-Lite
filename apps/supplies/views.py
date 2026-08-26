@@ -11,15 +11,24 @@ from django.core.paginator import Paginator
 from django.db.models import Q, Sum
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 
 from apps.assets.permissions import can_create_asset_draft
 from apps.masterdata.models import InitializationSetting
 from apps.masterdata.normalization import normalize_identifier
-from apps.masterdata.permissions import current_company, scoped_departments, scoped_employees
+from apps.masterdata.permissions import (
+    current_company,
+    role_names_for,
+    scoped_departments,
+    scoped_employees,
+)
 
 from .forms import (
     SupplyCategoryForm,
     SupplyConsumableReturnForm,
+    SupplyCustodyTransferForm,
+    SupplyCustodyWriteOffForm,
+    SupplyDurableReturnForm,
     SupplyDeactivateForm,
     SupplyDocumentCancelForm,
     SupplyDocumentForm,
@@ -32,6 +41,7 @@ from .forms import (
 from .models import (
     SupplyCategory,
     SupplyCustody,
+    SupplyCustodyAction,
     SupplyDocument,
     SupplyDocumentLine,
     SupplyDocumentStatus,
@@ -47,6 +57,7 @@ from .permissions import (
     can_manage_supply_category,
     can_manage_supply_item,
     can_manage_supply_warehouse,
+    can_manage_supply_custody,
     can_post_supply_document,
     can_reverse_supply_document,
     can_view_supply_custodies,
@@ -81,11 +92,14 @@ from .services import (
     deactivate_supply_item,
     deactivate_supply_warehouse,
     post_supply_document,
+    return_custody_to_warehouse,
     reverse_supply_document,
+    transfer_custody,
     update_supply_category,
     update_supply_item,
     update_draft_document,
     update_supply_warehouse,
+    write_off_custody,
 )
 
 
@@ -203,6 +217,9 @@ def dashboard(request):
     categories = scoped_supply_categories(request.user, company)
     warehouses = scoped_supply_warehouses(request.user, company)
     items = scoped_supply_items(request.user, company)
+    individual_asset_initialized = InitializationSetting.objects.filter(
+        company=company, initialization_completed=True
+    ).exists()
     return render(
         request,
         "supplies/dashboard.html",
@@ -233,9 +250,8 @@ def dashboard(request):
             "can_create_individual_asset": can_create_asset_draft(
                 request.user, company
             )
-            and InitializationSetting.objects.filter(
-                company=company, initialization_completed=True
-            ).exists(),
+            and individual_asset_initialized,
+            "individual_asset_initialized": individual_asset_initialized,
         },
     )
 
@@ -868,6 +884,7 @@ def document_detail(request, pk):
             "quantity": line.quantity,
             "line_remark": line.line_remark,
             "source_issue_line": line.source_issue_line,
+            "source_custody": line.source_custody,
         }
         if (
             document.document_type == SupplyDocumentType.ISSUE
@@ -898,9 +915,15 @@ def document_detail(request, pk):
             "line_rows": line_rows,
             "show_cost": show_cost,
             "total_amount": total_amount if show_cost else None,
-            "can_manage": can_create_supply_document(request.user),
-            "can_post": can_post_supply_document(request.user),
-            "can_reverse": can_reverse_supply_document(request.user),
+            "can_manage": can_create_supply_document(
+                request.user, document=document
+            ),
+            "can_post": can_post_supply_document(
+                request.user, document=document
+            ),
+            "can_reverse": can_reverse_supply_document(
+                request.user, document=document
+            ),
             "can_edit": document.document_type
             in {
                 SupplyDocumentType.OPENING,
@@ -918,10 +941,10 @@ def document_detail(request, pk):
 @login_required
 def document_cancel(request, pk):
     company = _company_or_404()
-    require_create_supply_document(request.user)
     document = get_object_or_404(
         scoped_supply_documents(request.user, company), pk=pk
     )
+    require_create_supply_document(request.user, document=document)
     if document.status != SupplyDocumentStatus.DRAFT:
         raise PermissionDenied("只有草稿单据可以取消。")
     form = SupplyDocumentCancelForm(request.POST or None)
@@ -948,7 +971,10 @@ def document_cancel(request, pk):
 @login_required
 def document_post(request, pk):
     company = _company_or_404()
-    require_post_supply_document(request.user)
+    if not role_names_for(request.user).intersection(
+        {"system_admin", "finance", "warehouse", "equipment"}
+    ):
+        require_post_supply_document(request.user)
     document = get_object_or_404(
         scoped_supply_documents(
             request.user,
@@ -961,6 +987,7 @@ def document_post(request, pk):
         ),
         pk=pk,
     )
+    require_post_supply_document(request.user, document=document)
     if request.method == "GET" and document.status == SupplyDocumentStatus.POSTED:
         return redirect("supplies:document-detail", pk=document.pk)
     if document.status not in {
@@ -1071,7 +1098,10 @@ def consumable_return_create(request, line_pk):
 @login_required
 def document_reverse(request, pk):
     company = _company_or_404()
-    require_reverse_supply_document(request.user)
+    if not role_names_for(request.user).intersection(
+        {"system_admin", "finance", "warehouse", "equipment"}
+    ):
+        require_reverse_supply_document(request.user)
     document = get_object_or_404(
         scoped_supply_documents(
             request.user,
@@ -1082,6 +1112,7 @@ def document_reverse(request, pk):
         ),
         pk=pk,
     )
+    require_reverse_supply_document(request.user, document=document)
     if document.status == SupplyDocumentStatus.REVERSED:
         reversal = SupplyDocument.objects.filter(
             company=company, reversal_of=document
@@ -1092,7 +1123,9 @@ def document_reverse(request, pk):
         raise PermissionDenied("只允许冲销已过账单据。")
     if document.document_type == SupplyDocumentType.REVERSAL:
         raise PermissionDenied("冲销单不能再次冲销。")
-    form = SupplyDocumentReverseForm(request.POST or None, actor=request.user)
+    form = SupplyDocumentReverseForm(
+        request.POST or None, actor=request.user, document=document
+    )
     if request.method == "POST" and form.is_valid():
         try:
             reversal = reverse_supply_document(
@@ -1131,6 +1164,8 @@ def custody_list(request):
             "department",
             "employee",
             "origin_issue_line__document",
+            "origin_import_row__batch",
+            "parent_custody",
         ),
     )
     query = request.GET.get("q", "").strip()
@@ -1140,6 +1175,7 @@ def custody_list(request):
     status = request.GET.get("status", "").strip()
     date_from_value = request.GET.get("date_from", "").strip()
     source_document = request.GET.get("source_document", "").strip()
+    source_type = request.GET.get("source_type", "").strip()
     if query:
         queryset = queryset.filter(
             Q(item__item_code__icontains=query)
@@ -1178,9 +1214,38 @@ def custody_list(request):
             else queryset.none()
         )
     if source_document:
-        queryset = queryset.filter(
-            origin_issue_line__document__document_no__icontains=source_document
+        root_ids = list(
+            SupplyCustody.objects.filter(
+                company=company,
+                parent_custody__isnull=True,
+                origin_issue_line__document__document_no__icontains=source_document,
+            ).values_list("pk", flat=True)
         )
+        matched_ids = set(root_ids)
+        frontier = root_ids
+        while frontier:
+            frontier = list(
+                SupplyCustody.objects.filter(
+                    company=company,
+                    parent_custody_id__in=frontier,
+                )
+                .exclude(pk__in=matched_ids)
+                .values_list("pk", flat=True)
+            )
+            matched_ids.update(frontier)
+        queryset = queryset.filter(pk__in=matched_ids)
+    if source_type == "issue":
+        queryset = queryset.filter(
+            parent_custody__isnull=True, origin_issue_line__isnull=False
+        )
+    elif source_type == "opening":
+        queryset = queryset.filter(
+            parent_custody__isnull=True, origin_import_row__isnull=False
+        )
+    elif source_type == "transfer":
+        queryset = queryset.filter(parent_custody__isnull=False)
+    else:
+        source_type = ""
     return render(
         request,
         "supplies/custody_list.html",
@@ -1194,6 +1259,7 @@ def custody_list(request):
             "selected_status": status,
             "date_from": date_from_value,
             "source_document": source_document,
+            "source_type": source_type,
             "departments": scoped_departments(
                 request.user, company
             ).order_by("normalized_code"),
@@ -1219,6 +1285,9 @@ def custody_detail(request, pk):
                 "department",
                 "employee",
                 "origin_issue_line__document",
+                "origin_import_row__batch",
+                "parent_custody__department",
+                "parent_custody__employee",
             ),
         ),
         pk=pk,
@@ -1233,6 +1302,25 @@ def custody_detail(request, pk):
         "created_by",
         "reverses_movement",
     ).order_by("created_at")
+    ancestor_chain = []
+    current = custody.parent_custody
+    seen = set()
+    while current is not None and current.pk not in seen:
+        seen.add(current.pk)
+        ancestor_chain.append(current)
+        current = (
+            SupplyCustody.objects.select_related(
+                "parent_custody", "department", "employee", "item"
+            )
+            .filter(pk=current.parent_custody_id, company=company)
+            .first()
+            if current.parent_custody_id
+            else None
+        )
+    ancestor_chain.reverse()
+    child_custodies = custody.child_custodies.select_related(
+        "department", "employee", "item"
+    ).order_by("started_on", "created_at")
     return render(
         request,
         "supplies/custody_detail.html",
@@ -1240,7 +1328,212 @@ def custody_detail(request, pk):
             "custody": custody,
             "movements": movements,
             "show_cost": can_view_supply_cost(request.user),
+            "ancestor_chain": ancestor_chain,
+            "child_custodies": child_custodies,
+            "can_return": custody.status == "open"
+            and custody.item.is_active
+            and can_manage_supply_custody(
+                request.user, custody, action="return_draft"
+            ),
+            "can_transfer": custody.status == "open"
+            and can_manage_supply_custody(
+                request.user, custody, action="transfer"
+            ),
+            "can_write_off": custody.status == "open"
+            and can_manage_supply_custody(
+                request.user, custody, action="loss"
+            ),
         },
+    )
+
+
+def _custody_for_action(request, company, pk):
+    return get_object_or_404(
+        scoped_supply_custodies(
+            request.user,
+            company,
+            SupplyCustody.objects.select_related(
+                "company",
+                "item",
+                "department",
+                "employee",
+                "origin_issue_line__document",
+                "origin_import_row__batch",
+                "parent_custody",
+            ),
+        ),
+        pk=pk,
+    )
+
+
+@login_required
+def durable_return_create(request, pk):
+    company = _company_or_404()
+    custody = _custody_for_action(request, company, pk)
+    form = SupplyDurableReturnForm(
+        request.POST or None,
+        actor=request.user,
+        company=company,
+        custody=custody,
+    )
+    if request.method == "POST" and form.is_valid():
+        try:
+            document = return_custody_to_warehouse(
+                custody=custody,
+                target_warehouse=form.cleaned_data["target_warehouse"],
+                quantity=form.cleaned_data["quantity"],
+                business_date=form.cleaned_data["business_date"],
+                reason=form.cleaned_data["reason"],
+                actor=request.user,
+                idempotency_key=form.cleaned_data["idempotency_key"],
+                request=request,
+            )
+        except ValidationError as exc:
+            _service_error(form, exc)
+        else:
+            messages.success(request, "耐用品归还草稿已创建；过账前尚未改变库存或保管。")
+            return redirect("supplies:document-detail", pk=document.pk)
+    return render(
+        request,
+        "supplies/custody_action_form.html",
+        {
+            "form": form,
+            "custody": custody,
+            "title": "耐用品归还仓库",
+            "submit_label": "创建归还草稿",
+            "warning": "归还将在库存单据过账时原子减少保管并增加目标仓库库存。",
+            "show_cost": can_view_supply_cost(request.user),
+        },
+    )
+
+
+@login_required
+def custody_transfer(request, pk):
+    company = _company_or_404()
+    custody = _custody_for_action(request, company, pk)
+    form = SupplyCustodyTransferForm(
+        request.POST or None,
+        actor=request.user,
+        company=company,
+        custody=custody,
+    )
+    if request.method == "POST" and form.is_valid():
+        try:
+            target = transfer_custody(
+                custody=custody,
+                quantity=form.cleaned_data["quantity"],
+                target_department=form.cleaned_data["target_department"],
+                target_employee=form.cleaned_data["target_employee"],
+                business_date=form.cleaned_data["business_date"],
+                reason=form.cleaned_data["reason"],
+                actor=request.user,
+                idempotency_key=form.cleaned_data["idempotency_key"],
+                request=request,
+            )
+        except ValidationError as exc:
+            _service_error(form, exc)
+        else:
+            messages.success(request, "责任转交已完成；目标形成独立保管来源链，仓库库存未变化。")
+            return redirect("supplies:custody-detail", pk=target.pk)
+    return render(
+        request,
+        "supplies/custody_action_form.html",
+        {
+            "form": form,
+            "custody": custody,
+            "title": "责任转交",
+            "submit_label": "确认转交",
+            "warning": "每次转交新建目标保管，不与其他来源或成本批次自动合并。",
+            "show_cost": can_view_supply_cost(request.user),
+        },
+    )
+
+
+@login_required
+def custody_write_off(request, pk, action):
+    if action not in {SupplyCustodyAction.LOSS, SupplyCustodyAction.SCRAP}:
+        raise Http404("不支持的保管动作。")
+    company = _company_or_404()
+    custody = _custody_for_action(request, company, pk)
+    form = SupplyCustodyWriteOffForm(
+        request.POST or None,
+        actor=request.user,
+        company=company,
+        custody=custody,
+        action=action,
+    )
+    title = "耐用品报损" if action == SupplyCustodyAction.LOSS else "耐用品报废"
+    if request.method == "POST" and form.is_valid():
+        try:
+            write_off_custody(
+                custody=custody,
+                quantity=form.cleaned_data["quantity"],
+                action=action,
+                business_date=form.cleaned_data["business_date"],
+                reason=form.cleaned_data["reason"],
+                actor=request.user,
+                idempotency_key=form.cleaned_data["idempotency_key"],
+                request=request,
+            )
+        except ValidationError as exc:
+            _service_error(form, exc)
+        else:
+            messages.success(request, f"{title}已记录；未增加仓库库存，也未生成会计凭证。")
+            return redirect("supplies:custody-detail", pk=custody.pk)
+    return render(
+        request,
+        "supplies/custody_action_form.html",
+        {
+            "form": form,
+            "custody": custody,
+            "title": title,
+            "submit_label": f"确认{title[-2:]}",
+            "warning": "该动作会减少当前在管数量和管理金额，且本 Sprint 不提供撤销。",
+            "show_cost": can_view_supply_cost(request.user),
+        },
+    )
+
+
+@login_required
+def my_custodies(request):
+    company = _company_or_404()
+    require_view_supply_custodies(request.user)
+    queryset = SupplyCustody.objects.filter(
+        company=company,
+        employee__user=request.user,
+        status="open",
+    ).select_related("item", "department", "employee")
+    return render(
+        request,
+        "supplies/my_custodies.html",
+        {
+            "page_obj": _page(queryset.order_by("-started_on", "-created_at"), request),
+            "pagination_query": _pagination_query(request),
+            "show_cost": can_view_supply_cost(request.user),
+        },
+    )
+
+
+@login_required
+def opening_custody_import(request):
+    company = _company_or_404()
+    from .permissions import require_import_opening_custody
+
+    require_import_opening_custody(request.user)
+    if company is None:
+        raise Http404
+    return redirect("imports:upload", import_type="opening_custody")
+
+
+@login_required
+def individual_durable_create(request):
+    return redirect(f"{reverse('assets:asset-create')}?source=individual_durable")
+
+
+@login_required
+def individual_durable_list(request):
+    return redirect(
+        f"{reverse('assets:asset-list')}?accounting_treatment=controlled_non_fixed"
     )
 
 

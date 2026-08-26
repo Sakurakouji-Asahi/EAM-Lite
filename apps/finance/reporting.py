@@ -31,6 +31,9 @@ def approved_depreciation_entries(queryset=None):
 
     queryset = queryset if queryset is not None else DepreciationEntry.objects.all()
     return queryset.filter(
+        asset__finance__accounting_treatment="fixed_asset",
+        asset__finance__finance_confirmed_at__isnull=False,
+    ).filter(
         Q(source_type="opening")
         | Q(
             source_type="batch",

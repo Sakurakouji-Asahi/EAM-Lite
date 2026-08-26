@@ -85,6 +85,14 @@ class IssueCalculation:
     average_unit_cost_after: Decimal
 
 
+@dataclass(frozen=True)
+class CustodyAmountAllocation:
+    action_quantity: Decimal
+    action_amount: Decimal
+    quantity_after: Decimal
+    amount_after: Decimal
+
+
 def calculate_receipt(
     balance_quantity,
     balance_amount,
@@ -197,6 +205,60 @@ def calculate_issue(
         quantity_after=quantity_after,
         amount_after=amount_after,
         average_unit_cost_after=average_after,
+    )
+
+
+def allocate_custody_amount(
+    *,
+    current_quantity,
+    current_amount,
+    unit_cost_snapshot,
+    action_quantity,
+) -> CustodyAmountAllocation:
+    """Split one custody balance without leaving a final monetary tail.
+
+    Partial actions use the immutable custody cost snapshot.  The final action
+    consumes the exact remaining amount so return, transfer, loss and scrap
+    all follow one rule and can never leave quantity zero with CNY 0.01 behind.
+    """
+
+    quantity_before = quantize_quantity(current_quantity)
+    amount_before = quantize_money(current_amount)
+    cost_snapshot = quantize_unit_cost(unit_cost_snapshot)
+    quantity = quantize_quantity(action_quantity)
+    if quantity_before <= ZERO_QTY:
+        raise ValidationError("当前保管数量必须大于 0。")
+    if amount_before < ZERO_MONEY or cost_snapshot < ZERO_COST:
+        raise ValidationError("当前保管金额和单位成本不得小于 0。")
+    if quantity <= ZERO_QTY:
+        raise ValidationError("处理数量必须大于 0。")
+    if quantity > quantity_before:
+        raise ValidationError(
+            f"处理数量超过当前保管数量，当前最多可处理 {quantity_before}。"
+        )
+
+    if quantity == quantity_before:
+        action_amount = amount_before
+        quantity_after = ZERO_QTY
+        amount_after = ZERO_MONEY
+    else:
+        action_amount = quantize_money(quantity * cost_snapshot)
+        if action_amount > amount_before:
+            raise ValidationError("本次处理金额超过当前保管金额，请先执行保管核对。")
+        quantity_after = quantize_quantity(quantity_before - quantity)
+        amount_after = quantize_money(amount_before - action_amount)
+        if quantity_after <= ZERO_QTY:
+            raise ValidationError("部分处理后的保管数量必须大于 0。")
+        if amount_after < ZERO_MONEY:
+            raise ValidationError("处理后保管金额不得小于 0。")
+
+    if quantity_after == ZERO_QTY and amount_after != ZERO_MONEY:
+        raise ValidationError("处理后数量为 0 时保管金额必须同时为 0。")
+    return CustodyAmountAllocation(
+        action_quantity=quantity,
+        action_amount=action_amount,
+        quantity_after=quantity_after,
+        amount_after=amount_after,
     )
 
 

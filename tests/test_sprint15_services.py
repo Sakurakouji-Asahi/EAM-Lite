@@ -334,7 +334,7 @@ def test_final_consumable_return_uses_remaining_original_amount_without_tail():
         == Decimal("10.01")
     )
 
-def test_durable_return_is_rejected_by_backend():
+def test_durable_return_without_custody_source_is_rejected_by_backend():
     company, actor, department, _, source, target, _, durable = supply_context()
     seed_supply_stock(actor=actor, company=company, warehouse=source, item=durable)
     issue = make_issue_document(
@@ -345,7 +345,7 @@ def test_durable_return_is_rejected_by_backend():
         department=department,
     )
     post_supply_document(document=issue, actor=actor)
-    with pytest.raises(ValidationError, match="只允许低值易耗品"):
+    with pytest.raises(ValidationError, match="有效的易耗品领用明细"):
         make_return(
             actor=actor,
             company=company,

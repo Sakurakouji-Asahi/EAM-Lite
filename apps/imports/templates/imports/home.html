@@ -22,6 +22,10 @@
         <div class="alert alert-info py-2">
           确认后按仓库生成期初入库草稿，不自动过账；库存只有在用户逐张确认过账后才会增加。
         </div>
+      {% elif definition.import_type == "opening_custody" %}
+        <div class="alert alert-warning py-2">
+          确认后直接建立数量型耐用品开放保管和不可变 opening 流水，不改变仓库库存，也不提供破坏性回滚。
+        </div>
       {% else %}
         <p class="small text-secondary">导入只新增，不按名称或编码覆盖现有记录。</p>
       {% endif %}

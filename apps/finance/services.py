@@ -38,6 +38,9 @@ SHANGHAI = ZoneInfo("Asia/Shanghai")
 CENT = Decimal("0.01")
 ZERO_MONEY = Decimal("0.00")
 DEPRECIATION_ENGINE_VERSION = "sprint4-v1"
+CONTROLLED_NON_FIXED_DEPRECIATION_ERROR = (
+    "该资产属于逐件低值耐用品/受控非固定资产，不计提折旧。"
+)
 POLICY_EDITABLE_FIELDS = frozenset(
     {
         "policy_key",
@@ -129,6 +132,54 @@ def _models():
 
     result = locals()
     return {name: value for name, value in result.items() if isinstance(value, type)}
+
+
+def depreciable_fixed_asset_filter(prefix=""):
+    relation = f"{prefix}__" if prefix else ""
+    return Q(
+        **{
+            f"{relation}finance__accounting_treatment": "fixed_asset",
+            f"{relation}finance__finance_confirmed_at__isnull": False,
+        }
+    )
+
+
+def is_depreciable_fixed_asset(asset, *, finance=None) -> bool:
+    if finance is None:
+        Finance = _models()["AssetFinance"]
+        finance = Finance.objects.filter(
+            asset_id=getattr(asset, "pk", None),
+            company_id=getattr(asset, "company_id", None),
+        ).first()
+    return bool(
+        finance is not None
+        and finance.accounting_treatment == "fixed_asset"
+        and finance.finance_confirmed_at is not None
+    )
+
+
+def ensure_asset_is_depreciable(
+    asset, *, finance=None, finance_data=None, require_confirmed=True
+):
+    if finance_data is not None:
+        treatment = finance_data.get("accounting_treatment")
+        confirmed = not require_confirmed
+    else:
+        if finance is None:
+            Finance = _models()["AssetFinance"]
+            finance = Finance.objects.filter(
+                asset_id=getattr(asset, "pk", None),
+                company_id=getattr(asset, "company_id", None),
+            ).first()
+        treatment = getattr(finance, "accounting_treatment", None)
+        confirmed = bool(
+            finance is not None and finance.finance_confirmed_at is not None
+        )
+    if treatment == "controlled_non_fixed":
+        raise ValidationError(CONTROLLED_NON_FIXED_DEPRECIATION_ERROR)
+    if treatment != "fixed_asset" or (require_confirmed and not confirmed):
+        raise ValidationError("只有经财务确认的固定资产可以执行折旧业务。")
+    return finance
 
 
 def _serializable(value):
@@ -936,6 +987,11 @@ def preview_asset_depreciation(*, actor, asset, finance_data, profile_data=None)
         raise PermissionDenied("目标资产不属于当前公司。")
     if asset.asset_status != "pending_finance":
         raise ValidationError("只有待财务确认资产可执行正式化前试算。")
+    ensure_asset_is_depreciable(
+        asset,
+        finance_data=finance_data,
+        require_confirmed=False,
+    )
     requested = (profile_data or {}).get("depreciation_policy") or (profile_data or {}).get("depreciation_policy_id")
     policy = resolve_depreciation_policy(asset=asset, effective_date=(profile_data or {}).get("effective_from"), requested_policy=requested)
     spec, result, resolved = _profile_spec(
@@ -1086,6 +1142,7 @@ def _create_profile_and_schedule(
     models = _models()
     Profile = models["AssetDepreciationProfile"]
     Schedule = models["DepreciationSchedule"]
+    ensure_asset_is_depreciable(asset)
     if existing_profile is not None:
         profile = existing_profile
         if (
@@ -1182,6 +1239,7 @@ def clone_asset_depreciation_profile(
     profile.asset = asset
     profile.company = company
     finance = Finance.objects.select_for_update().get(asset=asset, company=company)
+    ensure_asset_is_depreciable(asset, finance=finance)
     _require_profile_continuation_reviewed(profile)
     if profile.status not in {"active", "suspended"}:
         raise ValidationError("只有当前 active/suspended Profile 可以克隆新版本。")
@@ -1383,6 +1441,7 @@ def review_profile_actual_continuation_date(
         pk=profile.pk, company=company, asset=asset
     )
     finance = Finance.objects.select_for_update().get(asset=asset, company=company)
+    ensure_asset_is_depreciable(asset, finance=finance)
     if (
         not profile.actual_continuation_review_required
         or profile.actual_continuation_date is not None
@@ -1783,6 +1842,7 @@ def record_work_usage(*, actor, profile, period_start, period_end, current_units
     profile = _for_update_self(Profile.objects.all()).get(
         pk=profile.pk, company=company, asset=asset
     )
+    ensure_asset_is_depreciable(asset)
     profile.company = company
     profile.asset = asset
     _require_profile_continuation_reviewed(profile)
@@ -2262,8 +2322,8 @@ def generate_depreciation_batch(*, actor, company, period_start, period_end, ide
             company=company,
             status__in=("active", "suspended", "stopped", "completed"),
             effective_from__lt=period_end,
-            asset__finance__accounting_treatment="fixed_asset",
         )
+        .filter(depreciable_fixed_asset_filter("asset"))
         .filter(Q(effective_to__isnull=True) | Q(effective_to__gte=period_start))
     )
     for profile in profiles:
@@ -2569,6 +2629,10 @@ def confirm_depreciation_batch(*, actor, batch, reason=None, request=None):
         raise ValidationError("存在后续已确认月份，不得倒序补记并破坏余额链；请先倒序冲销。")
     Usage = models["AssetWorkUsage"]
     for item in items:
+        ensure_asset_is_depreciable(
+            item.asset,
+            finance=locked_finances.get(item.asset_id),
+        )
         _require_profile_continuation_reviewed(item.depreciation_profile)
         usages = []
         if item.calculation_method == "units_of_production":
@@ -2790,6 +2854,7 @@ def create_profile_event(*, actor, profile, event_type, effective_date, reason, 
     profile = _for_update_self(Profile.objects.all()).get(
         pk=profile.pk, company=company, asset=asset
     )
+    ensure_asset_is_depreciable(asset)
     profile.company = company
     profile.asset = asset
     _require_profile_continuation_reviewed(profile)
@@ -2854,8 +2919,7 @@ def create_value_adjustment(*, actor, asset, adjustment_type, amount, effective_
     asset = _for_update_self(Asset.objects.all()).get(pk=asset.pk, company=company)
     asset.company = company
     finance = Finance.objects.select_for_update().get(asset=asset, company=company)
-    if finance.finance_confirmed_at is None or finance.accounting_treatment != "fixed_asset":
-        raise ValidationError("受控非固定资产不得创建折旧或减值调整。")
+    ensure_asset_is_depreciable(asset, finance=finance)
     effective_date = _business_date(effective_date)
     if (
         adjustment_type == "depreciation_adjustment"
@@ -3213,6 +3277,7 @@ def run_theoretical_depreciation(*, actor, asset, as_of_date, parameters, idempo
     _require_current_company(company)
     asset = _for_update_self(Asset.objects.all()).get(pk=asset.pk, company=company)
     asset.company = company
+    ensure_asset_is_depreciable(asset)
     existing = Run.objects.select_for_update().filter(company=asset.company, idempotency_key=idempotency_key).first()
     digest = _request_hash({"asset_id": asset.pk, "as_of_date": as_of_date, "parameters": parameters})
     if existing:
@@ -3267,6 +3332,9 @@ __all__ = [
     "deactivate_fixed_asset_category",
     "delete_fixed_asset_category",
     "generate_depreciation_batch",
+    "ensure_asset_is_depreciable",
+    "is_depreciable_fixed_asset",
+    "depreciable_fixed_asset_filter",
     "preview_asset_depreciation",
     "record_work_usage",
     "retire_depreciation_policy",

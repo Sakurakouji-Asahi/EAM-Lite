@@ -1387,6 +1387,7 @@ class ImportBatch(models.Model):
         ASSET_INITIALIZATION = "asset_initialization", "资产初始化"
         ITEM_MASTER = "item_master", "低值物品档案"
         OPENING_STOCK = "opening_stock", "低值物品期初库存"
+        OPENING_CUSTODY = "opening_custody", "耐用品期初保管"
 
     class Status(models.TextChoices):
         UPLOADED = "uploaded", "已上传"
@@ -1394,6 +1395,7 @@ class ImportBatch(models.Model):
         INVALID = "invalid", "校验不通过"
         CONFIRMED = "confirmed", "已确认"
         FAILED = "failed", "处理失败"
+        CANCELLED = "cancelled", "已取消"
 
     company = models.ForeignKey(
         Company,
@@ -1503,6 +1505,7 @@ class ImportBatch(models.Model):
                         confirmed_at__isnull=False,
                     )
                     | Q(status="failed", confirmed_by__isnull=True, confirmed_at__isnull=True)
+                    | Q(status="cancelled", confirmed_by__isnull=True, confirmed_at__isnull=True)
                 ),
                 name="ck_import_batch_status_fields",
             ),
@@ -1514,6 +1517,7 @@ class ImportBatch(models.Model):
                         "asset_initialization",
                         "item_master",
                         "opening_stock",
+                        "opening_custody",
                     )
                 ),
                 name="ck_import_batch_type_valid",
@@ -1526,6 +1530,7 @@ class ImportBatch(models.Model):
                         "invalid",
                         "confirmed",
                         "failed",
+                        "cancelled",
                     )
                 ),
                 name="ck_import_batch_status_valid",

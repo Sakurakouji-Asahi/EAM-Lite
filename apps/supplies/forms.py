@@ -10,9 +10,12 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.masterdata.models import Department, Employee, Location
+from apps.masterdata.permissions import resolve_department_ids, role_names_for
 from .domain import quantize_quantity, quantize_unit_cost, validate_zero_cost_reason
 from .models import (
     SupplyCategory,
+    SupplyCustody,
+    SupplyCustodyAction,
     SupplyDocumentLine,
     SupplyDocumentStatus,
     SupplyDocumentType,
@@ -24,6 +27,7 @@ from .permissions import (
     can_manage_supply_item,
     require_create_supply_document,
     require_manage_supply_category,
+    require_manage_supply_custody,
     require_manage_supply_item,
     require_manage_supply_warehouse,
     require_reverse_supply_document,
@@ -566,6 +570,145 @@ class SupplyConsumableReturnForm(forms.Form):
         return cleaned
 
 
+class _CustodyActionBaseForm(forms.Form):
+    quantity = forms.DecimalField(
+        label="处理数量",
+        max_digits=18,
+        decimal_places=4,
+        min_value=Decimal("0.0001"),
+        widget=forms.NumberInput(
+            attrs={"step": "0.0001", "min": "0.0001", "class": "form-control"}
+        ),
+    )
+    business_date = forms.DateField(
+        label="业务日期",
+        widget=forms.DateInput(
+            format="%Y-%m-%d",
+            attrs={"type": "date", "class": "form-control"},
+        ),
+    )
+    reason = forms.CharField(
+        label="原因",
+        max_length=500,
+        widget=forms.Textarea(attrs={"rows": 3, "class": "form-control"}),
+    )
+    idempotency_key = forms.CharField(widget=forms.HiddenInput())
+
+    action = None
+
+    def __init__(self, *args, actor=None, company=None, custody=None, **kwargs):
+        if actor is None or company is None or custody is None:
+            raise PermissionDenied("保管动作表单必须绑定当前用户、公司和来源保管。")
+        self.actor = actor
+        self.company = company
+        self.custody = custody
+        require_manage_supply_custody(actor, custody, action=self.action)
+        initial = dict(kwargs.pop("initial", {}) or {})
+        initial.setdefault("business_date", timezone.localdate())
+        initial.setdefault("quantity", custody.current_quantity)
+        initial.setdefault("idempotency_key", str(uuid.uuid4()))
+        super().__init__(*args, initial=initial, **kwargs)
+
+    def clean_quantity(self):
+        quantity = quantize_quantity(self.cleaned_data["quantity"])
+        if quantity > self.custody.current_quantity:
+            raise ValidationError(
+                f"处理数量超过当前保管数量，当前最多可处理 {self.custody.current_quantity}。"
+            )
+        return quantity
+
+    def clean_reason(self):
+        value = str(self.cleaned_data.get("reason") or "").strip()
+        if not value:
+            raise ValidationError("原因不能为空。")
+        return value
+
+    def clean_idempotency_key(self):
+        value = str(self.cleaned_data.get("idempotency_key") or "").strip()
+        if not value:
+            raise ValidationError("动作幂等键无效，请刷新页面重试。")
+        return value
+
+
+class SupplyDurableReturnForm(_CustodyActionBaseForm):
+    action = "return_draft"
+    target_warehouse = forms.ModelChoiceField(
+        label="归还仓库",
+        queryset=SupplyWarehouse.objects.none(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["target_warehouse"].queryset = SupplyWarehouse.objects.filter(
+            company=self.company, is_active=True
+        ).order_by("normalized_code")
+
+
+class SupplyCustodyTransferForm(_CustodyActionBaseForm):
+    action = SupplyCustodyAction.TRANSFER
+    target_department = forms.ModelChoiceField(
+        label="目标责任部门",
+        queryset=Department.objects.none(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    target_employee = forms.ModelChoiceField(
+        label="目标责任员工",
+        queryset=Employee.objects.none(),
+        required=False,
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        departments = Department.objects.filter(
+            company=self.company, is_active=True
+        )
+        if "department_manager" in role_names_for(self.actor) and not role_names_for(
+            self.actor
+        ).intersection({"system_admin", "finance", "warehouse", "equipment"}):
+            departments = departments.filter(
+                pk__in=resolve_department_ids(self.actor, self.company)
+            )
+        self.fields["target_department"].queryset = departments.order_by(
+            "normalized_code"
+        )
+        self.fields["target_employee"].queryset = Employee.objects.filter(
+            company=self.company,
+            employment_status="active",
+            is_active=True,
+            department__is_active=True,
+        ).select_related("department").order_by("normalized_employee_no")
+
+    def clean(self):
+        cleaned = super().clean()
+        department = cleaned.get("target_department")
+        employee = cleaned.get("target_employee")
+        if employee is not None and (
+            department is None or employee.department_id != department.pk
+        ):
+            self.add_error("target_employee", "目标员工必须属于目标责任部门。")
+        if department is not None:
+            try:
+                require_manage_supply_custody(
+                    self.actor,
+                    self.custody,
+                    action="transfer",
+                    target_department=department,
+                )
+            except PermissionDenied as exc:
+                self.add_error("target_department", exc)
+        return cleaned
+
+
+class SupplyCustodyWriteOffForm(_CustodyActionBaseForm):
+    def __init__(self, *args, action=None, **kwargs):
+        if action not in {SupplyCustodyAction.LOSS, SupplyCustodyAction.SCRAP}:
+            raise ValidationError("保管核销表单只支持报损或报废。")
+        self.action = action
+        super().__init__(*args, **kwargs)
+
+
 class SupplyDocumentReverseForm(forms.Form):
     reason = forms.CharField(
         label="冲销原因",
@@ -574,10 +717,10 @@ class SupplyDocumentReverseForm(forms.Form):
     )
     idempotency_key = forms.CharField(widget=forms.HiddenInput())
 
-    def __init__(self, *args, actor=None, **kwargs):
+    def __init__(self, *args, actor=None, document=None, **kwargs):
         if actor is None:
             raise PermissionDenied("冲销表单必须绑定当前用户。")
-        require_reverse_supply_document(actor)
+        require_reverse_supply_document(actor, document=document)
         initial = dict(kwargs.pop("initial", {}) or {})
         initial.setdefault("idempotency_key", str(uuid.uuid4()))
         super().__init__(*args, initial=initial, **kwargs)

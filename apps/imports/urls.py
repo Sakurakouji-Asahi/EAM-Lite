@@ -11,5 +11,6 @@ urlpatterns = [
     path("<str:import_type>/upload/", views.upload_import, name="upload"),
     path("batches/<int:pk>/", views.batch_detail, name="batch_detail"),
     path("batches/<int:pk>/confirm/", views.confirm_batch, name="confirm"),
+    path("batches/<int:pk>/cancel/", views.cancel_batch, name="cancel"),
     path("batches/<int:pk>/source/", views.download_source, name="source"),
 ]

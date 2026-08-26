@@ -12,6 +12,7 @@ from apps.imports.forms import ImportUploadForm
 from apps.imports.services import (
     TEMPLATE_REGISTRY,
     build_template_workbook,
+    cancel_import_batch,
     confirm_import_batch,
     get_template_definition,
     require_import_permission,
@@ -132,6 +133,7 @@ def batch_detail(request, pk):
             "is_asset_initialization": batch.import_type == "asset_initialization",
             "is_item_master": batch.import_type == "item_master",
             "is_opening_stock": batch.import_type == "opening_stock",
+            "is_opening_custody": batch.import_type == "opening_custody",
         },
     )
 
@@ -154,6 +156,29 @@ def confirm_batch(request, pk):
         messages.error(request, "; ".join(exc.messages))
     else:
         messages.success(request, "导入已整批确认成功。")
+    return redirect("imports:batch_detail", pk=batch.pk)
+
+
+@login_required
+def cancel_batch(request, pk):
+    if request.method != "POST":
+        raise Http404
+    from apps.masterdata.models import ImportBatch
+
+    company = _company_or_404()
+    batch = get_object_or_404(ImportBatch, pk=pk, company=company)
+    _require_batch(request.user, batch)
+    try:
+        cancel_import_batch(
+            actor=request.user,
+            batch=batch,
+            reason=request.POST.get("reason"),
+            request=request,
+        )
+    except ValidationError as exc:
+        messages.error(request, "; ".join(exc.messages))
+    else:
+        messages.success(request, "导入批次已取消，未创建业务数据。")
     return redirect("imports:batch_detail", pk=batch.pk)
 
 

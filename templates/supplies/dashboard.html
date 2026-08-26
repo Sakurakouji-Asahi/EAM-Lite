@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}低值物品 - EAM-Lite{% endblock %}
 {% block content %}
-  <header class="app-page-header"><div><h1 class="h3 mb-1">低值物品</h1><p class="text-secondary mb-0">Sprint 15 已开放领用、易耗品退回、仓库调拨、完整冲销和耐用品保管查询；盘点及耐用品后续动作仍未开放。</p></div></header>
+  <header class="app-page-header"><div><h1 class="h3 mb-1">低值物品</h1><p class="text-secondary mb-0">Sprint 16 已开放数量型耐用品归还、责任转交、报损、报废和期初保管；盘点及数量型离职清退仍未开放。</p></div></header>
   {% if can_view_master_data %}
   <div class="row g-3 mb-4">
     <div class="col-sm-6 col-xl"><a class="card shadow-sm text-decoration-none h-100" href="{% url 'supplies:category-list' %}"><div class="card-body"><div class="text-secondary">启用分类</div><div class="display-6">{{ category_count }}</div></div></a></div>
@@ -11,8 +11,8 @@
   {% endif %}
   <div class="row g-3">
     <div class="col-lg-6"><div class="card shadow-sm h-100"><div class="card-body"><h2 class="h5">库存业务</h2><p>范围内单据 {{ document_count }} 张；创建与过账权限仍由后端角色校验。</p><a class="btn btn-outline-primary" href="{% url 'supplies:document-list' %}">查看库存单据</a>{% if supplies_nav.can_view_stock %} <a class="btn btn-outline-secondary" href="{% url 'supplies:stock-balance-list' %}">查看当前余额</a>{% endif %}</div></div></div>
-    {% if can_view_custodies %}<div class="col-lg-6"><div class="card shadow-sm h-100"><div class="card-body"><h2 class="h5">耐用品保管</h2><p>范围内开放保管 {{ custody_count }} 条；本 Sprint 仅提供只读查询。</p><a class="btn btn-outline-primary" href="{% url 'supplies:custody-list' %}">查看保管记录</a></div></div></div>{% endif %}
+    {% if can_view_custodies %}<div class="col-lg-6"><div class="card shadow-sm h-100"><div class="card-body"><h2 class="h5">耐用品保管</h2><p>范围内开放保管 {{ custody_count }} 条；有权限角色可归还、转交、报损或报废。</p><a class="btn btn-outline-primary" href="{% url 'supplies:custody-list' %}">查看保管记录</a> <a class="btn btn-outline-secondary" href="{% url 'supplies:my-custodies' %}">我的耐用品</a></div></div></div>{% endif %}
     <div class="col-lg-6"><div class="card shadow-sm h-100"><div class="card-body"><h2 class="h5">数量型物品</h2><p>同类多件、不需要逐件编号，按数量管理的易耗品或耐用品使用本模块。</p>{% if can_manage_items %}<a class="btn btn-primary" href="{% url 'supplies:item-create' %}">新增数量型物品</a>{% endif %}</div></div></div>
-    <div class="col-lg-6"><div class="card shadow-sm h-100"><div class="card-body"><h2 class="h5">逐件低值耐用品</h2><p>需要逐件二维码、序列号、单件责任人或单件位置时，每件继续在资产模块单独建档；财务确认时选择“受控非固定资产”。</p>{% if can_create_individual_asset %}<a class="btn btn-outline-primary" href="{% url 'assets:asset-create' %}">新增逐件低值耐用品</a>{% else %}<p class="small text-secondary mb-0">当前尚不可从此处建档；请先完成现有资产初始化，并确认账号具有资产草稿创建权限。</p>{% endif %}</div></div></div>
+    <div class="col-lg-6"><div class="card shadow-sm h-100"><div class="card-body"><h2 class="h5">逐件低值耐用品</h2><p>每件单独建档，数量固定为 1；财务确认时选择“受控非固定资产”，不计提折旧，后续继续使用现有二维码、调拨、盘点、处置和清退。</p>{% if can_create_individual_asset %}<a class="btn btn-outline-primary" href="{% url 'supplies:individual-durable-create' %}">新增逐件低值耐用品</a> <a class="btn btn-outline-secondary" href="{% url 'supplies:individual-durable-list' %}">查看逐件低值耐用品</a>{% elif individual_asset_initialized %}<a class="btn btn-outline-secondary" href="{% url 'supplies:individual-durable-list' %}">查看逐件低值耐用品</a>{% else %}<p class="small text-secondary mb-0">当前尚不可从此处建档；请先完成现有资产初始化，并确认账号具有资产草稿创建权限。</p>{% endif %}</div></div></div>
   </div>
 {% endblock %}

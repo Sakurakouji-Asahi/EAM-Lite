@@ -29,6 +29,9 @@ SUPPLY_FULL_MANAGE_ROLES = frozenset({"system_admin", "finance", "warehouse"})
 SUPPLY_DOCUMENT_MANAGE_ROLES = frozenset(
     {"system_admin", "finance", "warehouse"}
 )
+SUPPLY_CUSTODY_ACTION_ROLES = frozenset(
+    {"system_admin", "finance", "warehouse", "equipment"}
+)
 SUPPLY_COST_VIEW_ROLES = frozenset(
     {"system_admin", "finance", "warehouse", "equipment", "management"}
 )
@@ -88,31 +91,137 @@ def require_view_supply_documents(user) -> None:
         raise PermissionDenied("您没有查看低值物品库存单据的权限。")
 
 
-def can_create_supply_document(user) -> bool:
-    return bool(role_names_for(user).intersection(SUPPLY_DOCUMENT_MANAGE_ROLES))
+def _durable_return(document=None, *, document_type=None, item_types=None) -> bool:
+    if document is not None:
+        if document.document_type != "return":
+            return False
+        lines = list(document.lines.select_related("item"))
+        return bool(lines) and all(
+            line.item.item_type == SupplyItemType.DURABLE_QUANTITY
+            and line.source_custody_id is not None
+            for line in lines
+        )
+    return document_type == "return" and set(item_types or ()) == {
+        SupplyItemType.DURABLE_QUANTITY
+    }
 
 
-def require_create_supply_document(user) -> None:
-    if not can_create_supply_document(user):
+def can_create_supply_document(
+    user,
+    *,
+    document=None,
+    document_type=None,
+    item_types=None,
+    source_custodies=None,
+) -> bool:
+    roles = role_names_for(user)
+    if roles.intersection(SUPPLY_DOCUMENT_MANAGE_ROLES):
+        return True
+    if "equipment" in roles and _durable_return(
+        document, document_type=document_type, item_types=item_types
+    ):
+        return True
+    if (
+        "department_manager" in roles
+        and document is not None
+        and _durable_return(document)
+    ):
+        custodies = tuple(
+            line.source_custody
+            for line in document.lines.select_related("source_custody")
+        )
+        return bool(custodies) and all(
+            can_manage_supply_custody(user, custody, action="return_draft")
+            for custody in custodies
+        )
+    if "department_manager" in roles and document_type == "return":
+        custodies = tuple(source_custodies or ())
+        return bool(custodies) and all(
+            can_manage_supply_custody(user, custody, action="return_draft")
+            for custody in custodies
+        )
+    return False
+
+
+def require_create_supply_document(
+    user,
+    *,
+    document=None,
+    document_type=None,
+    item_types=None,
+    source_custodies=None,
+) -> None:
+    if not can_create_supply_document(
+        user,
+        document=document,
+        document_type=document_type,
+        item_types=item_types,
+        source_custodies=source_custodies,
+    ):
         raise PermissionDenied("您没有创建、编辑或取消低值物品库存单据的权限。")
 
 
-def can_post_supply_document(user) -> bool:
-    return can_create_supply_document(user)
+def can_post_supply_document(user, *, document=None) -> bool:
+    roles = role_names_for(user)
+    if roles.intersection(SUPPLY_DOCUMENT_MANAGE_ROLES):
+        return True
+    return "equipment" in roles and _durable_return(document)
 
 
-def require_post_supply_document(user) -> None:
-    if not can_post_supply_document(user):
+def require_post_supply_document(user, *, document=None) -> None:
+    if not can_post_supply_document(user, document=document):
         raise PermissionDenied("您没有过账低值物品库存单据的权限。")
 
 
-def can_reverse_supply_document(user) -> bool:
-    return can_create_supply_document(user)
+def can_reverse_supply_document(user, *, document=None) -> bool:
+    roles = role_names_for(user)
+    if roles.intersection(SUPPLY_DOCUMENT_MANAGE_ROLES):
+        return True
+    return "equipment" in roles and _durable_return(document)
 
 
-def require_reverse_supply_document(user) -> None:
-    if not can_reverse_supply_document(user):
+def require_reverse_supply_document(user, *, document=None) -> None:
+    if not can_reverse_supply_document(user, document=document):
         raise PermissionDenied("您没有冲销低值物品库存单据的权限。")
+
+
+def can_manage_supply_custody(
+    user, custody, *, action=None, target_department=None
+) -> bool:
+    roles = role_names_for(user)
+    if roles.intersection(SUPPLY_CUSTODY_ACTION_ROLES):
+        return True
+    if "department_manager" not in roles:
+        return False
+    scoped_ids = resolve_department_ids(user, custody.company)
+    if custody.department_id not in scoped_ids:
+        return False
+    if action == "return_post":
+        return False
+    if action == "transfer" and target_department is not None:
+        return target_department.pk in scoped_ids
+    return action in {"return_draft", "transfer", "loss", "scrap"}
+
+
+def require_manage_supply_custody(
+    user, custody, *, action=None, target_department=None
+) -> None:
+    if not can_manage_supply_custody(
+        user,
+        custody,
+        action=action,
+        target_department=target_department,
+    ):
+        raise PermissionDenied("您没有在当前公司和部门范围内执行该耐用品保管动作的权限。")
+
+
+def can_import_opening_custody(user) -> bool:
+    return bool(role_names_for(user).intersection(SUPPLY_CUSTODY_ACTION_ROLES))
+
+
+def require_import_opening_custody(user) -> None:
+    if not can_import_opening_custody(user):
+        raise PermissionDenied("您没有导入耐用品期初保管的权限。")
 
 
 def can_view_supply_stock(user) -> bool:

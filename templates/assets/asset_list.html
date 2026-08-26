@@ -15,6 +15,8 @@
     {% endif %}
   </header>
 
+  {% if individual_durable_hint %}<div class="alert alert-info">逐件低值耐用品仍按现有资产流程建档：每件单独建档、数量固定为 1；财务确认时选择“受控非固定资产”，不计提折旧。</div>{% endif %}
+
   <form method="get" class="card shadow-sm mb-3 app-filter-card" aria-label="资产搜索和筛选">
     <div class="card-body">
       <div class="row g-3">
@@ -64,6 +66,15 @@
             {% for value, label in status_choices %}<option value="{{ value }}" {% if value == filters.asset_status %}selected{% endif %}>{{ label }}</option>{% endfor %}
           </select>
         </div>
+        <div class="col-12 col-sm-6 col-lg-2">
+          <label class="form-label" for="filter-accounting-treatment">会计认定</label>
+          <select class="form-select" id="filter-accounting-treatment" name="accounting_treatment">
+            <option value="" {% if not filters.accounting_treatment %}selected{% endif %}>全部</option>
+            <option value="fixed_asset" {% if filters.accounting_treatment == 'fixed_asset' %}selected{% endif %}>固定资产</option>
+            <option value="controlled_non_fixed" {% if filters.accounting_treatment == 'controlled_non_fixed' %}selected{% endif %}>受控非固定资产</option>
+            <option value="unconfirmed" {% if filters.accounting_treatment == 'unconfirmed' %}selected{% endif %}>未确认</option>
+          </select>
+        </div>
         <div class="col-12 col-lg-10 d-flex align-items-end gap-2">
           <button class="btn btn-primary" type="submit">查询</button>
           <a class="btn btn-outline-secondary" href="{% url 'assets:asset-list' %}">清除筛选</a>
@@ -92,6 +103,7 @@
             <th scope="col">位置</th>
             {% if list_has_p1 %}<th scope="col">数量</th>{% endif %}
             <th scope="col">状态</th>
+            <th scope="col">会计认定</th>
             <th scope="col">操作</th>
           </tr>
         </thead>
@@ -107,6 +119,7 @@
               <td>{{ asset.location.name|default:"—" }}</td>
               {% if list_has_p1 %}<td>1</td>{% endif %}
               <td><span class="badge text-bg-{% if asset.record_status == 'archived' %}dark{% elif asset.asset_status == 'draft' %}secondary{% elif asset.asset_status == 'pending_finance' %}warning{% else %}info{% endif %}">{% if asset.record_status == 'archived' %}已归档 · {% endif %}{{ asset.get_asset_status_display }}</span></td>
+              <td>{% if asset.finance.finance_confirmed_at %}{% if asset.finance.accounting_treatment == 'controlled_non_fixed' %}逐件低值耐用品 / 受控非固定资产{% else %}{{ asset.finance.get_accounting_treatment_display }}{% endif %}{% else %}未确认{% endif %}</td>
               <td><a class="btn btn-sm btn-outline-primary" href="{% url 'assets:asset-detail' asset.pk %}">查看</a></td>
             </tr>
           {% empty %}
@@ -119,8 +132,8 @@
       <div class="card-footer d-flex align-items-center justify-content-between">
         <span class="text-secondary">第 {{ page.number }} / {{ page.paginator.num_pages }} 页，共 {{ page.paginator.count }} 条</span>
         <div class="btn-group" role="group" aria-label="分页">
-          {% if page.has_previous %}<a class="btn btn-sm btn-outline-secondary" href="?page={{ page.previous_page_number }}&q={{ query|urlencode }}&category={{ filters.category|urlencode }}&department={{ filters.department|urlencode }}&employee={{ filters.employee|urlencode }}&location={{ filters.location|urlencode }}&asset_status={{ filters.asset_status|urlencode }}&record_status={{ filters.record_status|urlencode }}">上一页</a>{% endif %}
-          {% if page.has_next %}<a class="btn btn-sm btn-outline-secondary" href="?page={{ page.next_page_number }}&q={{ query|urlencode }}&category={{ filters.category|urlencode }}&department={{ filters.department|urlencode }}&employee={{ filters.employee|urlencode }}&location={{ filters.location|urlencode }}&asset_status={{ filters.asset_status|urlencode }}&record_status={{ filters.record_status|urlencode }}">下一页</a>{% endif %}
+          {% if page.has_previous %}<a class="btn btn-sm btn-outline-secondary" href="?page={{ page.previous_page_number }}&q={{ query|urlencode }}&category={{ filters.category|urlencode }}&department={{ filters.department|urlencode }}&employee={{ filters.employee|urlencode }}&location={{ filters.location|urlencode }}&asset_status={{ filters.asset_status|urlencode }}&record_status={{ filters.record_status|urlencode }}&accounting_treatment={{ filters.accounting_treatment|urlencode }}">上一页</a>{% endif %}
+          {% if page.has_next %}<a class="btn btn-sm btn-outline-secondary" href="?page={{ page.next_page_number }}&q={{ query|urlencode }}&category={{ filters.category|urlencode }}&department={{ filters.department|urlencode }}&employee={{ filters.employee|urlencode }}&location={{ filters.location|urlencode }}&asset_status={{ filters.asset_status|urlencode }}&record_status={{ filters.record_status|urlencode }}&accounting_treatment={{ filters.accounting_treatment|urlencode }}">下一页</a>{% endif %}
         </div>
       </div>
     {% endif %}

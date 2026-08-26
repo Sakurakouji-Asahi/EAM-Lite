@@ -228,6 +228,22 @@ TEMPLATE_REGISTRY = {
             Column("备注", "remark"),
         ),
     ),
+    "opening_custody": TemplateDefinition(
+        import_type="opening_custody",
+        label="耐用品期初保管",
+        version="supply-opening-custody-v1",
+        sheet_name="期初保管导入",
+        has_example_sheet=True,
+        columns=(
+            Column("物品编码", "item_code", True),
+            Column("责任部门编码", "department_code", True),
+            Column("责任员工编号", "employee_no"),
+            Column("数量", "quantity", True),
+            Column("单位成本", "unit_cost", True),
+            Column("开始日期", "started_on", True),
+            Column("备注", "remark"),
+        ),
+    ),
 }
 
 
@@ -287,6 +303,11 @@ def require_import_permission(
         from apps.supplies.permissions import require_create_supply_document
 
         require_create_supply_document(actor)
+        return
+    if import_type == "opening_custody":
+        from apps.supplies.permissions import require_import_opening_custody
+
+        require_import_opening_custody(actor)
         return
     resource = {"department": "department", "employee": "employee"}.get(import_type)
     if resource is None:
@@ -381,7 +402,7 @@ def build_template_workbook(import_type: str, company=None) -> bytes:
             f"{sheet.cell(2, minimum_column).coordinate}:"
             f"{sheet.cell(1001, minimum_column).coordinate}"
         )
-    if import_type == "opening_stock":
+    if import_type in {"opening_stock", "opening_custody"}:
         quantity_validation = DataValidation(
             type="decimal",
             operator="greaterThan",
@@ -460,6 +481,18 @@ def build_template_workbook(import_type: str, company=None) -> bytes:
                     ("过账", "确认导入后仍须进入每张期初单核对并执行过账"),
                 )
             )
+        elif import_type == "opening_custody":
+            policies.extend(
+                (
+                    ("匹配键", "物品和部门按当前公司编码匹配，员工按员工编号匹配"),
+                    ("物品模式", "只允许已启用 durable_quantity 数量型低值耐用品"),
+                    ("责任员工", "可留空；填写时必须属于责任部门且在职、启用"),
+                    ("数量精度", "数量必须大于 0，最多 4 位小数"),
+                    ("成本精度", "单位成本不得小于 0，最多 6 位小数"),
+                    ("确认结果", "直接建立开放保管及不可变 opening 流水，不改变仓库库存"),
+                    ("确认后更正", "确认后不提供破坏性回滚；错误需后续受控更正"),
+                )
+            )
     for row in policies:
         instructions.append(row)
     instructions.column_dimensions["A"].width = 18
@@ -484,6 +517,16 @@ def build_template_workbook(import_type: str, company=None) -> bytes:
                 "物品编码": "PAPER-A4",
                 "数量": 10,
                 "单位成本": 100,
+                "备注": "示例，请勿直接导入",
+            }
+        elif import_type == "opening_custody":
+            sample = {
+                "物品编码": "CHAIR-01",
+                "责任部门编码": "DEPT",
+                "责任员工编号": "E0001",
+                "数量": 2,
+                "单位成本": 80,
+                "开始日期": timezone.localdate(),
                 "备注": "示例，请勿直接导入",
             }
         else:
@@ -1468,6 +1511,169 @@ def _inflate_opening_stock_row(*, company, normalized, lock=False):
     }
 
 
+def _normalize_opening_custody_rows(*, company, loaded_rows, definition):
+    from apps.masterdata.models import Department, Employee
+    from apps.supplies.models import SupplyItem, SupplyItemType
+
+    items = {
+        item.normalized_item_code: item
+        for item in SupplyItem.objects.filter(company=company, is_active=True)
+    }
+    departments = {
+        department.normalized_code: department
+        for department in Department.objects.filter(company=company, is_active=True)
+    }
+    employees = {
+        employee.normalized_employee_no: employee
+        for employee in Employee.objects.filter(company=company).select_related(
+            "department"
+        )
+    }
+    prepared = []
+    for row_number, values, raw, formulas in loaded_rows:
+        errors = []
+        if formulas:
+            errors.extend(
+                _error(field, raw.get(field), "禁止公式单元格。")
+                for field in formulas
+            )
+        item_code = _text(values["item_code"])
+        department_code = _text(values["department_code"])
+        employee_no = _text(values["employee_no"])
+        normalized_item = normalize_identifier(item_code)
+        normalized_department = normalize_identifier(department_code)
+        normalized_employee = normalize_identifier(employee_no)
+        item = items.get(normalized_item)
+        department = departments.get(normalized_department)
+        employee = employees.get(normalized_employee) if employee_no else None
+        if not item_code:
+            errors.append(_error("物品编码", values["item_code"], "必填。"))
+        elif item is None:
+            errors.append(_error("物品编码", item_code, "当前公司不存在该启用物品。"))
+        elif item.item_type != SupplyItemType.DURABLE_QUANTITY:
+            errors.append(_error("物品编码", item_code, "只允许数量型低值耐用品。"))
+        if not department_code:
+            errors.append(_error("责任部门编码", values["department_code"], "必填。"))
+        elif department is None:
+            errors.append(
+                _error("责任部门编码", department_code, "当前公司不存在该启用部门。")
+            )
+        if employee_no:
+            if employee is None:
+                errors.append(
+                    _error("责任员工编号", employee_no, "当前公司不存在该员工。")
+                )
+            else:
+                if department is not None and employee.department_id != department.pk:
+                    errors.append(
+                        _error("责任员工编号", employee_no, "员工不属于责任部门。")
+                    )
+                if (
+                    employee.employment_status != "active"
+                    or not employee.is_active
+                    or not employee.department.is_active
+                ):
+                    errors.append(
+                        _error("责任员工编号", employee_no, "员工必须在职、启用且所属部门启用。")
+                    )
+        quantity = _decimal_value(
+            values["quantity"],
+            "数量",
+            errors,
+            places=4,
+            required=True,
+            minimum=Decimal("0.0001"),
+        )
+        unit_cost = _decimal_value(
+            values["unit_cost"],
+            "单位成本",
+            errors,
+            places=6,
+            required=True,
+            minimum=Decimal("0"),
+        )
+        started_on = _date(values["started_on"], "开始日期", errors)
+        if values["started_on"] in (None, ""):
+            errors.append(_error("开始日期", values["started_on"], "必填。"))
+        normalized = {
+            "item_id": str(item.pk) if item else None,
+            "item_code": item_code,
+            "normalized_item_code": normalized_item,
+            "department_id": str(department.pk) if department else None,
+            "department_code": department_code,
+            "normalized_department_code": normalized_department,
+            "employee_id": str(employee.pk) if employee else None,
+            "employee_no": employee_no,
+            "normalized_employee_no": normalized_employee,
+            "quantity": str(quantity) if quantity is not None else None,
+            "unit_cost": str(unit_cost) if unit_cost is not None else None,
+            "started_on": started_on.isoformat() if started_on else None,
+            "remark": _text(values["remark"]),
+        }
+        prepared.append(
+            {
+                "row_number": row_number,
+                "raw": raw,
+                "normalized": normalized,
+                "errors": errors,
+                "warnings": [],
+            }
+        )
+    return prepared
+
+
+def _inflate_opening_custody_row(*, company, normalized, lock=False):
+    from apps.masterdata.models import Department, Employee
+    from apps.supplies.models import SupplyItem, SupplyItemType
+
+    item_query = SupplyItem.objects.select_for_update() if lock else SupplyItem.objects
+    department_query = (
+        Department.objects.select_for_update() if lock else Department.objects
+    )
+    employee_query = Employee.objects.select_related("department")
+    if lock:
+        employee_query = employee_query.select_for_update()
+    item = item_query.filter(
+        pk=normalized["item_id"],
+        company=company,
+        normalized_item_code=normalized["normalized_item_code"],
+        item_type=SupplyItemType.DURABLE_QUANTITY,
+        is_active=True,
+    ).first()
+    if item is None:
+        raise ValidationError("物品在确认前已停用、改码或不再是数量型低值耐用品。")
+    department = department_query.filter(
+        pk=normalized["department_id"],
+        company=company,
+        normalized_code=normalized["normalized_department_code"],
+        is_active=True,
+    ).first()
+    if department is None:
+        raise ValidationError("责任部门在确认前已停用、改码或不再属于当前公司。")
+    employee = None
+    if normalized["employee_id"]:
+        employee = employee_query.filter(
+            pk=normalized["employee_id"],
+            company=company,
+            normalized_employee_no=normalized["normalized_employee_no"],
+            department=department,
+            employment_status="active",
+            is_active=True,
+            department__is_active=True,
+        ).first()
+        if employee is None:
+            raise ValidationError("责任员工在确认前已离职、停用、改号或不再属于责任部门。")
+    return {
+        "item": item,
+        "department": department,
+        "employee": employee,
+        "quantity": Decimal(normalized["quantity"]),
+        "unit_cost": Decimal(normalized["unit_cost"]),
+        "started_on": date.fromisoformat(normalized["started_on"]),
+        "remark": normalized["remark"],
+    }
+
+
 def _asset_theoretical_summary(result, *, as_of_date=None):
     lines = result.get("lines", ()) if isinstance(result, dict) else result.lines
     cutoff_exclusive = as_of_date + timedelta(days=1) if as_of_date else None
@@ -2178,6 +2384,18 @@ def _preflight_business_rows(*, actor, company, import_type, prepared):
                             _error("数据", None, message)
                             for message in _validation_messages(exc)
                         )
+        elif import_type == "opening_custody":
+            for item in prepared:
+                try:
+                    _inflate_opening_custody_row(
+                        company=company,
+                        normalized=item["normalized"],
+                    )
+                except (ValidationError, PermissionDenied) as exc:
+                    item["errors"].extend(
+                        _error("数据", None, message)
+                        for message in _validation_messages(exc)
+                    )
         elif import_type == "department":
             existing = {
                 value.normalized_code: value
@@ -2338,6 +2556,12 @@ def upload_and_validate_import(
         )
     elif import_type == "opening_stock":
         prepared = _normalize_opening_stock_rows(
+            company=company,
+            loaded_rows=loaded_rows,
+            definition=definition,
+        )
+    elif import_type == "opening_custody":
+        prepared = _normalize_opening_custody_rows(
             company=company,
             loaded_rows=loaded_rows,
             definition=definition,
@@ -2518,6 +2742,48 @@ def upload_and_validate_import(
         raise
 
 
+@transaction.atomic
+def cancel_import_batch(*, actor, batch, reason, request=None):
+    from apps.masterdata.models import ImportBatch
+
+    cleaned_reason = str(reason or "").strip()
+    if not cleaned_reason:
+        raise ValidationError({"reason": "取消导入批次必须填写原因。"})
+    _lock_import_namespace(batch.company_id)
+    batch = (
+        ImportBatch.objects.select_for_update()
+        .select_related("company")
+        .get(pk=batch.pk)
+    )
+    _require_current_import_company(batch.company)
+    require_import_permission(actor, batch.import_type, company=batch.company)
+    if batch.status == "cancelled":
+        return batch
+    if batch.status == "confirmed":
+        if batch.import_type == "opening_custody":
+            raise ValidationError("耐用品期初保管导入确认后不得破坏性回滚或取消。")
+        raise ValidationError("已确认导入批次不得取消。")
+    if batch.status not in {"uploaded", "validated", "invalid", "failed"}:
+        raise ValidationError("当前导入批次状态不能取消。")
+    old_status = batch.status
+    batch.status = "cancelled"
+    batch.full_clean()
+    batch.save(update_fields=["status"])
+    _audit_batch(
+        batch=batch,
+        actor=actor,
+        action="import_cancel",
+        old_data={"status": old_status},
+        new_data={
+            "status": "cancelled",
+            "import_type": batch.import_type,
+            "reason": cleaned_reason,
+        },
+        request=request,
+    )
+    return batch
+
+
 def confirm_import_batch(*, actor, batch, request=None):
     """Confirm atomically and persist a separate safe failure audit on rollback."""
 
@@ -2695,6 +2961,23 @@ def _confirm_import_batch_atomic(*, actor, batch, request=None):
             ):
                 row.created_object_type = "SupplyDocumentLine"
                 row.created_object_id = str(document_line.pk)
+    elif batch.import_type == "opening_custody":
+        from apps.supplies.services import create_opening_custody_from_import_row
+
+        for row in rows:
+            row_data = _inflate_opening_custody_row(
+                company=batch.company,
+                normalized=row.normalized_data_json,
+                lock=True,
+            )
+            custody = create_opening_custody_from_import_row(
+                actor=actor,
+                import_row=row,
+                request=request,
+                **row_data,
+            )
+            row.created_object_type = "SupplyCustody"
+            row.created_object_id = str(custody.pk)
     elif batch.import_type == "department":
         existing = {
             value.normalized_code: value

@@ -22,7 +22,9 @@ from apps.imports.tempfiles import (
 )
 
 
-AUTOMATIC_BATCH_STATUSES = frozenset({"uploaded", "invalid", "failed"})
+AUTOMATIC_BATCH_STATUSES = frozenset(
+    {"uploaded", "invalid", "failed", "cancelled"}
+)
 
 
 @dataclass

@@ -26,6 +26,12 @@ MAINTENANCE_DUE_SCOPE_CHOICES = (
     ("upcoming", "即将到期（含今日）"),
     ("overdue", "逾期"),
 )
+ACCOUNTING_TREATMENT_CHOICES = (
+    ("", "全部会计认定"),
+    ("fixed_asset", "固定资产"),
+    ("controlled_non_fixed", "受控非固定资产"),
+    ("unconfirmed", "未确认"),
+)
 
 
 class ReportFilterForm(forms.Form):
@@ -38,6 +44,11 @@ class ReportFilterForm(forms.Form):
     fixed_asset_category = forms.IntegerField(label="固定资产会计类别", required=False, min_value=1)
     responsible_employee = forms.IntegerField(label="责任人", required=False, min_value=1)
     asset_status = forms.ChoiceField(label="资产状态", required=False, choices=ASSET_STATUS_CHOICES)
+    accounting_treatment = forms.ChoiceField(
+        label="会计认定",
+        required=False,
+        choices=ACCOUNTING_TREATMENT_CHOICES,
+    )
     asset_scope = forms.ChoiceField(label="资产范围", required=False, choices=ASSET_SCOPE_CHOICES)
     label_scope = forms.ChoiceField(label="标签范围", required=False, choices=LABEL_SCOPE_CHOICES)
     maintenance_due_scope = forms.ChoiceField(

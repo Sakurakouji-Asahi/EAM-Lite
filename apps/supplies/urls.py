@@ -63,10 +63,41 @@ urlpatterns = [
     path("stock/", views.stock_balance_list, name="stock-balance-list"),
     path("stock/ledger/", views.stock_ledger_list, name="stock-ledger-list"),
     path("custodies/", views.custody_list, name="custody-list"),
+    path("custodies/mine/", views.my_custodies, name="my-custodies"),
     path("custodies/<uuid:pk>/", views.custody_detail, name="custody-detail"),
+    path(
+        "custodies/<uuid:pk>/return/",
+        views.durable_return_create,
+        name="durable-return-create",
+    ),
+    path(
+        "custodies/<uuid:pk>/transfer/",
+        views.custody_transfer,
+        name="custody-transfer",
+    ),
+    path(
+        "custodies/<uuid:pk>/write-off/<str:action>/",
+        views.custody_write_off,
+        name="custody-write-off",
+    ),
     path(
         "imports/opening-stock/",
         views.opening_stock_import,
         name="opening-stock-import",
+    ),
+    path(
+        "imports/opening-custody/",
+        views.opening_custody_import,
+        name="opening-custody-import",
+    ),
+    path(
+        "individual-durables/new/",
+        views.individual_durable_create,
+        name="individual-durable-create",
+    ),
+    path(
+        "individual-durables/",
+        views.individual_durable_list,
+        name="individual-durable-list",
     ),
 ]

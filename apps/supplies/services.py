@@ -19,6 +19,7 @@ from .domain import (
     ZERO_COST,
     ZERO_MONEY,
     ZERO_QTY,
+    allocate_custody_amount,
     calculate_issue,
     calculate_receipt,
     calculate_receipt_from_amount,
@@ -49,6 +50,8 @@ from .permissions import (
     require_create_supply_document,
     require_manage_supply_category,
     require_manage_supply_item,
+    require_manage_supply_custody,
+    require_import_opening_custody,
     require_manage_supply_warehouse,
     require_post_supply_document,
     require_reverse_supply_document,
@@ -625,6 +628,7 @@ def _document_snapshot(document):
 def _prepare_document_lines(*, company, document_type, lines):
     prepared = []
     seen_return_sources = set()
+    return_modes = set()
     for line_no, source in enumerate(lines or (), 1):
         values = dict(source)
         unknown = set(values).difference(DOCUMENT_LINE_FIELDS)
@@ -639,51 +643,86 @@ def _prepare_document_lines(*, company, document_type, lines):
         source_issue_line = values.get("source_issue_line")
         source_custody = values.get("source_custody")
         if document_type == SupplyDocumentType.RETURN:
-            if source_issue_line is None:
-                raise ValidationError(
-                    {"source_issue_line": f"第 {line_no} 行必须关联原领用明细。"}
+            if source_custody is not None:
+                source_custody = (
+                    SupplyCustody.objects.select_related(
+                        "item", "origin_issue_line", "department", "employee"
+                    )
+                    .filter(pk=source_custody.pk, company=company)
+                    .first()
                 )
-            source_issue_line = (
-                SupplyDocumentLine.objects.select_related("document", "item")
-                .filter(pk=source_issue_line.pk, company=company)
-                .first()
-            )
-            if source_issue_line is None:
-                raise ValidationError(
-                    {"source_issue_line": f"第 {line_no} 行原领用明细不属于当前公司。"}
+                if source_custody is None:
+                    raise ValidationError(
+                        {"source_custody": f"第 {line_no} 行来源保管不属于当前公司。"}
+                    )
+                if source_custody.item.item_type != SupplyItemType.DURABLE_QUANTITY:
+                    raise ValidationError({"source_custody": "来源保管必须是数量型低值耐用品。"})
+                if source_custody.status != SupplyCustodyStatus.OPEN:
+                    raise ValidationError({"source_custody": "只有开放保管可以发起归还。"})
+                if source_issue_line is not None:
+                    source_issue_line = (
+                        SupplyDocumentLine.objects.select_related("document", "item")
+                        .filter(pk=source_issue_line.pk, company=company)
+                        .first()
+                    )
+                    if (
+                        source_issue_line is None
+                        or source_custody.origin_issue_line_id
+                        != source_issue_line.pk
+                    ):
+                        raise ValidationError(
+                            {"source_issue_line": "原领用明细不是来源保管的直接根来源。"}
+                        )
+                if item is not None and item.pk != source_custody.item_id:
+                    raise ValidationError({"item": "归还物品由来源保管确定，不能替换。"})
+                item = source_custody.item
+                source_key = ("durable", source_custody.pk)
+                return_modes.add("durable")
+            else:
+                if source_issue_line is None:
+                    raise ValidationError(
+                        {"source_issue_line": f"第 {line_no} 行必须关联原领用明细或来源保管。"}
+                    )
+                source_issue_line = (
+                    SupplyDocumentLine.objects.select_related("document", "item")
+                    .filter(pk=source_issue_line.pk, company=company)
+                    .first()
                 )
-            if (
-                source_issue_line.document.document_type
-                != SupplyDocumentType.ISSUE
-                or source_issue_line.document.status
-                != SupplyDocumentStatus.POSTED
-            ):
-                raise ValidationError(
-                    {"source_issue_line": f"第 {line_no} 行只能关联有效的已过账领用明细。"}
-                )
-            if source_issue_line.item.item_type != SupplyItemType.CONSUMABLE:
-                raise ValidationError(
-                    {"source_issue_line": "Sprint 15 只允许低值易耗品退回；数量型耐用品归还尚未开放。"}
-                )
-            if source_issue_line.pk in seen_return_sources:
-                raise ValidationError("同一退回单不能重复引用同一原领用明细。")
-            seen_return_sources.add(source_issue_line.pk)
-            if item is not None and item.pk != source_issue_line.item_id:
-                raise ValidationError({"item": "退回物品由原领用明细确定，不能替换。"})
-            item = source_issue_line.item
+                if source_issue_line is None:
+                    raise ValidationError(
+                        {"source_issue_line": f"第 {line_no} 行原领用明细不属于当前公司。"}
+                    )
+                if (
+                    source_issue_line.document.document_type
+                    != SupplyDocumentType.ISSUE
+                    or source_issue_line.document.status
+                    != SupplyDocumentStatus.POSTED
+                    or source_issue_line.item.item_type != SupplyItemType.CONSUMABLE
+                ):
+                    raise ValidationError(
+                        {"source_issue_line": f"第 {line_no} 行只能关联有效的易耗品领用明细。"}
+                    )
+                if item is not None and item.pk != source_issue_line.item_id:
+                    raise ValidationError({"item": "退回物品由原领用明细确定，不能替换。"})
+                item = source_issue_line.item
+                source_key = ("consumable", source_issue_line.pk)
+                return_modes.add("consumable")
+            if source_key in seen_return_sources:
+                raise ValidationError("同一退回单不能重复引用同一来源。")
+            seen_return_sources.add(source_key)
         elif source_issue_line is not None:
             raise ValidationError(
                 {"source_issue_line": f"第 {line_no} 行当前单据类型不得关联原领用明细。"}
             )
-        if source_custody is not None:
+        if document_type != SupplyDocumentType.RETURN and source_custody is not None:
             raise ValidationError(
-                {"source_custody": "Sprint 15 尚未开放数量型耐用品归还。"}
+                {"source_custody": f"第 {line_no} 行当前单据类型不得关联来源保管。"}
             )
         if item is None:
             raise ValidationError({"item": f"第 {line_no} 行必须选择物品。"})
         if item.company_id != company.pk:
             raise ValidationError({"item": f"第 {line_no} 行物品不属于当前公司。"})
-        if document_type != SupplyDocumentType.RETURN and not item.is_active:
+        if not item.is_active:
             raise ValidationError({"item": f"第 {line_no} 行物品已停用，不能用于新单据。"})
         quantity = quantize_quantity(values.get("quantity"))
         if quantity <= ZERO_QTY:
@@ -715,7 +754,7 @@ def _prepare_document_lines(*, company, document_type, lines):
         if document_type == SupplyDocumentType.RETURN and not line_remark:
             raise ValidationError({"line_remark": f"第 {line_no} 行退回原因不能为空。"})
         if values.get("adjustment_direction"):
-            raise ValidationError(f"第 {line_no} 行包含 Sprint 15 尚未开放的盘点字段。")
+            raise ValidationError(f"第 {line_no} 行包含本 Sprint 尚未开放的盘点字段。")
         prepared.append(
             {
                 "line_no": line_no,
@@ -724,12 +763,17 @@ def _prepare_document_lines(*, company, document_type, lines):
                 "entered_unit_cost": entered_unit_cost,
                 "adjustment_direction": None,
                 "source_issue_line": source_issue_line,
-                "source_custody": None,
+                "source_custody": source_custody,
                 "line_remark": line_remark,
             }
         )
     if not prepared:
         raise ValidationError("库存单据至少需要一条有效明细。")
+    if document_type == SupplyDocumentType.RETURN:
+        if len(return_modes) != 1:
+            raise ValidationError("同一退回单不得混合易耗品退回和耐用品保管归还。")
+        if "durable" in return_modes and len(prepared) != 1:
+            raise ValidationError("一张耐用品归还单只能对应一个来源保管。")
     return prepared
 
 
@@ -822,7 +866,6 @@ def create_supply_document(
         raise ValidationError("单据类型参数相互冲突。")
     if document_type not in SPRINT15_DOCUMENT_TYPES:
         raise ValidationError("当前 Sprint 不允许手工创建该单据类型。")
-    require_create_supply_document(actor)
     _require_current_company(company)
     unknown = set(values).difference(DOCUMENT_DRAFT_FIELDS | {"idempotency_key"})
     if unknown:
@@ -837,6 +880,16 @@ def create_supply_document(
         company=company,
         document_type=document_type,
         lines=lines,
+    )
+    require_create_supply_document(
+        actor,
+        document_type=document_type,
+        item_types={line["item"].item_type for line in prepared_lines},
+        source_custodies={
+            line["source_custody"]
+            for line in prepared_lines
+            if line["source_custody"] is not None
+        },
     )
 
     source = values.get("source_warehouse")
@@ -882,13 +935,22 @@ def create_supply_document(
             raise ValidationError({"source_warehouse": "退回单不得填写来源仓库。"})
         if target is None:
             raise ValidationError({"target_warehouse": "退回单必须选择目标仓库。"})
-        source_headers = {
-            (
-                line["source_issue_line"].document.department_id,
-                line["source_issue_line"].document.employee_id,
-            )
-            for line in prepared_lines
-        }
+        source_headers = set()
+        for line in prepared_lines:
+            if line["source_custody"] is not None:
+                source_headers.add(
+                    (
+                        line["source_custody"].department_id,
+                        line["source_custody"].employee_id,
+                    )
+                )
+            else:
+                source_headers.add(
+                    (
+                        line["source_issue_line"].document.department_id,
+                        line["source_issue_line"].document.employee_id,
+                    )
+                )
         if len(source_headers) != 1:
             raise ValidationError("一张退回单的原领用明细必须属于同一部门和员工。")
         expected_department_id, expected_employee_id = source_headers.pop()
@@ -970,13 +1032,13 @@ def create_supply_document(
 
 @transaction.atomic
 def update_draft_document(*, actor, document, data, lines, request=None):
-    require_create_supply_document(actor)
     _require_current_company(document.company)
     document = (
         SupplyDocument.objects.select_for_update(of=("self",))
         .select_related("company", "target_warehouse")
         .get(pk=document.pk, company=document.company)
     )
+    require_create_supply_document(actor, document=document)
     if document.status != SupplyDocumentStatus.DRAFT:
         raise ValidationError("该单据已过账或取消，不能编辑。")
     unknown = set(data).difference(DOCUMENT_DRAFT_FIELDS)
@@ -1068,13 +1130,13 @@ def update_draft_document(*, actor, document, data, lines, request=None):
 
 @transaction.atomic
 def cancel_supply_document(*, actor, document, reason, request=None):
-    require_create_supply_document(actor)
     _require_current_company(document.company)
     document = (
         SupplyDocument.objects.select_for_update(of=("self",))
         .select_related("company")
         .get(pk=document.pk, company=document.company)
     )
+    require_create_supply_document(actor, document=document)
     if document.status == SupplyDocumentStatus.CANCELLED:
         return document
     if document.status != SupplyDocumentStatus.DRAFT:
@@ -1215,11 +1277,13 @@ def _create_custody(*, values):
     try:
         custody.save(force_insert=True)
     except IntegrityError as exc:
-        raise ValidationError("该耐用品领用明细已经建立保管记录。") from exc
+        raise ValidationError("该耐用品根来源或保管关系已经建立，不能重复创建。") from exc
     return custody
 
 
 def _create_custody_movement(*, values):
+    idempotency_key = str(values.get("idempotency_key") or "").strip() or None
+    values["idempotency_key"] = idempotency_key
     movement = SupplyCustodyMovement(**values)
     movement._controlled_insert = True
     _enable_capability("controlled_supply_custody_movement_insert")
@@ -1246,6 +1310,534 @@ def _update_custody_values(*, custody, quantity, amount, status, updated_at):
     )
     for field, value in values.items():
         setattr(custody, field, value)
+
+
+def _custody_snapshot(custody):
+    return {
+        "custody_id": str(custody.pk),
+        "item_id": str(custody.item_id),
+        "department_id": str(custody.department_id),
+        "employee_id": str(custody.employee_id) if custody.employee_id else None,
+        "current_quantity": str(custody.current_quantity),
+        "current_amount": str(custody.current_amount),
+        "unit_cost_snapshot": str(custody.unit_cost_snapshot),
+        "status": custody.status,
+        "origin_issue_line_id": (
+            str(custody.origin_issue_line_id) if custody.origin_issue_line_id else None
+        ),
+        "origin_import_row_id": (
+            str(custody.origin_import_row_id) if custody.origin_import_row_id else None
+        ),
+        "parent_custody_id": (
+            str(custody.parent_custody_id) if custody.parent_custody_id else None
+        ),
+    }
+
+
+def _required_custody_action_values(*, quantity, business_date, reason, idempotency_key):
+    cleaned_reason = str(reason or "").strip()
+    cleaned_key = str(idempotency_key or "").strip()
+    if not cleaned_reason:
+        raise ValidationError({"reason": "保管动作原因不能为空。"})
+    if not cleaned_key:
+        raise ValidationError({"idempotency_key": "保管动作幂等键不能为空。"})
+    if len(cleaned_key) > 128:
+        raise ValidationError({"idempotency_key": "保管动作幂等键不能超过 128 个字符。"})
+    return (
+        quantize_quantity(quantity),
+        _coerce_business_date(business_date),
+        cleaned_reason,
+        cleaned_key,
+    )
+
+
+@transaction.atomic
+def return_custody_to_warehouse(
+    *,
+    custody,
+    target_warehouse,
+    quantity,
+    business_date,
+    reason,
+    actor,
+    idempotency_key,
+    request=None,
+):
+    """Create the one-custody return draft used by the normal post service."""
+
+    _require_current_company(custody.company)
+    custody = (
+        SupplyCustody.objects.select_for_update(of=("self",))
+        .select_related(
+            "company",
+            "item",
+            "department",
+            "employee",
+            "origin_issue_line",
+        )
+        .get(pk=custody.pk, company=custody.company)
+    )
+    require_manage_supply_custody(actor, custody, action="return_draft")
+    quantity, business_date, reason, idempotency_key = _required_custody_action_values(
+        quantity=quantity,
+        business_date=business_date,
+        reason=reason,
+        idempotency_key=idempotency_key,
+    )
+    warehouse = SupplyWarehouse.objects.filter(
+        pk=getattr(target_warehouse, "pk", None),
+        company=custody.company,
+        is_active=True,
+    ).first()
+    if warehouse is None:
+        raise ValidationError({"target_warehouse": "目标仓库不属于当前公司或已经停用。"})
+    existing = (
+        SupplyDocument.objects.select_for_update()
+        .prefetch_related("lines")
+        .filter(company=custody.company, idempotency_key=idempotency_key)
+        .first()
+    )
+    if existing is not None:
+        lines = list(existing.lines.all())
+        if (
+            existing.document_type == SupplyDocumentType.RETURN
+            and existing.business_date == business_date
+            and existing.target_warehouse_id == warehouse.pk
+            and existing.department_id == custody.department_id
+            and existing.employee_id == custody.employee_id
+            and existing.remark == reason
+            and len(lines) == 1
+            and lines[0].source_custody_id == custody.pk
+            and lines[0].quantity == quantity
+            and lines[0].line_remark == reason
+        ):
+            return existing
+        raise ValidationError("同一单据幂等键已用于不同内容。")
+    if custody.status != SupplyCustodyStatus.OPEN:
+        raise ValidationError("只有开放保管可以发起归还。")
+    if quantity > custody.current_quantity:
+        raise ValidationError(
+            f"归还数量超过当前保管数量，当前最多可归还 {custody.current_quantity}。"
+        )
+    return create_supply_document(
+        actor=actor,
+        company=custody.company,
+        document_type=SupplyDocumentType.RETURN,
+        data={
+            "business_date": business_date,
+            "target_warehouse": warehouse,
+            "department": custody.department,
+            "employee": custody.employee,
+            "remark": reason,
+            "idempotency_key": idempotency_key,
+        },
+        lines=[
+            {
+                "item": custody.item,
+                "quantity": quantity,
+                "entered_unit_cost": None,
+                "source_issue_line": custody.origin_issue_line,
+                "source_custody": custody,
+                "line_remark": reason,
+            }
+        ],
+        request=request,
+    )
+
+
+@transaction.atomic
+def transfer_custody(
+    *,
+    custody,
+    quantity,
+    target_department,
+    target_employee=None,
+    business_date,
+    reason,
+    actor,
+    idempotency_key,
+    request=None,
+):
+    quantity, business_date, reason, idempotency_key = _required_custody_action_values(
+        quantity=quantity,
+        business_date=business_date,
+        reason=reason,
+        idempotency_key=idempotency_key,
+    )
+    _require_current_company(custody.company)
+    if target_department is None:
+        raise ValidationError({"target_department": "目标部门必填。"})
+    from apps.masterdata.models import Department, Employee
+
+    custody = (
+        SupplyCustody.objects.select_for_update(of=("self",))
+        .select_related("company", "item", "department", "employee")
+        .get(pk=custody.pk, company=custody.company)
+    )
+    existing = SupplyCustodyMovement.objects.select_for_update().select_related(
+        "to_custody", "to_custody__department"
+    ).filter(company=custody.company, idempotency_key=idempotency_key).first()
+    if existing is not None:
+        if (
+            existing.action != SupplyCustodyAction.TRANSFER
+            or existing.to_custody_id is None
+        ):
+            raise ValidationError("同一保管动作幂等键已用于不同内容。")
+        require_manage_supply_custody(
+            actor,
+            custody,
+            action="transfer",
+            target_department=existing.to_custody.department,
+        )
+        if (
+            existing.from_custody_id == custody.pk
+            and existing.quantity == quantity
+            and existing.business_date == business_date
+            and existing.reason == reason
+            and existing.to_custody.department_id
+            == getattr(target_department, "pk", None)
+            and existing.to_custody.employee_id
+            == getattr(target_employee, "pk", None)
+        ):
+            return existing.to_custody
+        raise ValidationError("同一保管动作幂等键已用于不同内容。")
+    department = Department.objects.select_for_update().filter(
+        pk=getattr(target_department, "pk", None),
+        company=custody.company,
+        is_active=True,
+    ).first()
+    if department is None:
+        raise ValidationError({"target_department": "目标部门不属于当前公司或已经停用。"})
+    employee = None
+    if target_employee is not None:
+        employee = Employee.objects.select_for_update().select_related(
+            "department"
+        ).filter(pk=getattr(target_employee, "pk", None), company=custody.company).first()
+        if employee is None or employee.department_id != department.pk:
+            raise ValidationError({"target_employee": "目标员工不属于目标部门或当前公司。"})
+        if (
+            employee.employment_status != "active"
+            or not employee.is_active
+            or not employee.department.is_active
+        ):
+            raise ValidationError({"target_employee": "责任员工已离职或停用，不能接收耐用品。"})
+    require_manage_supply_custody(
+        actor,
+        custody,
+        action="transfer",
+        target_department=department,
+    )
+    if custody.status != SupplyCustodyStatus.OPEN:
+        raise ValidationError("只有开放保管可以执行责任转交。")
+    if custody.department_id == department.pk and custody.employee_id == getattr(employee, "pk", None):
+        raise ValidationError("目标责任部门和员工不能与当前保管完全相同。")
+
+    allocation = allocate_custody_amount(
+        current_quantity=custody.current_quantity,
+        current_amount=custody.current_amount,
+        unit_cost_snapshot=custody.unit_cost_snapshot,
+        action_quantity=quantity,
+    )
+    old = _custody_snapshot(custody)
+    now = timezone.now()
+    target = _create_custody(
+        values={
+            "company": custody.company,
+            "item": custody.item,
+            "origin_issue_line": None,
+            "origin_import_row": None,
+            "parent_custody": custody,
+            "department": department,
+            "employee": employee,
+            "current_quantity": allocation.action_quantity,
+            "current_amount": allocation.action_amount,
+            "unit_cost_snapshot": custody.unit_cost_snapshot,
+            "started_on": business_date,
+            "status": SupplyCustodyStatus.OPEN,
+            "remark": reason,
+        }
+    )
+    _update_custody_values(
+        custody=custody,
+        quantity=allocation.quantity_after,
+        amount=allocation.amount_after,
+        status=(
+            SupplyCustodyStatus.CLOSED
+            if allocation.quantity_after == ZERO_QTY
+            else SupplyCustodyStatus.OPEN
+        ),
+        updated_at=now,
+    )
+    movement = _create_custody_movement(
+        values={
+            "company": custody.company,
+            "item": custody.item,
+            "from_custody": custody,
+            "to_custody": target,
+            "action": SupplyCustodyAction.TRANSFER,
+            "quantity": allocation.action_quantity,
+            "amount": allocation.action_amount,
+            "unit_cost": custody.unit_cost_snapshot,
+            "business_date": business_date,
+            "reason": reason,
+            "created_by": actor,
+            "idempotency_key": idempotency_key,
+        }
+    )
+    _audit(
+        actor=actor,
+        action="supply_custody_transfer",
+        instance=movement,
+        old=old,
+        new={
+            **_custody_snapshot(custody),
+            "target_custody": _custody_snapshot(target),
+            "quantity": str(allocation.action_quantity),
+            "amount": str(allocation.action_amount),
+            "reason": reason,
+        },
+        request=request,
+    )
+    return target
+
+
+@transaction.atomic
+def write_off_custody(
+    *,
+    custody,
+    quantity,
+    action,
+    business_date,
+    reason,
+    actor,
+    idempotency_key,
+    request=None,
+):
+    if action not in {SupplyCustodyAction.LOSS, SupplyCustodyAction.SCRAP}:
+        raise ValidationError({"action": "保管核销动作只允许报损或报废。"})
+    quantity, business_date, reason, idempotency_key = _required_custody_action_values(
+        quantity=quantity,
+        business_date=business_date,
+        reason=reason,
+        idempotency_key=idempotency_key,
+    )
+    _require_current_company(custody.company)
+    custody = (
+        SupplyCustody.objects.select_for_update(of=("self",))
+        .select_related("company", "item", "department", "employee")
+        .get(pk=custody.pk, company=custody.company)
+    )
+    require_manage_supply_custody(actor, custody, action=action)
+    existing = SupplyCustodyMovement.objects.select_for_update().filter(
+        company=custody.company, idempotency_key=idempotency_key
+    ).first()
+    if existing is not None:
+        if (
+            existing.action == action
+            and existing.from_custody_id == custody.pk
+            and existing.to_custody_id is None
+            and existing.quantity == quantity
+            and existing.business_date == business_date
+            and existing.reason == reason
+        ):
+            return existing
+        raise ValidationError("同一保管动作幂等键已用于不同内容。")
+    if custody.status != SupplyCustodyStatus.OPEN:
+        raise ValidationError("只有开放保管可以执行报损或报废。")
+    allocation = allocate_custody_amount(
+        current_quantity=custody.current_quantity,
+        current_amount=custody.current_amount,
+        unit_cost_snapshot=custody.unit_cost_snapshot,
+        action_quantity=quantity,
+    )
+    old = _custody_snapshot(custody)
+    now = timezone.now()
+    _update_custody_values(
+        custody=custody,
+        quantity=allocation.quantity_after,
+        amount=allocation.amount_after,
+        status=(
+            SupplyCustodyStatus.CLOSED
+            if allocation.quantity_after == ZERO_QTY
+            else SupplyCustodyStatus.OPEN
+        ),
+        updated_at=now,
+    )
+    movement = _create_custody_movement(
+        values={
+            "company": custody.company,
+            "item": custody.item,
+            "from_custody": custody,
+            "to_custody": None,
+            "action": action,
+            "quantity": allocation.action_quantity,
+            "amount": allocation.action_amount,
+            "unit_cost": custody.unit_cost_snapshot,
+            "business_date": business_date,
+            "reason": reason,
+            "created_by": actor,
+            "idempotency_key": idempotency_key,
+        }
+    )
+    _audit(
+        actor=actor,
+        action=(
+            "supply_custody_loss"
+            if action == SupplyCustodyAction.LOSS
+            else "supply_custody_scrap"
+        ),
+        instance=movement,
+        old=old,
+        new={
+            **_custody_snapshot(custody),
+            "quantity": str(allocation.action_quantity),
+            "amount": str(allocation.action_amount),
+            "reason": reason,
+        },
+        request=request,
+    )
+    return movement
+
+
+def create_opening_custody_from_import_row(
+    *,
+    actor,
+    import_row,
+    item,
+    department,
+    employee,
+    quantity,
+    unit_cost,
+    started_on,
+    remark="",
+    request=None,
+):
+    """Create one immutable opening custody inside import confirmation."""
+
+    require_import_opening_custody(actor)
+    company = import_row.batch.company
+    _require_current_company(company)
+    if (
+        import_row.batch.import_type != "opening_custody"
+        or import_row.batch.status not in {"validated", "confirmed"}
+        or import_row.validation_status not in {"valid", "created"}
+    ):
+        raise ValidationError("来源行不是可确认的耐用品期初保管导入行。")
+    if item.company_id != company.pk or item.item_type != SupplyItemType.DURABLE_QUANTITY:
+        raise ValidationError("期初保管物品必须是当前公司数量型低值耐用品。")
+    if not item.is_active:
+        raise ValidationError("期初保管物品在确认前已经停用。")
+    if department.company_id != company.pk or not department.is_active:
+        raise ValidationError("期初保管责任部门不属于当前公司或已经停用。")
+    if employee is not None and (
+        employee.company_id != company.pk
+        or employee.department_id != department.pk
+        or employee.employment_status != "active"
+        or not employee.is_active
+        or not employee.department.is_active
+    ):
+        raise ValidationError("期初保管责任员工必须属于责任部门且在职、启用。")
+    quantity = quantize_quantity(quantity)
+    unit_cost = quantize_unit_cost(unit_cost)
+    started_on = _coerce_business_date(started_on)
+    if quantity <= ZERO_QTY:
+        raise ValidationError("期初保管数量必须大于 0。")
+    if unit_cost < ZERO_COST:
+        raise ValidationError("期初保管单位成本不得小于 0。")
+    amount = quantize_money(quantity * unit_cost)
+    existing = SupplyCustody.objects.filter(origin_import_row=import_row).first()
+    if existing is not None:
+        return existing
+    custody = _create_custody(
+        values={
+            "company": company,
+            "item": item,
+            "origin_issue_line": None,
+            "origin_import_row": import_row,
+            "parent_custody": None,
+            "department": department,
+            "employee": employee,
+            "current_quantity": quantity,
+            "current_amount": amount,
+            "unit_cost_snapshot": unit_cost,
+            "started_on": started_on,
+            "status": SupplyCustodyStatus.OPEN,
+            "remark": str(remark or "").strip(),
+        }
+    )
+    movement = _create_custody_movement(
+        values={
+            "company": company,
+            "item": item,
+            "from_custody": None,
+            "to_custody": custody,
+            "action": SupplyCustodyAction.OPENING,
+            "quantity": quantity,
+            "amount": amount,
+            "unit_cost": unit_cost,
+            "business_date": started_on,
+            "reason": str(remark or "").strip(),
+            "created_by": actor,
+            "idempotency_key": f"opening-custody-import:{import_row.batch_id}:{import_row.pk}",
+        }
+    )
+    _audit(
+        actor=actor,
+        action="supply_custody_opening_import",
+        instance=movement,
+        new={**_custody_snapshot(custody), "import_row_id": str(import_row.pk)},
+        request=request,
+    )
+    return custody
+
+
+def durable_management_totals(*, company):
+    """Return separated quantity-managed and individually tracked totals."""
+
+    from apps.assets.models import Asset
+    from apps.finance.models import AssetFinance
+
+    stock = SupplyStockBalance.objects.filter(
+        company=company,
+        item__item_type=SupplyItemType.DURABLE_QUANTITY,
+    ).aggregate(quantity=Sum("quantity_on_hand"), amount=Sum("amount_on_hand"))
+    custody = SupplyCustody.objects.filter(
+        company=company,
+        status=SupplyCustodyStatus.OPEN,
+        item__item_type=SupplyItemType.DURABLE_QUANTITY,
+    ).aggregate(quantity=Sum("current_quantity"), amount=Sum("current_amount"))
+    tracked_finances = AssetFinance.objects.filter(
+        company=company,
+        accounting_treatment=AssetFinance.AccountingTreatment.CONTROLLED_NON_FIXED,
+        finance_confirmed_at__isnull=False,
+        asset__record_status=Asset.RecordStatus.ACTIVE,
+        asset__asset_status__in=(
+            Asset.AssetStatus.PENDING_LABEL,
+            Asset.AssetStatus.IN_USE,
+            Asset.AssetStatus.IDLE,
+            Asset.AssetStatus.LOANED,
+            Asset.AssetStatus.UNDER_REPAIR,
+            Asset.AssetStatus.PENDING_DISPOSAL,
+        ),
+    )
+    tracked = tracked_finances.aggregate(
+        quantity=Sum("asset__quantity"), amount=Sum("original_cost")
+    )
+    stock_quantity = quantize_quantity(stock["quantity"] or ZERO_QTY)
+    stock_amount = quantize_money(stock["amount"] or ZERO_MONEY)
+    custody_quantity = quantize_quantity(custody["quantity"] or ZERO_QTY)
+    custody_amount = quantize_money(custody["amount"] or ZERO_MONEY)
+    return {
+        "durable_stock_quantity": stock_quantity,
+        "durable_stock_amount": stock_amount,
+        "durable_open_custody_quantity": custody_quantity,
+        "durable_open_custody_amount": custody_amount,
+        "durable_managed_amount": quantize_money(stock_amount + custody_amount),
+        "controlled_non_fixed_asset_quantity": int(tracked["quantity"] or 0),
+        "controlled_non_fixed_original_cost": quantize_money(
+            tracked["amount"] or ZERO_MONEY
+        ),
+    }
 
 
 def _posting_balance_requests(document, lines):
@@ -1448,6 +2040,7 @@ def _post_issue(*, document, lines, balances, actor, posted_at, request=None):
                     "source_document_line": line,
                     "reason": line.line_remark,
                     "created_by": actor,
+                    "idempotency_key": f"document-post:{document.pk}:issue:{line.pk}",
                 }
             )
             _audit(
@@ -1532,6 +2125,104 @@ def _post_consumable_return(*, document, lines, balances, actor, posted_at):
     return ledgers, []
 
 
+def _post_durable_return(
+    *, document, lines, balances, locked_custodies, actor, posted_at, request=None
+):
+    if len(lines) != 1:
+        raise ValidationError("一张耐用品归还单只能对应一个来源保管。")
+    line = lines[0]
+    custody = locked_custodies.get(line.source_custody_id)
+    if custody is None:
+        raise ValidationError("来源保管不存在或不属于当前公司。")
+    if (
+        line.item.item_type != SupplyItemType.DURABLE_QUANTITY
+        or custody.item_id != line.item_id
+        or custody.status != SupplyCustodyStatus.OPEN
+    ):
+        raise ValidationError("来源保管已结清、物品不一致或不是数量型低值耐用品。")
+    allocation = allocate_custody_amount(
+        current_quantity=custody.current_quantity,
+        current_amount=custody.current_amount,
+        unit_cost_snapshot=custody.unit_cost_snapshot,
+        action_quantity=line.quantity,
+    )
+    warehouse = document.target_warehouse
+    balance = balances[(warehouse.pk, line.item_id)]
+    receipt = calculate_receipt_from_amount(
+        balance.quantity_on_hand,
+        balance.amount_on_hand,
+        allocation.action_quantity,
+        allocation.action_amount,
+    )
+    ledger_values = _ledger_values(
+        document=document,
+        line=line,
+        warehouse=warehouse,
+        movement_type=SupplyStockMovementType.RETURN_IN,
+        quantity_delta=allocation.action_quantity,
+        amount_delta=allocation.action_amount,
+        unit_cost=custody.unit_cost_snapshot,
+        balance=balance,
+        quantity_after=receipt.quantity_after,
+        amount_after=receipt.amount_after,
+        average_after=receipt.average_unit_cost_after,
+        occurred_at=posted_at,
+        actor=actor,
+    )
+    old = _custody_snapshot(custody)
+    _update_custody_values(
+        custody=custody,
+        quantity=allocation.quantity_after,
+        amount=allocation.amount_after,
+        status=(
+            SupplyCustodyStatus.CLOSED
+            if allocation.quantity_after == ZERO_QTY
+            else SupplyCustodyStatus.OPEN
+        ),
+        updated_at=posted_at,
+    )
+    _update_balance(balance=balance, calculation=receipt, updated_at=posted_at)
+    _set_line_posted(
+        line=line,
+        unit_cost=custody.unit_cost_snapshot,
+        amount=allocation.action_amount,
+    )
+    ledger = _create_stock_ledger(values=ledger_values)
+    movement = _create_custody_movement(
+        values={
+            "company": document.company,
+            "item": line.item,
+            "from_custody": custody,
+            "to_custody": None,
+            "action": SupplyCustodyAction.RETURN,
+            "quantity": allocation.action_quantity,
+            "amount": allocation.action_amount,
+            "unit_cost": custody.unit_cost_snapshot,
+            "business_date": document.business_date,
+            "source_document_line": line,
+            "reason": line.line_remark,
+            "created_by": actor,
+            "idempotency_key": f"document-post:{document.pk}:custody-return",
+        }
+    )
+    _audit(
+        actor=actor,
+        action="supply_custody_return",
+        instance=movement,
+        old=old,
+        new={
+            **_custody_snapshot(custody),
+            "document_no": document.document_no,
+            "target_warehouse_id": str(warehouse.pk),
+            "quantity": str(allocation.action_quantity),
+            "amount": str(allocation.action_amount),
+            "reason": line.line_remark,
+        },
+        request=request,
+    )
+    return [ledger], [custody]
+
+
 def _post_transfer(*, document, lines, balances, actor, posted_at):
     ledgers = []
     source_warehouse = document.source_warehouse
@@ -1608,7 +2299,6 @@ def _post_transfer(*, document, lines, balances, actor, posted_at):
 def post_supply_document(
     *, document, actor, idempotency_key=None, request=None
 ):
-    require_post_supply_document(actor)
     _require_current_company(document.company)
     document = (
         SupplyDocument.objects.select_for_update(of=("self",))
@@ -1622,6 +2312,7 @@ def post_supply_document(
         )
         .get(pk=document.pk, company=document.company)
     )
+    require_post_supply_document(actor, document=document)
     if document.status == SupplyDocumentStatus.POSTED:
         return document
     if document.status != SupplyDocumentStatus.DRAFT:
@@ -1650,6 +2341,7 @@ def post_supply_document(
     )
     if not lines:
         raise ValidationError("库存单据至少需要一条明细。")
+    locked_custodies = {}
     if document.document_type == SupplyDocumentType.RETURN:
         source_document_ids = sorted(
             {
@@ -1683,10 +2375,40 @@ def post_supply_document(
             raise ValidationError("原领用明细不存在或不属于当前公司。")
         for line in lines:
             line.source_issue_line = locked_sources.get(line.source_issue_line_id)
+        custody_ids = sorted(
+            {line.source_custody_id for line in lines if line.source_custody_id},
+            key=str,
+        )
+        locked_custodies = {
+            custody.pk: custody
+            for custody in SupplyCustody.objects.select_for_update(of=("self",))
+            .select_related(
+                "item",
+                "department",
+                "employee",
+                "origin_issue_line",
+                "origin_import_row__batch",
+                "parent_custody",
+            )
+            .filter(pk__in=custody_ids, company=document.company)
+            .order_by("pk")
+        }
+        if len(locked_custodies) != len(custody_ids):
+            raise ValidationError("来源保管不存在或不属于当前公司。")
+        for line in lines:
+            if line.source_custody_id:
+                line.source_custody = locked_custodies.get(line.source_custody_id)
+        return_modes = {
+            "durable" if line.source_custody_id else "consumable" for line in lines
+        }
+        if len(return_modes) != 1:
+            raise ValidationError("同一退回单不得混合易耗品退回和耐用品保管归还。")
+        if "durable" in return_modes and len(lines) != 1:
+            raise ValidationError("一张耐用品归还单只能对应一个来源保管。")
     for line in lines:
         if line.company_id != document.company_id or line.item.company_id != document.company_id:
             raise ValidationError(f"第 {line.line_no} 行公司边界不一致。")
-        if document.document_type != SupplyDocumentType.RETURN and not line.item.is_active:
+        if not line.item.is_active:
             raise ValidationError(f"第 {line.line_no} 行物品已停用，不能过账。")
         line.full_clean()
         if line.stock_ledgers.exists():
@@ -1716,13 +2438,24 @@ def post_supply_document(
             request=request,
         )
     elif document.document_type == SupplyDocumentType.RETURN:
-        ledgers, custodies = _post_consumable_return(
-            document=document,
-            lines=lines,
-            balances=balances,
-            actor=actor,
-            posted_at=posted_at,
-        )
+        if lines[0].source_custody_id:
+            ledgers, custodies = _post_durable_return(
+                document=document,
+                lines=lines,
+                balances=balances,
+                locked_custodies=locked_custodies,
+                actor=actor,
+                posted_at=posted_at,
+                request=request,
+            )
+        else:
+            ledgers, custodies = _post_consumable_return(
+                document=document,
+                lines=lines,
+                balances=balances,
+                actor=actor,
+                posted_at=posted_at,
+            )
     else:
         ledgers, custodies = _post_transfer(
             document=document,
@@ -1778,7 +2511,6 @@ def _latest_ledger_for_balance(*, company, warehouse_id, item_id):
 def reverse_supply_document(
     *, document, actor, idempotency_key, reason, request=None
 ):
-    require_reverse_supply_document(actor)
     _require_current_company(document.company)
     cleaned_key = str(idempotency_key or "").strip()
     cleaned_reason = str(reason or "").strip()
@@ -1797,6 +2529,7 @@ def reverse_supply_document(
         )
         .get(pk=document.pk, company=document.company)
     )
+    require_reverse_supply_document(actor, document=document)
     if document.status == SupplyDocumentStatus.REVERSED:
         existing = SupplyDocument.objects.filter(
             company=document.company,
@@ -1855,6 +2588,79 @@ def reverse_supply_document(
         raise ValidationError("原单没有库存流水，不能执行完整冲销。")
     if any(hasattr(ledger, "reversal_ledger") for ledger in original_ledgers):
         raise ValidationError("原单流水已经被冲销，不能重复执行。")
+
+    durable_return_entries = {}
+    if document.document_type == SupplyDocumentType.RETURN:
+        durable_lines = [
+            line for line in original_lines if line.source_custody_id is not None
+        ]
+        if durable_lines and len(durable_lines) != len(original_lines):
+            raise ValidationError("退回单混合了易耗品和耐用品来源，不能冲销。")
+        custody_ids = sorted(
+            {line.source_custody_id for line in durable_lines}, key=str
+        )
+        locked_return_custodies = {
+            custody.pk: custody
+            for custody in SupplyCustody.objects.select_for_update(of=("self",))
+            .select_related("item", "department", "employee")
+            .filter(pk__in=custody_ids, company=document.company)
+            .order_by("pk")
+        }
+        if len(locked_return_custodies) != len(custody_ids):
+            raise ValidationError("耐用品归还来源保管已不存在，不能冲销。")
+        for line in durable_lines:
+            custody = locked_return_custodies[line.source_custody_id]
+            related = list(
+                SupplyCustodyMovement.objects.select_for_update()
+                .filter(Q(from_custody=custody) | Q(to_custody=custody))
+                .order_by("created_at", "pk")
+            )
+            returns = [
+                movement
+                for movement in related
+                if movement.action == SupplyCustodyAction.RETURN
+                and movement.from_custody_id == custody.pk
+                and movement.to_custody_id is None
+                and movement.source_document_line_id == line.pk
+            ]
+            if len(returns) != 1:
+                raise ValidationError("未找到唯一的耐用品归还保管流水，不能冲销。")
+            original_movement = returns[0]
+            if hasattr(original_movement, "reversal_movement"):
+                raise ValidationError("耐用品归还保管流水已经被冲销。")
+            if any(
+                movement.pk != original_movement.pk
+                and movement.created_at > original_movement.created_at
+                for movement in related
+            ):
+                raise ValidationError(
+                    "该保管归还后已经发生转交、再次归还、报损、报废或其他动作，不能冲销。"
+                )
+            expected_quantity = ZERO_QTY
+            expected_amount = ZERO_MONEY
+            for movement in related:
+                if movement.to_custody_id == custody.pk:
+                    expected_quantity = quantize_quantity(
+                        expected_quantity + movement.quantity
+                    )
+                    expected_amount = quantize_money(expected_amount + movement.amount)
+                if movement.from_custody_id == custody.pk:
+                    expected_quantity = quantize_quantity(
+                        expected_quantity - movement.quantity
+                    )
+                    expected_amount = quantize_money(expected_amount - movement.amount)
+            expected_status = (
+                SupplyCustodyStatus.CLOSED
+                if expected_quantity == ZERO_QTY and expected_amount == ZERO_MONEY
+                else SupplyCustodyStatus.OPEN
+            )
+            if (
+                custody.current_quantity != expected_quantity
+                or custody.current_amount != expected_amount
+                or custody.status != expected_status
+            ):
+                raise ValidationError("当前保管余额与不可变流水不一致，不能冲销。")
+            durable_return_entries[line.pk] = (custody, original_movement)
 
     grouped = defaultdict(list)
     balance_requests = {}
@@ -2042,6 +2848,7 @@ def reverse_supply_document(
                 "reason": cleaned_reason,
                 "created_by": actor,
                 "reverses_movement": issue_movement,
+                "idempotency_key": f"document-reversal:{reversal.pk}:issue:{original_line_id}",
             }
         )
         old_custody = {
@@ -2070,6 +2877,56 @@ def reverse_supply_document(
             request=request,
         )
 
+    for original_line_id, (custody, return_movement) in durable_return_entries.items():
+        old_custody = _custody_snapshot(custody)
+        restored_quantity = quantize_quantity(
+            custody.current_quantity + return_movement.quantity
+        )
+        restored_amount = quantize_money(
+            custody.current_amount + return_movement.amount
+        )
+        reversal_movement = _create_custody_movement(
+            values={
+                "company": document.company,
+                "item": custody.item,
+                "from_custody": None,
+                "to_custody": custody,
+                "action": SupplyCustodyAction.REVERSAL,
+                "quantity": return_movement.quantity,
+                "amount": return_movement.amount,
+                "unit_cost": return_movement.unit_cost,
+                "business_date": reversal.business_date,
+                "source_document_line": reversal_lines[original_line_id],
+                "reason": cleaned_reason,
+                "created_by": actor,
+                "reverses_movement": return_movement,
+                "idempotency_key": (
+                    f"document-reversal:{reversal.pk}:return:{original_line_id}"
+                ),
+            }
+        )
+        _update_custody_values(
+            custody=custody,
+            quantity=restored_quantity,
+            amount=restored_amount,
+            status=SupplyCustodyStatus.OPEN,
+            updated_at=reversed_at,
+        )
+        _audit(
+            actor=actor,
+            action="supply_custody_return_reverse",
+            instance=reversal_movement,
+            old=old_custody,
+            new={
+                **_custody_snapshot(custody),
+                "reversal_document_no": reversal.document_no,
+                "restored_quantity": str(return_movement.quantity),
+                "restored_amount": str(return_movement.amount),
+                "reason": cleaned_reason,
+            },
+            request=request,
+        )
+
     old_document = _document_snapshot(document)
     document.status = SupplyDocumentStatus.REVERSED
     document.reversed_by = actor
@@ -2088,7 +2945,7 @@ def reverse_supply_document(
             "reversal_document_no": reversal.document_no,
             "reason": cleaned_reason,
             "ledger_count": len(reversal_ledgers),
-            "custody_count": len(custody_entries),
+            "custody_count": len(custody_entries) + len(durable_return_entries),
         },
         request=request,
     )

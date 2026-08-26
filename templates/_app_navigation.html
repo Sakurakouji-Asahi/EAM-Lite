@@ -25,12 +25,15 @@
         {% if supplies_nav.can_view_stock %}<a class="app-nav-link{% if current_view == 'supplies:stock-balance-list' %} active{% endif %}" href="{% url 'supplies:stock-balance-list' %}">当前库存余额</a>
         <a class="app-nav-link{% if current_view == 'supplies:stock-ledger-list' %} active{% endif %}" href="{% url 'supplies:stock-ledger-list' %}">库存流水</a>{% endif %}
         {% if supplies_nav.can_view_custodies %}<a class="app-nav-link{% if current_view == 'supplies:custody-list' or current_view == 'supplies:custody-detail' %} active{% endif %}" href="{% url 'supplies:custody-list' %}">耐用品保管</a>{% endif %}
+        {% if supplies_nav.can_view_custodies %}<a class="app-nav-link{% if current_view == 'supplies:my-custodies' %} active{% endif %}" href="{% url 'supplies:my-custodies' %}">我的耐用品</a>{% endif %}
         {% if supplies_nav.can_view_master_data %}<a class="app-nav-link{% if current_view == 'supplies:item-list' %} active{% endif %}" href="{% url 'supplies:item-list' %}"{% if current_view == 'supplies:item-list' %} aria-current="page"{% endif %}>物品档案</a>
         <a class="app-nav-link{% if current_view == 'supplies:category-list' %} active{% endif %}" href="{% url 'supplies:category-list' %}"{% if current_view == 'supplies:category-list' %} aria-current="page"{% endif %}>低值物品分类</a>
         <a class="app-nav-link{% if current_view == 'supplies:warehouse-list' %} active{% endif %}" href="{% url 'supplies:warehouse-list' %}"{% if current_view == 'supplies:warehouse-list' %} aria-current="page"{% endif %}>仓库档案</a>{% endif %}
         {% if supplies_nav.can_manage_items %}<a class="app-nav-link" href="{% url 'supplies:item-import' %}">物品 Excel 导入</a>{% endif %}
         {% if supplies_nav.can_manage_documents %}<a class="app-nav-link" href="{% url 'supplies:opening-stock-import' %}">期初库存 Excel 导入</a>{% endif %}
-        {% if asset_nav.initialized and asset_nav.can_create %}<a class="app-nav-link" href="{% url 'assets:asset-create' %}">新增逐件低值耐用品</a>{% endif %}
+        {% if supplies_nav.can_import_opening_custody %}<a class="app-nav-link" href="{% url 'supplies:opening-custody-import' %}">期初保管 Excel 导入</a>{% endif %}
+        {% if asset_nav.initialized and asset_nav.can_create %}<a class="app-nav-link" href="{% url 'supplies:individual-durable-create' %}">新增逐件低值耐用品</a>{% endif %}
+        {% if asset_nav.initialized %}<a class="app-nav-link" href="{% url 'supplies:individual-durable-list' %}">查看逐件低值耐用品</a>{% endif %}
       </div>
     </details>
   {% endif %}

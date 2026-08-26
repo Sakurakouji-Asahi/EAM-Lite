@@ -145,6 +145,11 @@ def _validated_filters(*, actor, company, filters):
         "asset_scope": {"managed"},
         "label_scope": {"not_attached"},
         "maintenance_due_scope": {"upcoming", "overdue"},
+        "accounting_treatment": {
+            "fixed_asset",
+            "controlled_non_fixed",
+            "unconfirmed",
+        },
     }
     for key, choices in choice_filters.items():
         value = clean.get(key)
@@ -205,6 +210,20 @@ def _base_assets(actor, company, filters):
         qs = qs.filter(responsible_employee_id=filters["responsible_employee"])
     if filters.get("fixed_asset_category"):
         qs = qs.filter(finance__fixed_asset_category_id=filters["fixed_asset_category"])
+    if filters.get("accounting_treatment") in {
+        "fixed_asset",
+        "controlled_non_fixed",
+    }:
+        qs = qs.filter(
+            finance__accounting_treatment=filters["accounting_treatment"],
+            finance__finance_confirmed_at__isnull=False,
+        )
+    elif filters.get("accounting_treatment") == "unconfirmed":
+        qs = qs.filter(
+            Q(finance__isnull=True)
+            | Q(finance__finance_confirmed_at__isnull=True)
+            | Q(finance__accounting_treatment__isnull=True)
+        )
     if filters.get("asset_status"):
         qs = qs.filter(asset_status=filters["asset_status"])
     if not filters.get("include_drafts", False):
@@ -229,6 +248,20 @@ def _assets_at(actor, company, filters, boundary):
         qs = qs.filter(category_id=filters["category"])
     if filters.get("fixed_asset_category"):
         qs = qs.filter(finance__fixed_asset_category_id=filters["fixed_asset_category"])
+    if filters.get("accounting_treatment") in {
+        "fixed_asset",
+        "controlled_non_fixed",
+    }:
+        qs = qs.filter(
+            finance__accounting_treatment=filters["accounting_treatment"],
+            finance__finance_confirmed_at__isnull=False,
+        )
+    elif filters.get("accounting_treatment") == "unconfirmed":
+        qs = qs.filter(
+            Q(finance__isnull=True)
+            | Q(finance__finance_confirmed_at__isnull=True)
+            | Q(finance__accounting_treatment__isnull=True)
+        )
     if filters.get("label_scope") == "not_attached":
         from apps.assets.models import AssetQrIdentity
 
@@ -350,12 +383,17 @@ def _asset_rows(*, actor, company, report_key, filters):
 
 def _depreciation_rows(*, actor, company, report_key, filters):
     from apps.finance.models import DepreciationEntry, DepreciationSchedule
+    from apps.finance.services import depreciable_fixed_asset_filter
 
     asset_ids = list(_base_assets(actor, company, filters).values_list("pk", flat=True))
     start = filters.get("period_start")
     end = filters.get("period_end")
     if report_key == "depreciation_schedule":
-        qs = DepreciationSchedule.objects.filter(company=company, asset_id__in=asset_ids).select_related("asset", "depreciation_profile")
+        qs = DepreciationSchedule.objects.filter(
+            depreciable_fixed_asset_filter("asset"),
+            company=company,
+            asset_id__in=asset_ids,
+        ).select_related("asset", "depreciation_profile")
         if start:
             qs = qs.filter(period_start__lt=end + timedelta(days=1), period_end__gt=start)
         rows = []

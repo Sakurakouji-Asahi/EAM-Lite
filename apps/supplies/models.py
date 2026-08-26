@@ -1041,11 +1041,23 @@ class SupplyDocumentLine(models.Model):
                 raise ValidationError("领用和调拨明细不得关联原领用或原保管记录。")
         elif self.document_id and self.document.document_type == SupplyDocumentType.RETURN:
             if self.entered_unit_cost is not None:
-                raise ValidationError({"entered_unit_cost": "退回成本只能沿用原领用成本。"})
-            if self.source_issue_line_id is None:
-                raise ValidationError({"source_issue_line": "易耗品退回必须关联原领用明细。"})
-            if self.source_custody_id is not None:
-                raise ValidationError({"source_custody": "Sprint 15 不开放数量型耐用品归还。"})
+                raise ValidationError({"entered_unit_cost": "退回成本只能由系统沿用来源成本。"})
+            if self.item.item_type == SupplyItemType.CONSUMABLE:
+                if self.source_issue_line_id is None:
+                    raise ValidationError({"source_issue_line": "易耗品退回必须关联原领用明细。"})
+                if self.source_custody_id is not None:
+                    raise ValidationError({"source_custody": "易耗品退回不得关联耐用品保管。"})
+            elif self.item.item_type == SupplyItemType.DURABLE_QUANTITY:
+                if self.source_custody_id is None:
+                    raise ValidationError({"source_custody": "耐用品归还必须关联来源保管。"})
+                if (
+                    self.source_issue_line_id is not None
+                    and self.source_custody.origin_issue_line_id
+                    != self.source_issue_line_id
+                ):
+                    raise ValidationError(
+                        {"source_issue_line": "原领用明细不是当前来源保管的直接根来源。"}
+                    )
             if not str(self.line_remark or "").strip():
                 raise ValidationError({"line_remark": "退回原因不能为空。"})
         if self.document_id and self.document.document_type != SupplyDocumentType.COUNT_ADJUSTMENT:
@@ -1376,8 +1388,26 @@ class SupplyCustody(models.Model):
     origin_issue_line = models.OneToOneField(
         SupplyDocumentLine,
         verbose_name="来源领用明细",
+        null=True,
+        blank=True,
         on_delete=models.PROTECT,
         related_name="supply_custody",
+    )
+    origin_import_row = models.OneToOneField(
+        "masterdata.ImportRow",
+        verbose_name="来源期初保管导入行",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="supply_custody",
+    )
+    parent_custody = models.ForeignKey(
+        "self",
+        verbose_name="来源父保管",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="child_custodies",
     )
     department = models.ForeignKey(
         "masterdata.Department",
@@ -1441,6 +1471,30 @@ class SupplyCustody(models.Model):
                 ),
                 name="ck_supply_custody_status_balance",
             ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        parent_custody__isnull=True,
+                        origin_issue_line__isnull=False,
+                        origin_import_row__isnull=True,
+                    )
+                    | Q(
+                        parent_custody__isnull=True,
+                        origin_issue_line__isnull=True,
+                        origin_import_row__isnull=False,
+                    )
+                    | Q(
+                        parent_custody__isnull=False,
+                        origin_issue_line__isnull=True,
+                        origin_import_row__isnull=True,
+                    )
+                ),
+                name="ck_supply_custody_source_shape",
+            ),
+            models.CheckConstraint(
+                condition=~Q(id=F("parent_custody")),
+                name="ck_supply_custody_parent_not_self",
+            ),
         ]
         indexes = [
             models.Index(
@@ -1468,6 +1522,25 @@ class SupplyCustody(models.Model):
                 raise ValidationError({"origin_issue_line": "来源领用明细必须属于同一公司。"})
             if line.item_id != self.item_id or line.document.document_type != SupplyDocumentType.ISSUE:
                 raise ValidationError({"origin_issue_line": "来源必须是同一物品的领用单明细。"})
+        if self.origin_import_row_id:
+            row = self.origin_import_row
+            if row.batch.company_id != self.company_id:
+                raise ValidationError({"origin_import_row": "期初导入行必须属于同一公司。"})
+            if row.batch.import_type != "opening_custody":
+                raise ValidationError({"origin_import_row": "来源必须是耐用品期初保管导入行。"})
+            if row.validation_status not in {"valid", "created"}:
+                raise ValidationError({"origin_import_row": "期初导入行尚未通过校验。"})
+        if self.parent_custody_id:
+            parent = self.parent_custody
+            if parent.pk == self.pk:
+                raise ValidationError({"parent_custody": "父保管不能指向自身。"})
+            if parent.company_id != self.company_id or parent.item_id != self.item_id:
+                raise ValidationError({"parent_custody": "父保管必须属于同一公司和物品。"})
+            if self.origin_issue_line_id or self.origin_import_row_id:
+                raise ValidationError("转交子保管不得重复占用根来源。")
+        else:
+            if bool(self.origin_issue_line_id) == bool(self.origin_import_row_id):
+                raise ValidationError("根保管必须且只能关联领用行或期初导入行之一。")
         if self.department_id and self.department.company_id != self.company_id:
             raise ValidationError({"department": "责任部门必须属于同一公司。"})
         if self.employee_id:
@@ -1585,6 +1658,9 @@ class SupplyCustodyMovement(models.Model):
         on_delete=models.PROTECT,
         related_name="reversal_movement",
     )
+    idempotency_key = models.CharField(
+        "动作幂等键", max_length=128, null=True, blank=True
+    )
 
     objects = SupplyCustodyMovementQuerySet.as_manager()
 
@@ -1614,7 +1690,17 @@ class SupplyCustodyMovement(models.Model):
                         & ~Q(from_custody=F("to_custody"))
                     )
                     | Q(action="correction")
-                    | Q(action="reversal", from_custody__isnull=False, to_custody__isnull=True)
+                    | (
+                        Q(action="reversal")
+                        & (
+                            Q(from_custody__isnull=True, to_custody__isnull=False)
+                            | Q(from_custody__isnull=False, to_custody__isnull=True)
+                            | (
+                                Q(from_custody__isnull=False, to_custody__isnull=False)
+                                & ~Q(from_custody=F("to_custody"))
+                            )
+                        )
+                    )
                 ),
                 name="ck_supply_custody_movement_shape",
             ),
@@ -1624,6 +1710,11 @@ class SupplyCustodyMovement(models.Model):
                     | (~Q(action="reversal") & Q(reverses_movement__isnull=True))
                 ),
                 name="ck_supply_custody_movement_reversal",
+            ),
+            models.UniqueConstraint(
+                fields=("company", "idempotency_key"),
+                condition=Q(idempotency_key__isnull=False),
+                name="uq_supply_custody_move_company_idem",
             ),
         ]
         indexes = [
@@ -1656,6 +1747,19 @@ class SupplyCustodyMovement(models.Model):
             original = self.reverses_movement
             if original.company_id != self.company_id or original.item_id != self.item_id:
                 raise ValidationError({"reverses_movement": "被冲销保管流水不属于同一公司或物品。"})
+            if self.action != SupplyCustodyAction.REVERSAL:
+                raise ValidationError({"reverses_movement": "只有冲销动作可以关联原保管流水。"})
+            if (
+                self.from_custody_id != original.to_custody_id
+                or self.to_custody_id != original.from_custody_id
+                or self.quantity != original.quantity
+                or self.amount != original.amount
+                or self.unit_cost != original.unit_cost
+            ):
+                raise ValidationError("保管冲销流水必须精确反转原动作方向、数量和金额。")
+        elif self.action == SupplyCustodyAction.REVERSAL:
+            raise ValidationError({"reverses_movement": "冲销动作必须关联原保管流水。"})
+        self.idempotency_key = str(self.idempotency_key or "").strip() or None
         self.quantity = quantize_quantity(self.quantity)
         self.amount = quantize_money(self.amount)
         self.unit_cost = quantize_unit_cost(self.unit_cost)
