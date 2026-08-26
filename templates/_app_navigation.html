@@ -16,6 +16,20 @@
     <div class="app-nav-disabled">资产建档将在初始化完成后开放</div>
   {% endif %}
 
+  {% if supplies_nav.can_view %}
+    <details class="app-nav-group{% if current_namespace == 'supplies' %} is-current{% endif %}"{% if current_namespace == 'supplies' %} open{% endif %}>
+      <summary>低值物品</summary>
+      <div class="app-nav-items">
+        <a class="app-nav-link{% if current_view == 'supplies:dashboard' %} active{% endif %}" href="{% url 'supplies:dashboard' %}"{% if current_view == 'supplies:dashboard' %} aria-current="page"{% endif %}>模块首页</a>
+        <a class="app-nav-link{% if current_view == 'supplies:item-list' %} active{% endif %}" href="{% url 'supplies:item-list' %}"{% if current_view == 'supplies:item-list' %} aria-current="page"{% endif %}>物品档案</a>
+        <a class="app-nav-link{% if current_view == 'supplies:category-list' %} active{% endif %}" href="{% url 'supplies:category-list' %}"{% if current_view == 'supplies:category-list' %} aria-current="page"{% endif %}>低值物品分类</a>
+        <a class="app-nav-link{% if current_view == 'supplies:warehouse-list' %} active{% endif %}" href="{% url 'supplies:warehouse-list' %}"{% if current_view == 'supplies:warehouse-list' %} aria-current="page"{% endif %}>仓库档案</a>
+        {% if supplies_nav.can_manage_items %}<a class="app-nav-link" href="{% url 'supplies:item-import' %}">物品 Excel 导入</a>{% endif %}
+        {% if asset_nav.initialized and asset_nav.can_create %}<a class="app-nav-link" href="{% url 'assets:asset-create' %}">新增逐件低值耐用品</a>{% endif %}
+      </div>
+    </details>
+  {% endif %}
+
   {% if finance_nav.can_view %}
     <details class="app-nav-group{% if current_namespace == 'finance' %} is-current{% endif %}"{% if current_namespace == 'finance' %} open{% endif %}>
       <summary>财务与折旧</summary>

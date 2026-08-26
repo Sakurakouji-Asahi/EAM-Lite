@@ -45,6 +45,21 @@ EAM-Lite 管理并计算 → 生成受控 Excel → 财务与 T+ 核对 → 财�
 
 V1.1 不建设通用审批引擎。本文所称“提交”“财务确认”“贴标确认”“盘点关闭”等均是有权限人员直接完成的业务状态确认，不产生审批单、审批节点、同意/驳回链路，也不对接钉钉。
 
+### 3.1 V1.2 低值物品有限扩展
+
+V1.2 在上述边界内新增公司内部低值物品管理，详细口径见：
+
+- `docs/13-Low-Value-Goods-Requirements.md`；
+- `docs/14-Low-Value-Goods-Technical-Design.md`；
+- `docs/15-Low-Value-Goods-Data-Dictionary.md`；
+- `docs/16-Low-Value-Goods-UAT.md`。
+
+逐件低值耐用品继续使用现有 `Asset + AssetFinance`，会计认定为
+`controlled_non_fixed`；`Asset.quantity=1` 不变。数量库存不进入
+`Asset`，只进入独立 `apps.supplies`。低值物品管理金额仅供内部管理，
+正式会计凭证仍由财务在 T+ 人工处理。本扩展不包含生产物料、采购、
+通用 ERP 库存或自动会计过账。
+
 ## 4. 使用规模、部署与技术约束
 
 - 初始管理约 150 项资产。

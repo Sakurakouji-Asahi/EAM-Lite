@@ -1,0 +1,41 @@
+# EAM-Lite 低值易耗品与低值耐用品扩展包
+
+本扩展包面向 EAM-Lite `main` 分支当前功能基线，供 Codex 按 Sprint 逐步实现。
+
+## 核心架构结论
+
+本扩展采用两条管理路径，避免破坏现有资产模型：
+
+1. **逐件管理的低值耐用品**
+   - 继续使用现有 `Asset`、`AssetFinance`、二维码、调拨、盘点、处置和离职清退。
+   - 财务认定使用 `AssetFinance.accounting_treatment = controlled_non_fixed`。
+   - 每条资产仍严格代表一件实物，`quantity = 1`。
+   - 不生成折旧配置，不参加固定资产折旧。
+
+2. **按数量管理的低值物品**
+   - 新建独立 `apps.supplies` 应用。
+   - 管理低值易耗品以及不需要一物一码的低值耐用品。
+   - 支持入库、领用、退回、仓库调拨、耐用品保管、盘点、离职清退、库存与领用报表。
+   - 使用不可变库存流水和移动加权平均成本，不建立采购、供应商、发票或会计凭证模块。
+
+## 文件说明
+
+- `docs/13-Low-Value-Goods-Requirements.md`：业务需求和范围基线。
+- `docs/14-Low-Value-Goods-Technical-Design.md`：架构、模型、服务、成本、权限和迁移设计。
+- `docs/15-Low-Value-Goods-Data-Dictionary.md`：字段、状态机和约束明细。
+- `docs/16-Low-Value-Goods-UAT.md`：功能验收场景。
+- `tasks/Sprint-13-...` 至 `tasks/Sprint-18-...`：逐 Sprint Codex 任务。
+- `CODEX-FIRST-INSTRUCTION.md`：可直接复制给 Codex 的首条执行指令。
+- `PATCH-NOTES.md`：合并到现有仓库文档时需要修改的最小位置。
+
+## 使用顺序
+
+1. 将本包内 `docs/`、`tasks/` 和根目录补充文件复制到 EAM-Lite 仓库根目录。
+2. 先审阅业务口径，尤其是“逐件低值耐用品”和“数量型低值耐用品”的区分。
+3. 把 `CODEX-FIRST-INSTRUCTION.md` 中的指令交给 Codex。
+4. 每次只执行一个 Sprint；当前首个实施任务是 Sprint 13。
+5. Sprint 13 验收后，再单独下达 Sprint 14，依次推进到 Sprint 18。
+
+## 明确不做
+
+本扩展不是通用 ERP 库存模块，不管理生产原料、BOM、批次保质期、采购订单、供应商结算、进项发票、自动会计凭证、T+ API 或自动摊销。

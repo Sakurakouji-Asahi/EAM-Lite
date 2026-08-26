@@ -1,5 +1,13 @@
 # EAM-Lite Changelog
 
+## Unreleased
+
+- Sprint 13：新增 `apps.supplies` 基础骨架、低值物品分类/仓库/物品档案、
+  公司隔离与后端角色权限、分页页面和物品档案 XLSX 全有或全无导入。
+- 逐件低值耐用品入口继续复用现有 `Asset + controlled_non_fixed`，未修改
+  `Asset.quantity=1`，未提前实现库存余额、流水、过账、领退调拨、保管、
+  盘点、清退或低值物品报表。
+
 ## v0.1.0 - 2026-08-25
 
 - 整合 Sprint 0–12、Requirements V1.0/V1.1 及后续纠正提交为首个预发布软件功能基线。

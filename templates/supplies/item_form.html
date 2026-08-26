@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} - EAM-Lite{% endblock %}
+{% block content %}
+  <header class="app-page-header"><div><h1 class="h3 mb-1">{{ title }}</h1><p class="text-secondary mb-0">逐件二维码、序列号、单件责任或单件位置请改用现有资产模块。</p></div><a class="btn btn-outline-secondary" href="{% url 'supplies:item-list' %}">返回</a></header>
+  <div class="alert alert-info" role="note">管理模式判定：领用后通常消耗选“低值易耗品”；需按数量持续归还或转交选“数量型低值耐用品”。</div>
+  <div class="card shadow-sm app-form-section"><div class="card-body">
+    {% url 'supplies:item-list' as cancel_url %}{% include "supplies/_form.html" %}
+  </div></div>
+{% endblock %}

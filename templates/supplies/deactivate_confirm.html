@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} - EAM-Lite{% endblock %}
+{% block content %}
+  <header class="app-page-header"><h1 class="h3 mb-0">{{ title }}</h1></header>
+  <div class="card border-warning shadow-sm"><div class="card-body">
+    <p>确认停用 <strong>{{ object }}</strong>？已有历史和引用不会删除。</p>
+    <form method="post" novalidate>
+      {% csrf_token %}
+      <div class="mb-3"><label class="form-label" for="{{ form.reason.id_for_label }}">{{ form.reason.label }}</label>{{ form.reason }}{% for error in form.reason.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>
+      <button class="btn btn-warning" type="submit">确认停用</button>
+      <a class="btn btn-outline-secondary" href="{% url cancel_url %}">取消</a>
+    </form>
+  </div></div>
+{% endblock %}

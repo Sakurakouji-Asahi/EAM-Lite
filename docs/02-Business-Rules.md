@@ -287,3 +287,14 @@ T+是正式会计账。EAM-Lite导出文件仅用于人工核对，不代表凭�
 业务时区为 `Asia/Shanghai`，货币为CNY。金额采用Decimal并以2位小数、`ROUND_HALF_UP` 作为业务舍入规则。
 
 数据库时间戳应能审计真实时点；页面和报表统一按上海时间显示。
+
+## BR-044 低值物品域边界
+
+逐件低值耐用品继续作为数量固定为 1 的 `Asset` 管理，并由财务明确认定
+为 `controlled_non_fixed`；数量型低值易耗品和数量型低值耐用品只进入
+独立 `apps.supplies`，不得放宽或绕过 `Asset.quantity=1`。
+
+低值物品数量精度、移动加权平均成本、退回原成本、调拨、保管和不可变
+流水规则以 `docs/13-Low-Value-Goods-Requirements.md`、`docs/14-Low-Value-Goods-Technical-Design.md`
+及 `docs/15-Low-Value-Goods-Data-Dictionary.md` 为准，并按 Sprint 13–18
+逐步实施；未获当前 Sprint 授权的后续模型和流程不得提前落地。

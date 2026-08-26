@@ -192,6 +192,26 @@ TEMPLATE_REGISTRY = {
             Column("财务备注", "finance_remark"),
         ),
     ),
+    "item_master": TemplateDefinition(
+        import_type="item_master",
+        label="低值物品档案",
+        version="supply-item-master-v1",
+        sheet_name="低值物品档案导入",
+        has_example_sheet=True,
+        columns=(
+            Column("物品编码", "item_code", True),
+            Column("物品名称", "name", True),
+            Column("分类编码", "category_code", True),
+            Column("管理模式", "item_type", True),
+            Column("单位", "unit", True),
+            Column("规格", "specification"),
+            Column("型号", "model"),
+            Column("品牌", "brand"),
+            Column("最低库存", "minimum_stock_quantity"),
+            Column("默认仓库编码", "default_warehouse_code"),
+            Column("备注", "remark"),
+        ),
+    ),
 }
 
 
@@ -241,6 +261,12 @@ def require_import_permission(
             ):
                 return
         raise PermissionDenied("您没有导入资产初始化草稿的权限。")
+    if import_type == "item_master":
+        from apps.supplies.models import SupplyItemType
+        from apps.supplies.permissions import require_manage_supply_item
+
+        require_manage_supply_item(actor, SupplyItemType.DURABLE_QUANTITY)
+        return
     resource = {"department": "department", "employee": "employee"}.get(import_type)
     if resource is None:
         raise ValidationError("不支持的导入类型。")
@@ -276,16 +302,22 @@ def build_template_workbook(import_type: str, company=None) -> bytes:
             14, len(column.name) * 2 + 4
         )
         sheet.cell(1, index).comment = None
-    boolean_header = (
-        "是否启用" if "是否启用" in definition.headers else "是否需要保养"
+    boolean_header = next(
+        (
+            header
+            for header in ("是否启用", "是否需要保养")
+            if header in definition.headers
+        ),
+        None,
     )
-    boolean_validation = DataValidation(type="list", formula1='"是,否"')
-    sheet.add_data_validation(boolean_validation)
-    boolean_column = definition.headers.index(boolean_header) + 1
-    boolean_validation.add(
-        f"{sheet.cell(2, boolean_column).coordinate}:"
-        f"{sheet.cell(1001, boolean_column).coordinate}"
-    )
+    if boolean_header:
+        boolean_validation = DataValidation(type="list", formula1='"是,否"')
+        sheet.add_data_validation(boolean_validation)
+        boolean_column = definition.headers.index(boolean_header) + 1
+        boolean_validation.add(
+            f"{sheet.cell(2, boolean_column).coordinate}:"
+            f"{sheet.cell(1001, boolean_column).coordinate}"
+        )
     if import_type == "employee":
         status_validation = DataValidation(
             type="list", formula1='"active,leaving,resigned"'
@@ -306,6 +338,28 @@ def build_template_workbook(import_type: str, company=None) -> bytes:
             f"{sheet.cell(2, treatment_column).coordinate}:"
             f"{sheet.cell(1001, treatment_column).coordinate}"
         )
+    if import_type == "item_master":
+        item_type_validation = DataValidation(
+            type="list", formula1='"consumable,durable_quantity"'
+        )
+        sheet.add_data_validation(item_type_validation)
+        item_type_column = definition.headers.index("管理模式") + 1
+        item_type_validation.add(
+            f"{sheet.cell(2, item_type_column).coordinate}:"
+            f"{sheet.cell(1001, item_type_column).coordinate}"
+        )
+        minimum_validation = DataValidation(
+            type="decimal",
+            operator="greaterThanOrEqual",
+            formula1="0",
+            allow_blank=True,
+        )
+        sheet.add_data_validation(minimum_validation)
+        minimum_column = definition.headers.index("最低库存") + 1
+        minimum_validation.add(
+            f"{sheet.cell(2, minimum_column).coordinate}:"
+            f"{sheet.cell(1001, minimum_column).coordinate}"
+        )
     instructions = workbook.create_sheet("填写说明")
     instructions.append(["项目", "说明"])
     policies = [
@@ -325,7 +379,7 @@ def build_template_workbook(import_type: str, company=None) -> bytes:
     else:
         if import_type == "employee":
             policies.append(("匹配键", "部门按当前公司已有部门编码匹配"))
-        else:
+        elif import_type == "asset_initialization":
             policies.extend(
                 (
                     ("匹配键", "公司/分类/部门/位置按 code，责任人按 employee_no 精确匹配"),
@@ -339,6 +393,16 @@ def build_template_workbook(import_type: str, company=None) -> bytes:
                     ("动态字段", "自定义列按“自定义:<code>”精确匹配当前启用字段"),
                 )
             )
+        else:
+            policies.extend(
+                (
+                    ("匹配键", "分类和默认仓库按当前公司的规范化编码匹配"),
+                    ("管理模式", "只能为 consumable 或 durable_quantity"),
+                    ("数量精度", "最低库存最多 4 位小数，留空按 0 处理"),
+                    ("确认结果", "整批创建物品档案，不创建库存余额或库存流水"),
+                    ("逐件物品", "需要逐件二维码、序列号或单件责任时不要导入本表，改用资产模块"),
+                )
+            )
     for row in policies:
         instructions.append(row)
     instructions.column_dimensions["A"].width = 18
@@ -346,18 +410,29 @@ def build_template_workbook(import_type: str, company=None) -> bytes:
     if definition.has_example_sheet:
         example = workbook.create_sheet("示例")
         example.append(definition.headers)
-        sample = {
-            "资产名称": "示例设备（请勿直接导入）",
-            "实物分类编码": "EQUIPMENT",
-            "数量": 1,
-            "单位": "台",
-            "公司编码": "COMPANY",
-            "部门编码": "DEPT",
-            "责任员工编号": "E0001",
-            "位置编码": "POSITION-01",
-            "是否需要保养": "是",
-            "附件后续上传说明": "确认草稿后通过受保护附件入口上传照片",
-        }
+        if import_type == "item_master":
+            sample = {
+                "物品编码": "PAPER-A4",
+                "物品名称": "A4 复印纸（示例，请勿直接导入）",
+                "分类编码": "OFFICE",
+                "管理模式": "consumable",
+                "单位": "箱",
+                "最低库存": 5,
+                "默认仓库编码": "OFFICE-WH",
+            }
+        else:
+            sample = {
+                "资产名称": "示例设备（请勿直接导入）",
+                "实物分类编码": "EQUIPMENT",
+                "数量": 1,
+                "单位": "台",
+                "公司编码": "COMPANY",
+                "部门编码": "DEPT",
+                "责任员工编号": "E0001",
+                "位置编码": "POSITION-01",
+                "是否需要保养": "是",
+                "附件后续上传说明": "确认草稿后通过受保护附件入口上传照片",
+            }
         example.append([sample.get(header, "") for header in definition.headers])
         example.freeze_panes = "A2"
     output = io.BytesIO()
@@ -1016,6 +1091,180 @@ def _normalize_employee_rows(company, loaded_rows, definition):
     return prepared
 
 
+def _normalize_supply_item_rows(*, actor, company, loaded_rows, definition):
+    from apps.supplies.models import SupplyCategory, SupplyItem, SupplyItemType, SupplyWarehouse
+    from apps.supplies.permissions import can_manage_supply_item
+
+    existing_codes = set(
+        SupplyItem.objects.filter(company=company).values_list(
+            "normalized_item_code", flat=True
+        )
+    )
+    categories = {
+        category.normalized_code: category
+        for category in SupplyCategory.objects.filter(company=company, is_active=True)
+    }
+    warehouses = {
+        warehouse.normalized_code: warehouse
+        for warehouse in SupplyWarehouse.objects.filter(company=company, is_active=True)
+    }
+    prepared = []
+    seen = {}
+    for row_number, values, raw, formulas in loaded_rows:
+        errors = []
+        if formulas:
+            errors.extend(
+                _error(field, raw.get(field), "禁止公式单元格。")
+                for field in formulas
+            )
+        item_code = _text(values["item_code"])
+        name = _text(values["name"])
+        category_code = _text(values["category_code"])
+        item_type = _text(values["item_type"])
+        unit = _text(values["unit"])
+        warehouse_code = _text(values["default_warehouse_code"])
+        normalized_code = normalize_identifier(item_code)
+        normalized_category = normalize_identifier(category_code)
+        normalized_warehouse = normalize_identifier(warehouse_code)
+        category = categories.get(normalized_category)
+        warehouse = warehouses.get(normalized_warehouse) if normalized_warehouse else None
+
+        for label, value in (
+            ("物品编码", item_code),
+            ("物品名称", name),
+            ("分类编码", category_code),
+            ("管理模式", item_type),
+            ("单位", unit),
+        ):
+            if not value:
+                errors.append(_error(label, value, "必填。"))
+        if normalized_code in existing_codes:
+            errors.append(
+                _error("物品编码", item_code, "当前公司已存在该编码；本导入只新增。")
+            )
+        if normalized_code and normalized_code in seen:
+            errors.append(
+                _error(
+                    "物品编码",
+                    item_code,
+                    f"与文件第 {seen[normalized_code]} 行重复。",
+                )
+            )
+        elif normalized_code:
+            seen[normalized_code] = row_number
+        if category is None:
+            errors.append(
+                _error("分类编码", category_code, "当前公司不存在该启用分类。")
+            )
+        if item_type not in SupplyItemType.values:
+            errors.append(
+                _error(
+                    "管理模式",
+                    item_type,
+                    "只能为 consumable 或 durable_quantity。",
+                )
+            )
+        elif not can_manage_supply_item(actor, item_type):
+            errors.append(
+                _error(
+                    "管理模式",
+                    item_type,
+                    "当前角色无权导入该管理模式；equipment 仅可导入 durable_quantity。",
+                )
+            )
+        if normalized_warehouse and warehouse is None:
+            errors.append(
+                _error(
+                    "默认仓库编码",
+                    warehouse_code,
+                    "当前公司不存在该启用仓库。",
+                )
+            )
+        minimum = _decimal_value(
+            values["minimum_stock_quantity"],
+            "最低库存",
+            errors,
+            places=4,
+            minimum=Decimal("0"),
+        )
+        if minimum is None and values["minimum_stock_quantity"] in (None, ""):
+            minimum = Decimal("0.0000")
+        normalized = {
+            "item_code": item_code,
+            "normalized_item_code": normalized_code,
+            "name": name,
+            "category_id": str(category.pk) if category else None,
+            "category_code": category_code,
+            "normalized_category_code": normalized_category,
+            "item_type": item_type,
+            "unit": unit,
+            "specification": _text(values["specification"]),
+            "model": _text(values["model"]),
+            "brand": _text(values["brand"]),
+            "minimum_stock_quantity": str(minimum) if minimum is not None else None,
+            "default_warehouse_id": str(warehouse.pk) if warehouse else None,
+            "default_warehouse_code": warehouse_code,
+            "normalized_default_warehouse_code": normalized_warehouse,
+            "remark": _text(values["remark"]),
+        }
+        prepared.append(
+            {
+                "row_number": row_number,
+                "raw": raw,
+                "normalized": normalized,
+                "errors": errors,
+                "warnings": [],
+            }
+        )
+    return prepared
+
+
+def _inflate_supply_item_row(*, company, normalized, lock=False):
+    from apps.supplies.models import SupplyCategory, SupplyWarehouse
+
+    category_query = (
+        SupplyCategory.objects.select_for_update()
+        if lock
+        else SupplyCategory.objects
+    )
+    warehouse_query = (
+        SupplyWarehouse.objects.select_for_update()
+        if lock
+        else SupplyWarehouse.objects
+    )
+    category = category_query.filter(
+        pk=normalized["category_id"],
+        company=company,
+        normalized_code=normalized["normalized_category_code"],
+        is_active=True,
+    ).first()
+    if category is None:
+        raise ValidationError("所选分类在确认前已停用、改码或不再属于当前公司。")
+    warehouse = None
+    if normalized["default_warehouse_id"]:
+        warehouse = warehouse_query.filter(
+            pk=normalized["default_warehouse_id"],
+            company=company,
+            normalized_code=normalized["normalized_default_warehouse_code"],
+            is_active=True,
+        ).first()
+        if warehouse is None:
+            raise ValidationError("默认仓库在确认前已停用、改码或不再属于当前公司。")
+    return {
+        "item_code": normalized["item_code"],
+        "name": normalized["name"],
+        "category": category,
+        "item_type": normalized["item_type"],
+        "unit": normalized["unit"],
+        "specification": normalized["specification"],
+        "model": normalized["model"],
+        "brand": normalized["brand"],
+        "minimum_stock_quantity": Decimal(normalized["minimum_stock_quantity"]),
+        "default_warehouse": warehouse,
+        "remark": normalized["remark"],
+    }
+
+
 def _asset_theoretical_summary(result, *, as_of_date=None):
     lines = result.get("lines", ()) if isinstance(result, dict) else result.lines
     cutoff_exclusive = as_of_date + timedelta(days=1) if as_of_date else None
@@ -1661,6 +1910,24 @@ def _preflight_business_rows(*, actor, company, import_type, prepared):
                         _error("数据", None, message)
                         for message in _validation_messages(exc)
                     )
+        elif import_type == "item_master":
+            from apps.supplies.services import create_supply_item
+
+            for item in prepared:
+                try:
+                    create_supply_item(
+                        actor=actor,
+                        company=company,
+                        data=_inflate_supply_item_row(
+                            company=company,
+                            normalized=item["normalized"],
+                        ),
+                    )
+                except (ValidationError, PermissionDenied) as exc:
+                    item["errors"].extend(
+                        _error("数据", None, message)
+                        for message in _validation_messages(exc)
+                    )
         elif import_type == "department":
             existing = {
                 value.normalized_code: value
@@ -1708,7 +1975,7 @@ def _preflight_business_rows(*, actor, company, import_type, prepared):
                     progressed = True
                 if not progressed:
                     break
-        else:
+        elif import_type == "employee":
             departments = {
                 value.normalized_code: value
                 for value in Department.objects.filter(company=company, is_active=True)
@@ -1744,6 +2011,8 @@ def _preflight_business_rows(*, actor, company, import_type, prepared):
                         _error("数据", None, message)
                         for message in _validation_messages(exc)
                     )
+        else:
+            raise ValidationError("不支持的导入类型。")
         transaction.set_rollback(True)
     return prepared
 
@@ -1810,13 +2079,22 @@ def upload_and_validate_import(
         prepared = _normalize_department_rows(company, loaded_rows, definition)
     elif import_type == "employee":
         prepared = _normalize_employee_rows(company, loaded_rows, definition)
-    else:
+    elif import_type == "item_master":
+        prepared = _normalize_supply_item_rows(
+            actor=actor,
+            company=company,
+            loaded_rows=loaded_rows,
+            definition=definition,
+        )
+    elif import_type == "asset_initialization":
         prepared = _normalize_asset_rows(
             actor=actor,
             company=company,
             loaded_rows=loaded_rows,
             definition=definition,
         )
+    else:
+        raise ValidationError("不支持的导入类型。")
     prepared = _preflight_business_rows(
         actor=actor,
         company=company,
@@ -2087,6 +2365,33 @@ def _confirm_import_batch_atomic(*, actor, batch, request=None):
             )
             row.created_object_type = "Asset"
             row.created_object_id = str(asset.pk)
+    elif batch.import_type == "item_master":
+        from apps.supplies.models import SupplyItem
+        from apps.supplies.services import create_supply_item
+
+        existing_codes = set(
+            SupplyItem.objects.select_for_update()
+            .filter(company=batch.company)
+            .values_list("normalized_item_code", flat=True)
+        )
+        if any(
+            row.normalized_data_json["normalized_item_code"] in existing_codes
+            for row in rows
+        ):
+            raise ValidationError("确认前检测到物品编码已存在，请重新上传验证。")
+        for row in rows:
+            item = create_supply_item(
+                actor=actor,
+                company=batch.company,
+                data=_inflate_supply_item_row(
+                    company=batch.company,
+                    normalized=row.normalized_data_json,
+                    lock=True,
+                ),
+                request=request,
+            )
+            row.created_object_type = "SupplyItem"
+            row.created_object_id = str(item.pk)
     elif batch.import_type == "department":
         existing = {
             value.normalized_code: value

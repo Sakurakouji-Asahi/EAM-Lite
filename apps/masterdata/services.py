@@ -443,6 +443,7 @@ def create_employee(*, actor, company, data, request=None):
 
 def _clear_manager_assignments(*, employee, actor, request):
     from apps.masterdata.models import Department
+    from apps.supplies.models import SupplyWarehouse
 
     departments = list(
         Department.objects.select_for_update().filter(manager_employee=employee)
@@ -460,6 +461,31 @@ def _clear_manager_assignments(*, employee, actor, request):
             new_data={
                 "manager_employee": None,
                 "reason": "经理进入离职处理中、已离职或被停用",
+            },
+            request=request,
+        )
+
+    warehouses = list(
+        SupplyWarehouse.objects.select_for_update().filter(
+            manager_employee=employee
+        )
+    )
+    for warehouse in warehouses:
+        old = {"manager_employee": employee.pk}
+        warehouse.manager_employee = None
+        warehouse.updated_by = actor
+        warehouse.save(
+            update_fields=["manager_employee", "updated_by", "updated_at"]
+        )
+        _audit(
+            company=warehouse.company,
+            actor=actor,
+            action="supply_warehouse_manager_cleared",
+            instance=warehouse,
+            old_data=old,
+            new_data={
+                "manager_employee": None,
+                "reason": "负责人进入离职处理中、已离职或被停用",
             },
             request=request,
         )

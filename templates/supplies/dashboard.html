@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}低值物品 - EAM-Lite{% endblock %}
+{% block content %}
+  <header class="app-page-header"><div><h1 class="h3 mb-1">低值物品</h1><p class="text-secondary mb-0">Sprint 13 仅提供基础档案；库存、领退、调拨和保管将在后续 Sprint 实施。</p></div></header>
+  <div class="row g-3 mb-4">
+    <div class="col-sm-6 col-xl"><a class="card shadow-sm text-decoration-none h-100" href="{% url 'supplies:category-list' %}"><div class="card-body"><div class="text-secondary">启用分类</div><div class="display-6">{{ category_count }}</div></div></a></div>
+    <div class="col-sm-6 col-xl"><a class="card shadow-sm text-decoration-none h-100" href="{% url 'supplies:warehouse-list' %}"><div class="card-body"><div class="text-secondary">启用仓库</div><div class="display-6">{{ warehouse_count }}</div></div></a></div>
+    <div class="col-sm-6 col-xl"><a class="card shadow-sm text-decoration-none h-100" href="{% url 'supplies:item-list' %}"><div class="card-body"><div class="text-secondary">启用物品</div><div class="display-6">{{ item_count }}</div><small>易耗品 {{ consumable_count }} / 数量型耐用品 {{ durable_count }}</small></div></a></div>
+  </div>
+  <div class="row g-3">
+    <div class="col-lg-6"><div class="card shadow-sm h-100"><div class="card-body"><h2 class="h5">数量型物品</h2><p>同类多件、不需要逐件编号，按数量管理的易耗品或耐用品使用本模块。</p>{% if can_manage_items %}<a class="btn btn-primary" href="{% url 'supplies:item-create' %}">新增数量型物品</a>{% endif %}</div></div></div>
+    <div class="col-lg-6"><div class="card shadow-sm h-100"><div class="card-body"><h2 class="h5">逐件低值耐用品</h2><p>需要逐件二维码、序列号、单件责任人或单件位置时，每件继续在资产模块单独建档；财务确认时选择“受控非固定资产”。</p>{% if can_create_individual_asset %}<a class="btn btn-outline-primary" href="{% url 'assets:asset-create' %}">新增逐件低值耐用品</a>{% else %}<p class="small text-secondary mb-0">当前尚不可从此处建档；请先完成现有资产初始化，并确认账号具有资产草稿创建权限。</p>{% endif %}</div></div></div>
+  </div>
+{% endblock %}

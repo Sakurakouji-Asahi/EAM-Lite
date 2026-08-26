@@ -1,0 +1,9 @@
+{% if page_obj.paginator.num_pages > 1 %}
+  <nav class="mt-3" aria-label="分页">
+    <ul class="pagination mb-0">
+      {% if page_obj.has_previous %}<li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}&q={{ query|urlencode }}&status={{ selected_status|urlencode }}&category={{ selected_category|default:''|urlencode }}&item_type={{ selected_item_type|default:''|urlencode }}">上一页</a></li>{% endif %}
+      <li class="page-item disabled"><span class="page-link">第 {{ page_obj.number }} / {{ page_obj.paginator.num_pages }} 页</span></li>
+      {% if page_obj.has_next %}<li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}&q={{ query|urlencode }}&status={{ selected_status|urlencode }}&category={{ selected_category|default:''|urlencode }}&item_type={{ selected_item_type|default:''|urlencode }}">下一页</a></li>{% endif %}
+    </ul>
+  </nav>
+{% endif %}

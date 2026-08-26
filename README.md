@@ -20,6 +20,19 @@ v0.1.0 已累计整合 Sprint 0–12 的代码范围。现有功能包括身份�
 `v0.1.0` Git 标签是不可变的预发布软件功能基线，不等于生产环境已完成负责人签字。后续新增功能
 从 `codex/v0.2-development` 分支继续开发，生产上线门槛仍由 Sprint 12 UAT 证据单独跟踪。
 
+## V1.2 低值物品分阶段扩展
+
+V1.2 采用独立 `apps.supplies` 管理数量型低值易耗品和数量型低值耐用品；
+需要逐件二维码、序列号、单件责任人或位置的低值耐用品继续使用现有
+`Asset + AssetFinance(accounting_treatment="controlled_non_fixed")`，
+`Asset.quantity=1` 永不放宽。
+
+扩展按 Sprint 13–18 顺序实施，每次只授权一个 Sprint：基础档案与物品
+导入 → 库存入库与流水 → 领退调拨 → 耐用品保管与逐件资产集成 → 盘点
+和离职清退 → 报表与 UAT。需求、技术、数据字典和验收基线分别见
+`docs/13-Low-Value-Goods-Requirements.md` 至 `docs/16-Low-Value-Goods-UAT.md`。
+该扩展不包含生产物料、采购、供应商、会计凭证、T+ API 或通用 ERP 库存。
+
 ## 版本与依赖
 
 - Python：>=3.14.7,<3.15（本 Sprint 验证版本 3.14.7；不使用 3.15 预览版）

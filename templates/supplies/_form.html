@@ -1,0 +1,29 @@
+{% if form.non_field_errors %}
+  <div class="alert alert-danger" role="alert">
+    <strong>保存失败，请检查：</strong>{{ form.non_field_errors }}
+  </div>
+{% endif %}
+<form method="post" novalidate>
+  {% csrf_token %}
+  {% for field in form %}
+    {% if field.field.widget.input_type == "checkbox" %}
+      <div class="form-check mb-3">
+        {{ field }}
+        <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+        {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+        {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+      </div>
+    {% else %}
+      <div class="mb-3">
+        <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %}<span class="required-mark" aria-hidden="true">*</span>{% endif %}</label>
+        {{ field }}
+        {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+        {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+      </div>
+    {% endif %}
+  {% endfor %}
+  <div class="app-form-actions app-form-actions-contained">
+    <button class="btn btn-primary" type="submit">保存</button>
+    <a class="btn btn-outline-secondary" href="{{ cancel_url }}">取消</a>
+  </div>
+</form>

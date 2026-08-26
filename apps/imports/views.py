@@ -130,6 +130,7 @@ def batch_detail(request, pk):
             "rows": batch.rows.order_by("row_number"),
             "definition": _definition_or_404(batch.import_type, company=company),
             "is_asset_initialization": batch.import_type == "asset_initialization",
+            "is_item_master": batch.import_type == "item_master",
         },
     )
 
