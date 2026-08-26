@@ -81,6 +81,96 @@ function Test-DockerReady {
     }
 }
 
+function Test-DockerStaleSocketFailure {
+    $backendLog = Join-Path $env:LOCALAPPDATA "Docker\log\host\com.docker.backend.exe.log"
+    if (-not (Test-Path -LiteralPath $backendLog -PathType Leaf)) {
+        return $false
+    }
+    $logItem = Get-Item -LiteralPath $backendLog
+    if ($logItem.LastWriteTime -lt (Get-Date).AddMinutes(-5)) {
+        return $false
+    }
+    $tailText = (Get-Content -LiteralPath $backendLog -Tail 250) -join "`n"
+    return (
+        $tailText -match "backend crashed" -and
+        $tailText -match "The file cannot be accessed by the system" -and
+        (
+            $tailText -match "dockerInference" -or
+            $tailText -match "docker-secrets-engine.+engine\.sock"
+        )
+    )
+}
+
+function Repair-DockerStaleSockets {
+    if (-not (Test-DockerStaleSocketFailure)) {
+        return $false
+    }
+
+    Write-Host "检测到 Docker Desktop 遗留套接字故障，正在执行可恢复修复……" -ForegroundColor Yellow
+    $dockerProcessNames = @(
+        "Docker Desktop",
+        "com.docker.backend",
+        "com.docker.proxy",
+        "docker-sandbox"
+    )
+    Get-Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.ProcessName -in $dockerProcessNames } |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+    & wsl.exe --terminate docker-desktop *> $null
+    Start-Sleep -Seconds 1
+
+    $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $socketDirectories = @(
+        @{
+            Source = (Join-Path $env:LOCALAPPDATA "Docker\run")
+            Parent = (Join-Path $env:LOCALAPPDATA "Docker")
+            BackupName = "run.stale-$timestamp"
+        },
+        @{
+            Source = (Join-Path $env:LOCALAPPDATA "docker-secrets-engine")
+            Parent = $env:LOCALAPPDATA
+            BackupName = "docker-secrets-engine.stale-$timestamp"
+        }
+    )
+    foreach ($directory in $socketDirectories) {
+        if (-not (Test-Path -LiteralPath $directory.Source)) {
+            continue
+        }
+        $resolvedParent = (Resolve-Path -LiteralPath $directory.Parent).Path
+        $resolvedSource = (Resolve-Path -LiteralPath $directory.Source).Path
+        $backupPath = Join-Path $resolvedParent $directory.BackupName
+        if ((Split-Path -Parent $resolvedSource) -ne $resolvedParent) {
+            throw "Docker 套接字目录超出预期范围：$resolvedSource"
+        }
+        if ((Split-Path -Parent $backupPath) -ne $resolvedParent) {
+            throw "Docker 套接字备份目录超出预期范围：$backupPath"
+        }
+        if (Test-Path -LiteralPath $backupPath) {
+            throw "Docker 套接字备份目录已存在：$backupPath"
+        }
+        Move-Item -LiteralPath $resolvedSource -Destination $backupPath -ErrorAction Stop
+        Write-Host "已保留旧运行目录：$backupPath" -ForegroundColor DarkGray
+    }
+
+    $settingsPath = Join-Path $env:APPDATA "Docker\settings-store.json"
+    if (Test-Path -LiteralPath $settingsPath -PathType Leaf) {
+        $settingsObject = Get-Content -Raw -LiteralPath $settingsPath | ConvertFrom-Json
+        if (
+            $settingsObject.PSObject.Properties.Name -contains "EnableDockerAI" -and
+            $settingsObject.EnableDockerAI
+        ) {
+            $settingsBackup = "$settingsPath.bak-$timestamp"
+            Copy-Item -LiteralPath $settingsPath -Destination $settingsBackup -ErrorAction Stop
+            $settingsObject.EnableDockerAI = $false
+            $json = $settingsObject | ConvertTo-Json -Depth 100
+            $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText($settingsPath, $json, $utf8NoBom)
+            Write-Host "已关闭未使用的 Docker AI/Inference，并备份原设置。" -ForegroundColor DarkGray
+        }
+    }
+    return $true
+}
+
 try {
     $repoRoot = Split-Path -Parent $PSScriptRoot
     $managePy = Join-Path $repoRoot "manage.py"
@@ -189,26 +279,24 @@ try {
 
     $dockerReady = Test-DockerReady -DockerExe $dockerExe
     if (-not $dockerReady) {
+        $dockerDesktopCandidates = @(
+            "${env:ProgramFiles}\Docker\Docker\Docker Desktop.exe",
+            "${env:LOCALAPPDATA}\Docker\Docker Desktop.exe"
+        )
+        if (${env:ProgramFiles(x86)}) {
+            $dockerDesktopCandidates += "${env:ProgramFiles(x86)}\Docker\Docker\Docker Desktop.exe"
+        }
+        $dockerDesktopExe = $dockerDesktopCandidates |
+            Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+            Select-Object -First 1
+        if (-not $dockerDesktopExe) {
+            throw "未找到 Docker Desktop.exe。请确认 Docker Desktop 已安装。"
+        }
+
         $dockerDesktopProcess = Get-Process -Name "Docker Desktop" -ErrorAction SilentlyContinue
         if (-not $dockerDesktopProcess) {
-            $dockerDesktopCandidates = @(
-                "${env:ProgramFiles}\Docker\Docker\Docker Desktop.exe",
-                "${env:LOCALAPPDATA}\Docker\Docker Desktop.exe"
-            )
-            if (${env:ProgramFiles(x86)}) {
-                $dockerDesktopCandidates += "${env:ProgramFiles(x86)}\Docker\Docker\Docker Desktop.exe"
-            }
-            $dockerDesktopExe = $dockerDesktopCandidates |
-                Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
-                Select-Object -First 1
-            if (-not $dockerDesktopExe) {
-                throw "Docker Desktop 未运行，且未找到 Docker Desktop.exe。请手动启动 Docker Desktop 后重试。"
-            }
-
             Write-Host "正在启动 Docker Desktop，请稍候……" -ForegroundColor Cyan
-            # Docker Desktop must remain visible so startup/WSL failures are
-            # actionable instead of looking like an EAM-Lite hang.
-            Start-Process -FilePath $dockerDesktopExe
+            Start-Process -FilePath $dockerDesktopExe -WindowStyle Hidden
         }
         else {
             Write-Host "Docker Desktop 正在启动，请稍候……" -ForegroundColor Cyan
@@ -220,9 +308,28 @@ try {
                 $dockerReady = $true
                 break
             }
+            if (
+                -not (Get-Process -Name "com.docker.backend" -ErrorAction SilentlyContinue) -and
+                (Test-DockerStaleSocketFailure)
+            ) {
+                break
+            }
         }
         if (-not $dockerReady) {
-            throw "等待 Docker Desktop 就绪超时，请确认 Docker Desktop 可以正常启动。"
+            if (Repair-DockerStaleSockets) {
+                Write-Host "正在重新启动 Docker Desktop，请稍候……" -ForegroundColor Cyan
+                Start-Process -FilePath $dockerDesktopExe -WindowStyle Hidden
+                for ($attempt = 0; $attempt -lt 90; $attempt++) {
+                    Start-Sleep -Seconds 2
+                    if (Test-DockerReady -DockerExe $dockerExe) {
+                        $dockerReady = $true
+                        break
+                    }
+                }
+            }
+            if (-not $dockerReady) {
+                throw "等待 Docker Desktop 就绪超时。请不要恢复出厂设置；可重启电脑后再次运行启动器。"
+            }
         }
     }
 

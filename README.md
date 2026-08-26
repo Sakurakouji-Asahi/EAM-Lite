@@ -151,6 +151,10 @@ Windows 本地验收可双击仓库根目录 `启动EAM-Lite.cmd`。启动器会
 启动 PostgreSQL、执行迁移、检测局域网 IP、设置本地 QR 地址并打开浏览器。重复双击时，
 若健康的 EAM-Lite 已在运行则直接打开页面；若精确识别到本仓库旧服务失去响应，则只停止
 该旧进程并自动重启；无法识别的其他端口占用程序只报告进程名称和 PID，不会自动终止。
+若 Docker Desktop 因 Windows 遗留的 `dockerInference` 或 Secrets Engine AF_UNIX 套接字
+崩溃，启动器只在最近后端日志精确命中该错误时，把对应运行目录改名留存、备份 Docker
+设置、关闭未使用的 Docker AI/Inference，并自动重试一次；不会恢复出厂设置，也不会修改
+Docker 的 WSL 数据盘、镜像、卷或数据库容器。
 Secret 和自动
 备份密钥只写入被 Git 忽略的 `var/local/`，不会写入源码。黑色服务窗口必须保持打开，
 `Ctrl+C` 停止。该方式使用 DEBUG 和 HTTP，仅限本地验收，不是生产部署。
