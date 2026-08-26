@@ -3,7 +3,7 @@
 {% block title %}{{ title }} - EAM-Lite{% endblock %}
 {% block content %}
 <header class="app-page-header">
-  <div><h1 class="h3 mb-1">{{ title }}</h1><p class="text-secondary mb-0">草稿不会改变库存；单位成本为 0 时必须在明细备注中写明原因。</p></div>
+  <div><h1 class="h3 mb-1">{{ title }}</h1><p class="text-secondary mb-0">草稿不会改变库存；{% if show_entered_cost %}单位成本为 0 时必须写明原因。{% else %}成本由过账服务根据库存快照计算，表单不能录入或覆盖。{% endif %}</p></div>
   <a class="btn btn-outline-secondary" href="{% if document %}{% url 'supplies:document-detail' document.pk %}{% else %}{% url 'supplies:document-list' %}{% endif %}">返回</a>
 </header>
 <form method="post" novalidate>
@@ -26,11 +26,11 @@
     {{ formset.management_form }}
     {% if formset.non_form_errors %}<div class="alert alert-danger">{{ formset.non_form_errors }}</div>{% endif %}
     <div class="table-responsive"><table class="table align-middle">
-      <thead><tr><th style="min-width:15rem">物品</th><th style="min-width:9rem">数量</th><th style="min-width:10rem">单位成本</th><th style="min-width:16rem">备注 / 0 成本原因</th><th>删除</th></tr></thead>
+      <thead><tr><th style="min-width:15rem">物品</th><th style="min-width:9rem">数量</th>{% if show_entered_cost %}<th style="min-width:10rem">单位成本</th>{% endif %}<th style="min-width:16rem">备注{% if show_entered_cost %} / 0 成本原因{% endif %}</th><th>删除</th></tr></thead>
       <tbody id="supply-line-rows">{% for line_form in formset %}<tr>
         <td>{{ line_form.item }}{% for error in line_form.item.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</td>
         <td>{{ line_form.quantity }}{% for error in line_form.quantity.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</td>
-        <td>{{ line_form.entered_unit_cost }}{% for error in line_form.entered_unit_cost.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</td>
+        {% if show_entered_cost %}<td>{{ line_form.entered_unit_cost }}{% for error in line_form.entered_unit_cost.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</td>{% endif %}
         <td>{{ line_form.line_remark }}{% for error in line_form.line_remark.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}{% for error in line_form.non_field_errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</td>
         <td>{% if line_form.DELETE %}<div class="form-check">{{ line_form.DELETE }}<label class="form-check-label" for="{{ line_form.DELETE.id_for_label }}">删除</label></div>{% endif %}</td>
       </tr>{% endfor %}</tbody>
@@ -38,7 +38,7 @@
     <template id="empty-supply-line"><tr>
       <td>{{ formset.empty_form.item }}</td>
       <td>{{ formset.empty_form.quantity }}</td>
-      <td>{{ formset.empty_form.entered_unit_cost }}</td>
+      {% if show_entered_cost %}<td>{{ formset.empty_form.entered_unit_cost }}</td>{% endif %}
       <td>{{ formset.empty_form.line_remark }}</td>
       <td><div class="form-check">{{ formset.empty_form.DELETE }}<label class="form-check-label" for="{{ formset.empty_form.DELETE.id_for_label }}">删除</label></div></td>
     </tr></template>

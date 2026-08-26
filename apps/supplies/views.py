@@ -8,28 +8,32 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import Paginator
-from django.db.models import Q
+from django.db.models import Q, Sum
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 
 from apps.assets.permissions import can_create_asset_draft
 from apps.masterdata.models import InitializationSetting
 from apps.masterdata.normalization import normalize_identifier
-from apps.masterdata.permissions import current_company
+from apps.masterdata.permissions import current_company, scoped_departments, scoped_employees
 
 from .forms import (
     SupplyCategoryForm,
+    SupplyConsumableReturnForm,
     SupplyDeactivateForm,
     SupplyDocumentCancelForm,
     SupplyDocumentForm,
     SupplyDocumentLineFormSet,
     SupplyDocumentPostForm,
+    SupplyDocumentReverseForm,
     SupplyItemForm,
     SupplyWarehouseForm,
 )
 from .models import (
     SupplyCategory,
+    SupplyCustody,
     SupplyDocument,
+    SupplyDocumentLine,
     SupplyDocumentStatus,
     SupplyDocumentType,
     SupplyItem,
@@ -44,17 +48,25 @@ from .permissions import (
     can_manage_supply_item,
     can_manage_supply_warehouse,
     can_post_supply_document,
+    can_reverse_supply_document,
+    can_view_supply_custodies,
     can_view_supply_cost,
+    can_view_supply_master_data,
     require_manage_supply_category,
     require_manage_supply_item,
     require_manage_supply_warehouse,
     require_create_supply_document,
     require_post_supply_document,
+    require_reverse_supply_document,
+    require_view_supply_custodies,
     require_view_supply_documents,
     require_view_supply_master_data,
+    require_view_supply_module,
+    require_view_supply_stock,
     scoped_supply_categories,
     scoped_supply_items,
     scoped_supply_documents,
+    scoped_supply_custodies,
     scoped_supply_stock_balances,
     scoped_supply_stock_ledgers,
     scoped_supply_warehouses,
@@ -69,6 +81,7 @@ from .services import (
     deactivate_supply_item,
     deactivate_supply_warehouse,
     post_supply_document,
+    reverse_supply_document,
     update_supply_category,
     update_supply_item,
     update_draft_document,
@@ -77,21 +90,29 @@ from .services import (
 
 
 PAGE_SIZE = 25
-SPRINT14_DOCUMENT_TYPES = frozenset(
-    {SupplyDocumentType.OPENING, SupplyDocumentType.RECEIPT}
+SPRINT15_DOCUMENT_TYPES = frozenset(
+    {
+        SupplyDocumentType.OPENING,
+        SupplyDocumentType.RECEIPT,
+        SupplyDocumentType.ISSUE,
+        SupplyDocumentType.RETURN,
+        SupplyDocumentType.TRANSFER,
+        SupplyDocumentType.REVERSAL,
+    }
 )
-SPRINT14_DOCUMENT_TYPE_CHOICES = tuple(
-    choice for choice in SupplyDocumentType.choices if choice[0] in SPRINT14_DOCUMENT_TYPES
+SPRINT15_DOCUMENT_TYPE_CHOICES = tuple(
+    choice for choice in SupplyDocumentType.choices if choice[0] in SPRINT15_DOCUMENT_TYPES
 )
-SPRINT14_STATUSES = frozenset(
+SPRINT15_STATUSES = frozenset(
     {
         SupplyDocumentStatus.DRAFT,
         SupplyDocumentStatus.POSTED,
         SupplyDocumentStatus.CANCELLED,
+        SupplyDocumentStatus.REVERSED,
     }
 )
-SPRINT14_STATUS_CHOICES = tuple(
-    choice for choice in SupplyDocumentStatus.choices if choice[0] in SPRINT14_STATUSES
+SPRINT15_STATUS_CHOICES = tuple(
+    choice for choice in SupplyDocumentStatus.choices if choice[0] in SPRINT15_STATUSES
 )
 
 
@@ -168,7 +189,7 @@ def _cleaned_line_rows(formset):
             {
                 "item": cleaned["item"],
                 "quantity": cleaned["quantity"],
-                "entered_unit_cost": cleaned["entered_unit_cost"],
+                "entered_unit_cost": cleaned.get("entered_unit_cost"),
                 "line_remark": cleaned.get("line_remark", ""),
             }
         )
@@ -178,7 +199,7 @@ def _cleaned_line_rows(formset):
 @login_required
 def dashboard(request):
     company = _company_or_404()
-    require_view_supply_master_data(request.user)
+    require_view_supply_module(request.user)
     categories = scoped_supply_categories(request.user, company)
     warehouses = scoped_supply_warehouses(request.user, company)
     items = scoped_supply_items(request.user, company)
@@ -196,6 +217,14 @@ def dashboard(request):
             "durable_count": items.filter(
                 is_active=True, item_type=SupplyItemType.DURABLE_QUANTITY
             ).count(),
+            "document_count": scoped_supply_documents(
+                request.user, company
+            ).count(),
+            "custody_count": scoped_supply_custodies(
+                request.user, company
+            ).filter(status="open").count(),
+            "can_view_master_data": can_view_supply_master_data(request.user),
+            "can_view_custodies": can_view_supply_custodies(request.user),
             "can_manage_categories": can_manage_supply_category(request.user),
             "can_manage_warehouses": can_manage_supply_warehouse(request.user),
             "can_manage_items": can_manage_supply_item(
@@ -585,12 +614,14 @@ def item_import(request):
     return redirect("imports:upload", import_type="item_master")
 
 
-def _require_sprint14_document_type(document_type):
+def _require_sprint15_manual_document_type(document_type):
     if document_type not in {
         SupplyDocumentType.OPENING,
         SupplyDocumentType.RECEIPT,
+        SupplyDocumentType.ISSUE,
+        SupplyDocumentType.TRANSFER,
     }:
-        raise Http404("Sprint 14 尚未开放该单据类型。")
+        raise Http404("该单据类型只能由受控来源或系统生成。")
     return document_type
 
 
@@ -602,7 +633,12 @@ def document_list(request):
         request.user,
         company,
         SupplyDocument.objects.select_related(
-            "source_warehouse", "target_warehouse", "created_by", "posted_by"
+            "source_warehouse",
+            "target_warehouse",
+            "department",
+            "employee",
+            "created_by",
+            "posted_by",
         ).prefetch_related("lines__item"),
     )
     query = request.GET.get("q", "").strip()
@@ -618,11 +654,11 @@ def document_list(request):
             | Q(external_reference__icontains=query)
             | Q(counterparty_name__icontains=query)
         )
-    if document_type in SPRINT14_DOCUMENT_TYPES:
+    if document_type in SPRINT15_DOCUMENT_TYPES:
         queryset = queryset.filter(document_type=document_type)
     else:
         document_type = ""
-    if status in SPRINT14_STATUSES:
+    if status in SPRINT15_STATUSES:
         queryset = queryset.filter(status=status)
     else:
         status = ""
@@ -659,8 +695,8 @@ def document_list(request):
             "selected_item": item_value,
             "date_from": date_from_value,
             "date_to": date_to_value,
-            "document_types": SPRINT14_DOCUMENT_TYPE_CHOICES,
-            "statuses": SPRINT14_STATUS_CHOICES,
+            "document_types": SPRINT15_DOCUMENT_TYPE_CHOICES,
+            "statuses": SPRINT15_STATUS_CHOICES,
             "warehouses": scoped_supply_warehouses(request.user, company).order_by(
                 "normalized_code"
             ),
@@ -673,7 +709,7 @@ def document_list(request):
 @login_required
 def document_create(request, document_type):
     company = _company_or_404()
-    document_type = _require_sprint14_document_type(document_type)
+    document_type = _require_sprint15_manual_document_type(document_type)
     require_create_supply_document(request.user)
     form = SupplyDocumentForm(
         request.POST or None,
@@ -684,7 +720,11 @@ def document_create(request, document_type):
     formset = SupplyDocumentLineFormSet(
         request.POST or None,
         prefix="lines",
-        form_kwargs={"actor": request.user, "company": company},
+        form_kwargs={
+            "actor": request.user,
+            "company": company,
+            "document_type": document_type,
+        },
     )
     if request.method == "POST" and form.is_valid() and formset.is_valid():
         try:
@@ -708,7 +748,14 @@ def document_create(request, document_type):
             "form": form,
             "formset": formset,
             "document_type": document_type,
-            "title": "新建期初入库单" if document_type == "opening" else "新建日常入库单",
+            "show_entered_cost": document_type
+            in {SupplyDocumentType.OPENING, SupplyDocumentType.RECEIPT},
+            "title": {
+                SupplyDocumentType.OPENING: "新建期初入库单",
+                SupplyDocumentType.RECEIPT: "新建日常入库单",
+                SupplyDocumentType.ISSUE: "新建领用单",
+                SupplyDocumentType.TRANSFER: "新建仓库调拨单",
+            }[document_type],
         },
     )
 
@@ -721,7 +768,9 @@ def document_edit(request, pk):
         scoped_supply_documents(
             request.user,
             company,
-            SupplyDocument.objects.select_related("target_warehouse").prefetch_related(
+            SupplyDocument.objects.select_related(
+                "source_warehouse", "target_warehouse", "department", "employee"
+            ).prefetch_related(
                 "lines__item"
             ),
         ),
@@ -729,6 +778,13 @@ def document_edit(request, pk):
     )
     if document.status != SupplyDocumentStatus.DRAFT:
         raise PermissionDenied("该单据已过账或取消，不能编辑。")
+    if document.document_type not in {
+        SupplyDocumentType.OPENING,
+        SupplyDocumentType.RECEIPT,
+        SupplyDocumentType.ISSUE,
+        SupplyDocumentType.TRANSFER,
+    }:
+        raise PermissionDenied("该来源单据草稿不提供普通编辑入口；可取消后重新发起。")
     form = SupplyDocumentForm(
         request.POST or None,
         actor=request.user,
@@ -740,7 +796,11 @@ def document_edit(request, pk):
         request.POST or None,
         initial=None if request.method == "POST" else _line_formset_initial(document),
         prefix="lines",
-        form_kwargs={"actor": request.user, "company": company},
+        form_kwargs={
+            "actor": request.user,
+            "company": company,
+            "document_type": document.document_type,
+        },
     )
     if request.method == "POST" and form.is_valid() and formset.is_valid():
         data = dict(form.cleaned_data)
@@ -766,6 +826,8 @@ def document_edit(request, pk):
             "formset": formset,
             "document": document,
             "document_type": document.document_type,
+            "show_entered_cost": document.document_type
+            in {SupplyDocumentType.OPENING, SupplyDocumentType.RECEIPT},
             "title": f"编辑草稿 {document.document_no}",
         },
     )
@@ -785,7 +847,13 @@ def document_detail(request, pk):
                 "created_by",
                 "posted_by",
                 "cancelled_by",
-            ).prefetch_related("lines__item"),
+                "reversed_by",
+                "reversal_of",
+            ).prefetch_related(
+                "lines__item",
+                "lines__source_issue_line__document",
+                "lines__source_custody",
+            ),
         ),
         pk=pk,
     )
@@ -794,11 +862,23 @@ def document_detail(request, pk):
     total_amount = Decimal("0.00")
     for line in document.lines.all():
         row = {
+            "line_id": line.pk,
             "line_no": line.line_no,
             "item": line.item,
             "quantity": line.quantity,
             "line_remark": line.line_remark,
+            "source_issue_line": line.source_issue_line,
         }
+        if (
+            document.document_type == SupplyDocumentType.ISSUE
+            and document.status == SupplyDocumentStatus.POSTED
+            and line.item.item_type == SupplyItemType.CONSUMABLE
+        ):
+            returned_quantity = line.return_lines.filter(
+                document__document_type=SupplyDocumentType.RETURN,
+                document__status=SupplyDocumentStatus.POSTED,
+            ).aggregate(total=Sum("quantity"))["total"] or Decimal("0.0000")
+            row["returnable_quantity"] = line.quantity - returned_quantity
         if show_cost:
             row.update(
                 {
@@ -820,6 +900,17 @@ def document_detail(request, pk):
             "total_amount": total_amount if show_cost else None,
             "can_manage": can_create_supply_document(request.user),
             "can_post": can_post_supply_document(request.user),
+            "can_reverse": can_reverse_supply_document(request.user),
+            "can_edit": document.document_type
+            in {
+                SupplyDocumentType.OPENING,
+                SupplyDocumentType.RECEIPT,
+                SupplyDocumentType.ISSUE,
+                SupplyDocumentType.TRANSFER,
+            },
+            "reversal_document": SupplyDocument.objects.filter(
+                company=company, reversal_of=document
+            ).first(),
         },
     )
 
@@ -862,7 +953,9 @@ def document_post(request, pk):
         scoped_supply_documents(
             request.user,
             company,
-            SupplyDocument.objects.select_related("target_warehouse").prefetch_related(
+            SupplyDocument.objects.select_related(
+                "source_warehouse", "target_warehouse", "department", "employee"
+            ).prefetch_related(
                 "lines__item"
             ),
         ),
@@ -905,9 +998,256 @@ def document_post(request, pk):
 
 
 @login_required
+def consumable_return_create(request, line_pk):
+    company = _company_or_404()
+    require_create_supply_document(request.user)
+    source_line = get_object_or_404(
+        SupplyDocumentLine.objects.select_related(
+            "document", "document__department", "document__employee", "item"
+        ),
+        pk=line_pk,
+        company=company,
+        document__document_type=SupplyDocumentType.ISSUE,
+        document__status=SupplyDocumentStatus.POSTED,
+        item__item_type=SupplyItemType.CONSUMABLE,
+    )
+    returned = source_line.return_lines.filter(
+        document__document_type=SupplyDocumentType.RETURN,
+        document__status=SupplyDocumentStatus.POSTED,
+    ).aggregate(quantity=Sum("quantity"), amount=Sum("posted_amount"))
+    returned_quantity = returned["quantity"] or Decimal("0.0000")
+    returnable_quantity = source_line.quantity - returned_quantity
+    form = SupplyConsumableReturnForm(
+        request.POST or None,
+        actor=request.user,
+        company=company,
+        source_issue_line=source_line,
+        initial={"quantity": returnable_quantity if returnable_quantity > 0 else None},
+    )
+    if request.method == "POST" and form.is_valid():
+        if returnable_quantity <= 0:
+            form.add_error("quantity", "该原领用明细已无可退数量。")
+        else:
+            try:
+                document = create_supply_document(
+                    actor=request.user,
+                    company=company,
+                    document_type=SupplyDocumentType.RETURN,
+                    data={
+                        "business_date": form.cleaned_data["business_date"],
+                        "target_warehouse": form.cleaned_data["target_warehouse"],
+                        "remark": form.cleaned_data["reason"],
+                        "idempotency_key": form.cleaned_data["idempotency_key"],
+                    },
+                    lines=[
+                        {
+                            "item": source_line.item,
+                            "quantity": form.cleaned_data["quantity"],
+                            "entered_unit_cost": None,
+                            "source_issue_line": source_line,
+                            "line_remark": form.cleaned_data["reason"],
+                        }
+                    ],
+                    request=request,
+                )
+            except ValidationError as exc:
+                _service_error(form, exc)
+            else:
+                messages.success(request, "易耗品退回单草稿已创建，尚未影响库存。")
+                return redirect("supplies:document-detail", pk=document.pk)
+    return render(
+        request,
+        "supplies/consumable_return_form.html",
+        {
+            "form": form,
+            "source_line": source_line,
+            "returned_quantity": returned_quantity,
+            "returnable_quantity": returnable_quantity,
+            "show_cost": can_view_supply_cost(request.user),
+        },
+    )
+
+
+@login_required
+def document_reverse(request, pk):
+    company = _company_or_404()
+    require_reverse_supply_document(request.user)
+    document = get_object_or_404(
+        scoped_supply_documents(
+            request.user,
+            company,
+            SupplyDocument.objects.select_related(
+                "source_warehouse", "target_warehouse", "department", "employee"
+            ).prefetch_related("lines__item"),
+        ),
+        pk=pk,
+    )
+    if document.status == SupplyDocumentStatus.REVERSED:
+        reversal = SupplyDocument.objects.filter(
+            company=company, reversal_of=document
+        ).first()
+        if reversal is not None:
+            return redirect("supplies:document-detail", pk=reversal.pk)
+    if document.status != SupplyDocumentStatus.POSTED:
+        raise PermissionDenied("只允许冲销已过账单据。")
+    if document.document_type == SupplyDocumentType.REVERSAL:
+        raise PermissionDenied("冲销单不能再次冲销。")
+    form = SupplyDocumentReverseForm(request.POST or None, actor=request.user)
+    if request.method == "POST" and form.is_valid():
+        try:
+            reversal = reverse_supply_document(
+                actor=request.user,
+                document=document,
+                idempotency_key=form.cleaned_data["idempotency_key"],
+                reason=form.cleaned_data["reason"],
+                request=request,
+            )
+        except ValidationError as exc:
+            _service_error(form, exc)
+        else:
+            messages.success(request, "完整冲销已过账，原流水保留并已生成精确反向流水。")
+            return redirect("supplies:document-detail", pk=reversal.pk)
+    return render(
+        request,
+        "supplies/document_reverse_confirm.html",
+        {
+            "document": document,
+            "form": form,
+            "show_cost": can_view_supply_cost(request.user),
+        },
+    )
+
+
+@login_required
+def custody_list(request):
+    company = _company_or_404()
+    require_view_supply_custodies(request.user)
+    queryset = scoped_supply_custodies(
+        request.user,
+        company,
+        SupplyCustody.objects.select_related(
+            "item",
+            "item__category",
+            "department",
+            "employee",
+            "origin_issue_line__document",
+        ),
+    )
+    query = request.GET.get("q", "").strip()
+    item_value = request.GET.get("item", "").strip()
+    department_value = request.GET.get("department", "").strip()
+    employee_value = request.GET.get("employee", "").strip()
+    status = request.GET.get("status", "").strip()
+    date_from_value = request.GET.get("date_from", "").strip()
+    source_document = request.GET.get("source_document", "").strip()
+    if query:
+        queryset = queryset.filter(
+            Q(item__item_code__icontains=query)
+            | Q(item__name__icontains=query)
+            | Q(department__name__icontains=query)
+            | Q(employee__name__icontains=query)
+            | Q(origin_issue_line__document__document_no__icontains=query)
+        )
+    if item_value:
+        queryset = queryset.filter(
+            item__normalized_item_code=normalize_identifier(item_value)
+        )
+    department_id = _uuid_or_none(department_value)
+    if department_value:
+        queryset = (
+            queryset.filter(department_id=department_id)
+            if department_id
+            else queryset.none()
+        )
+    employee_id = _uuid_or_none(employee_value)
+    if employee_value:
+        queryset = (
+            queryset.filter(employee_id=employee_id)
+            if employee_id
+            else queryset.none()
+        )
+    if status in {"open", "closed"}:
+        queryset = queryset.filter(status=status)
+    else:
+        status = ""
+    date_from = _iso_date(date_from_value)
+    if date_from_value:
+        queryset = (
+            queryset.filter(started_on__gte=date_from)
+            if date_from
+            else queryset.none()
+        )
+    if source_document:
+        queryset = queryset.filter(
+            origin_issue_line__document__document_no__icontains=source_document
+        )
+    return render(
+        request,
+        "supplies/custody_list.html",
+        {
+            "page_obj": _page(queryset.order_by("-started_on", "-created_at"), request),
+            "pagination_query": _pagination_query(request),
+            "query": query,
+            "selected_item": item_value,
+            "selected_department": department_value,
+            "selected_employee": employee_value,
+            "selected_status": status,
+            "date_from": date_from_value,
+            "source_document": source_document,
+            "departments": scoped_departments(
+                request.user, company
+            ).order_by("normalized_code"),
+            "employees": scoped_employees(
+                request.user, company
+            ).select_related("department").order_by("normalized_employee_no"),
+            "show_cost": can_view_supply_cost(request.user),
+        },
+    )
+
+
+@login_required
+def custody_detail(request, pk):
+    company = _company_or_404()
+    require_view_supply_custodies(request.user)
+    custody = get_object_or_404(
+        scoped_supply_custodies(
+            request.user,
+            company,
+            SupplyCustody.objects.select_related(
+                "item",
+                "item__category",
+                "department",
+                "employee",
+                "origin_issue_line__document",
+            ),
+        ),
+        pk=pk,
+    )
+    movements = (
+        custody.incoming_movements.filter(company=company)
+        | custody.outgoing_movements.filter(company=company)
+    ).select_related(
+        "from_custody",
+        "to_custody",
+        "source_document_line__document",
+        "created_by",
+        "reverses_movement",
+    ).order_by("created_at")
+    return render(
+        request,
+        "supplies/custody_detail.html",
+        {
+            "custody": custody,
+            "movements": movements,
+            "show_cost": can_view_supply_cost(request.user),
+        },
+    )
+
+
+@login_required
 def stock_balance_list(request):
     company = _company_or_404()
-    require_view_supply_documents(request.user)
+    require_view_supply_stock(request.user)
     queryset = scoped_supply_stock_balances(
         request.user,
         company,
@@ -955,7 +1295,7 @@ def stock_balance_list(request):
 @login_required
 def stock_ledger_list(request):
     company = _company_or_404()
-    require_view_supply_documents(request.user)
+    require_view_supply_stock(request.user)
     queryset = scoped_supply_stock_ledgers(
         request.user,
         company,
@@ -976,11 +1316,11 @@ def stock_ledger_list(request):
             | Q(item__item_code__icontains=query)
             | Q(item__name__icontains=query)
         )
-    if document_type in SPRINT14_DOCUMENT_TYPES:
+    if document_type in SPRINT15_DOCUMENT_TYPES:
         queryset = queryset.filter(document__document_type=document_type)
     else:
         document_type = ""
-    if status in SPRINT14_STATUSES:
+    if status in SPRINT15_STATUSES:
         queryset = queryset.filter(document__status=status)
     else:
         status = ""
@@ -1010,8 +1350,8 @@ def stock_ledger_list(request):
             "selected_item": item_value,
             "date_from": date_from_value,
             "date_to": date_to_value,
-            "document_types": SPRINT14_DOCUMENT_TYPE_CHOICES,
-            "statuses": SPRINT14_STATUS_CHOICES,
+            "document_types": SPRINT15_DOCUMENT_TYPE_CHOICES,
+            "statuses": SPRINT15_STATUS_CHOICES,
             "warehouses": scoped_supply_warehouses(request.user, company).order_by(
                 "normalized_code"
             ),

@@ -61,6 +61,22 @@ class SupplyStockMovementType(models.TextChoices):
     REVERSAL = "reversal", "冲销"
 
 
+class SupplyCustodyStatus(models.TextChoices):
+    OPEN = "open", "在管"
+    CLOSED = "closed", "已结清"
+
+
+class SupplyCustodyAction(models.TextChoices):
+    ISSUE = "issue", "领用建立"
+    OPENING = "opening", "期初建立"
+    RETURN = "return", "归还仓库"
+    TRANSFER = "transfer", "责任转交"
+    LOSS = "loss", "报损"
+    SCRAP = "scrap", "报废"
+    CORRECTION = "correction", "受控更正"
+    REVERSAL = "reversal", "冲销"
+
+
 def _clean_required_text(value, *, field_name, label):
     cleaned = clean_display_identifier(value)
     if not cleaned:
@@ -654,16 +670,46 @@ class SupplyDocument(models.Model):
             ),
             models.CheckConstraint(
                 condition=(
-                    ~Q(document_type__in=("opening", "receipt"))
-                    | Q(
+                    Q(
+                        document_type__in=("opening", "receipt"),
                         source_warehouse__isnull=True,
                         target_warehouse__isnull=False,
                         department__isnull=True,
                         employee__isnull=True,
                         reversal_of__isnull=True,
                     )
+                    | Q(
+                        document_type="issue",
+                        source_warehouse__isnull=False,
+                        target_warehouse__isnull=True,
+                        department__isnull=False,
+                        reversal_of__isnull=True,
+                    )
+                    | Q(
+                        document_type="return",
+                        source_warehouse__isnull=True,
+                        target_warehouse__isnull=False,
+                        department__isnull=False,
+                        reversal_of__isnull=True,
+                    )
+                    | Q(
+                        document_type="transfer",
+                        source_warehouse__isnull=False,
+                        target_warehouse__isnull=False,
+                        department__isnull=True,
+                        employee__isnull=True,
+                        reversal_of__isnull=True,
+                    )
+                    | Q(
+                        document_type="reversal",
+                        reversal_of__isnull=False,
+                    )
+                    | Q(
+                        document_type="count_adjustment",
+                        reversal_of__isnull=True,
+                    )
                 ),
-                name="ck_supply_document_receipt_shape",
+                name="ck_supply_document_s15_shape",
             ),
             models.CheckConstraint(
                 condition=(
@@ -748,13 +794,47 @@ class SupplyDocument(models.Model):
                 )
             ):
                 raise ValidationError("期初和日常入库单不得填写来源仓库、部门、员工或冲销来源。")
+        elif self.document_type == SupplyDocumentType.ISSUE:
+            if self.source_warehouse_id is None:
+                raise ValidationError({"source_warehouse": "领用单必须选择来源仓库。"})
+            if self.department_id is None:
+                raise ValidationError({"department": "领用单必须选择领用部门。"})
+            if self.target_warehouse_id or self.reversal_of_id:
+                raise ValidationError("领用单不得填写目标仓库或冲销来源。")
+        elif self.document_type == SupplyDocumentType.RETURN:
+            if self.target_warehouse_id is None:
+                raise ValidationError({"target_warehouse": "退回单必须选择目标仓库。"})
+            if self.department_id is None:
+                raise ValidationError({"department": "退回单必须保存原领用部门快照。"})
+            if self.source_warehouse_id or self.reversal_of_id:
+                raise ValidationError("退回单不得填写来源仓库或冲销来源。")
+        elif self.document_type == SupplyDocumentType.TRANSFER:
+            if self.source_warehouse_id is None or self.target_warehouse_id is None:
+                raise ValidationError("调拨单必须同时选择来源仓库和目标仓库。")
+            if self.source_warehouse_id == self.target_warehouse_id:
+                raise ValidationError("来源仓库和目标仓库不能相同。")
+            if self.department_id or self.employee_id or self.reversal_of_id:
+                raise ValidationError("调拨单不得填写部门、员工或冲销来源。")
+        elif self.document_type == SupplyDocumentType.REVERSAL:
+            if self.reversal_of_id is None:
+                raise ValidationError({"reversal_of": "冲销单必须关联被冲销原单。"})
+            if self.reversal_of_id == self.pk:
+                raise ValidationError({"reversal_of": "冲销单不能关联自身。"})
+            if self.reversal_of.document_type == SupplyDocumentType.REVERSAL:
+                raise ValidationError({"reversal_of": "冲销单不能再次作为被冲销原单。"})
         for field_name in ("source_warehouse", "target_warehouse", "department", "employee"):
             value = getattr(self, field_name, None)
             if value is not None and value.company_id != self.company_id:
                 raise ValidationError({field_name: "所选对象必须属于同一公司。"})
-        if self.employee_id and self.department_id:
-            if self.employee.department_id != self.department_id:
+        if self.employee_id and self.document_type == SupplyDocumentType.ISSUE:
+            if not self.department_id or self.employee.department_id != self.department_id:
                 raise ValidationError({"employee": "所选员工不属于目标部门。"})
+            if (
+                self.employee.employment_status != "active"
+                or not self.employee.is_active
+                or not self.employee.department.is_active
+            ):
+                raise ValidationError({"employee": "所选员工必须是在职、启用且属于启用部门。"})
 
     def save(self, *args, **kwargs):
         if self.pk and not self._state.adding:
@@ -842,6 +922,14 @@ class SupplyDocumentLine(models.Model):
         on_delete=models.PROTECT,
         related_name="return_lines",
     )
+    source_custody = models.ForeignKey(
+        "SupplyCustody",
+        verbose_name="原保管记录",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="source_document_lines",
+    )
     line_remark = models.TextField("明细备注/0 成本原因", blank=True)
 
     objects = SupplyDocumentLineQuerySet.as_manager()
@@ -912,6 +1000,20 @@ class SupplyDocumentLine(models.Model):
             raise ValidationError({"document": "单据明细必须与单据属于同一公司。"})
         if self.item_id and self.item.company_id != self.company_id:
             raise ValidationError({"item": "单据明细物品必须属于同一公司。"})
+        if self.source_issue_line_id:
+            source = self.source_issue_line
+            if source.company_id != self.company_id:
+                raise ValidationError({"source_issue_line": "原领用明细必须属于同一公司。"})
+            if source.document_id == self.document_id:
+                raise ValidationError({"source_issue_line": "原领用明细不能来自当前单据。"})
+            if source.document.document_type != SupplyDocumentType.ISSUE:
+                raise ValidationError({"source_issue_line": "只能关联领用单明细。"})
+            if source.item_id != self.item_id:
+                raise ValidationError({"item": "退回物品必须与原领用明细一致。"})
+        if self.source_custody_id:
+            custody = self.source_custody
+            if custody.company_id != self.company_id or custody.item_id != self.item_id:
+                raise ValidationError({"source_custody": "原保管记录与当前公司或物品不一致。"})
         self.quantity = quantize_quantity(self.quantity)
         if self.quantity <= ZERO_QUANTITY:
             raise ValidationError({"quantity": "数量必须大于 0。"})
@@ -927,6 +1029,25 @@ class SupplyDocumentLine(models.Model):
             self.line_remark = validate_zero_cost_reason(
                 self.entered_unit_cost, self.line_remark
             )
+            if self.source_issue_line_id or self.source_custody_id:
+                raise ValidationError("入库明细不得关联原领用或原保管记录。")
+        elif self.document_id and self.document.document_type in {
+            SupplyDocumentType.ISSUE,
+            SupplyDocumentType.TRANSFER,
+        }:
+            if self.entered_unit_cost is not None:
+                raise ValidationError({"entered_unit_cost": "领用和调拨成本只能由系统计算。"})
+            if self.source_issue_line_id or self.source_custody_id:
+                raise ValidationError("领用和调拨明细不得关联原领用或原保管记录。")
+        elif self.document_id and self.document.document_type == SupplyDocumentType.RETURN:
+            if self.entered_unit_cost is not None:
+                raise ValidationError({"entered_unit_cost": "退回成本只能沿用原领用成本。"})
+            if self.source_issue_line_id is None:
+                raise ValidationError({"source_issue_line": "易耗品退回必须关联原领用明细。"})
+            if self.source_custody_id is not None:
+                raise ValidationError({"source_custody": "Sprint 15 不开放数量型耐用品归还。"})
+            if not str(self.line_remark or "").strip():
+                raise ValidationError({"line_remark": "退回原因不能为空。"})
         if self.document_id and self.document.document_type != SupplyDocumentType.COUNT_ADJUSTMENT:
             if self.adjustment_direction:
                 raise ValidationError({"adjustment_direction": "非盘点调整明细不得填写调整方向。"})
@@ -1226,3 +1347,330 @@ class SupplyStockLedger(models.Model):
 
     def __str__(self):
         return f"{self.document.document_no} #{self.document_line.line_no} {self.movement_type}"
+
+
+class SupplyCustodyQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        raise ValidationError("耐用品保管余额只能通过受控库存 Service 更新。")
+
+    def delete(self):
+        raise ValidationError("耐用品保管记录不得通过普通操作删除。")
+
+
+class SupplyCustody(models.Model):
+    Status = SupplyCustodyStatus
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(
+        "masterdata.Company",
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="supply_custodies",
+    )
+    item = models.ForeignKey(
+        SupplyItem,
+        verbose_name="物品",
+        on_delete=models.PROTECT,
+        related_name="custodies",
+    )
+    origin_issue_line = models.OneToOneField(
+        SupplyDocumentLine,
+        verbose_name="来源领用明细",
+        on_delete=models.PROTECT,
+        related_name="supply_custody",
+    )
+    department = models.ForeignKey(
+        "masterdata.Department",
+        verbose_name="责任部门",
+        on_delete=models.PROTECT,
+        related_name="supply_custodies",
+    )
+    employee = models.ForeignKey(
+        "masterdata.Employee",
+        verbose_name="责任员工",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="supply_custodies",
+    )
+    current_quantity = models.DecimalField("当前保管数量", **QUANTITY)
+    current_amount = models.DecimalField("当前保管金额", **MONEY)
+    unit_cost_snapshot = models.DecimalField("单位成本快照", **UNIT_COST)
+    started_on = models.DateField("开始日期")
+    status = models.CharField(
+        "状态",
+        max_length=16,
+        choices=SupplyCustodyStatus.choices,
+        default=SupplyCustodyStatus.OPEN,
+    )
+    remark = models.TextField("备注", blank=True)
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+    updated_at = models.DateTimeField("更新时间", auto_now=True)
+
+    objects = SupplyCustodyQuerySet.as_manager()
+
+    class Meta:
+        verbose_name = "数量型低值耐用品保管"
+        verbose_name_plural = "数量型低值耐用品保管"
+        ordering = ("-started_on", "item__normalized_item_code")
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(current_quantity__gte=0),
+                name="ck_supply_custody_qty_nonnegative",
+            ),
+            models.CheckConstraint(
+                condition=Q(current_amount__gte=0),
+                name="ck_supply_custody_amount_nonnegative",
+            ),
+            models.CheckConstraint(
+                condition=Q(unit_cost_snapshot__gte=0),
+                name="ck_supply_custody_cost_nonnegative",
+            ),
+            models.CheckConstraint(
+                condition=Q(status__in=SupplyCustodyStatus.values),
+                name="ck_supply_custody_status_valid",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(status="open", current_quantity__gt=0)
+                    | Q(
+                        status="closed",
+                        current_quantity=0,
+                        current_amount=0,
+                    )
+                ),
+                name="ck_supply_custody_status_balance",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("company", "employee", "status"),
+                name="supply_custody_employee_idx",
+            ),
+            models.Index(
+                fields=("company", "department", "item", "status"),
+                name="supply_custody_dept_item_idx",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        from .domain import quantize_money, quantize_quantity, quantize_unit_cost
+
+        if self.item_id:
+            if self.item.company_id != self.company_id:
+                raise ValidationError({"item": "保管物品必须属于同一公司。"})
+            if self.item.item_type != SupplyItemType.DURABLE_QUANTITY:
+                raise ValidationError({"item": "只有数量型低值耐用品可以建立保管。"})
+        if self.origin_issue_line_id:
+            line = self.origin_issue_line
+            if line.company_id != self.company_id:
+                raise ValidationError({"origin_issue_line": "来源领用明细必须属于同一公司。"})
+            if line.item_id != self.item_id or line.document.document_type != SupplyDocumentType.ISSUE:
+                raise ValidationError({"origin_issue_line": "来源必须是同一物品的领用单明细。"})
+        if self.department_id and self.department.company_id != self.company_id:
+            raise ValidationError({"department": "责任部门必须属于同一公司。"})
+        if self.employee_id:
+            if self.employee.company_id != self.company_id:
+                raise ValidationError({"employee": "责任员工必须属于同一公司。"})
+            if self.employee.department_id != self.department_id:
+                raise ValidationError({"employee": "责任员工必须属于责任部门。"})
+            if (
+                self.employee.employment_status != "active"
+                or not self.employee.is_active
+                or not self.employee.department.is_active
+            ):
+                raise ValidationError({"employee": "责任员工必须是在职、启用且属于启用部门。"})
+        self.current_quantity = quantize_quantity(self.current_quantity)
+        self.current_amount = quantize_money(self.current_amount)
+        self.unit_cost_snapshot = quantize_unit_cost(self.unit_cost_snapshot)
+        if self.current_quantity < ZERO_QUANTITY or self.current_amount < ZERO_MONEY:
+            raise ValidationError("保管数量和金额不得小于 0。")
+        if self.status == SupplyCustodyStatus.OPEN and self.current_quantity <= ZERO_QUANTITY:
+            raise ValidationError("在管保管记录的当前数量必须大于 0。")
+        if self.status == SupplyCustodyStatus.CLOSED and (
+            self.current_quantity != ZERO_QUANTITY or self.current_amount != ZERO_MONEY
+        ):
+            raise ValidationError("已结清保管记录的数量和金额必须同时为 0。")
+
+    def save(self, *args, **kwargs):
+        controlled = getattr(self, "_controlled_mutation", False)
+        if not controlled:
+            raise ValidationError("耐用品保管记录只能通过受控库存 Service 保存。")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("耐用品保管记录不得通过普通操作删除。")
+
+    def __str__(self):
+        employee = self.employee or "部门保管"
+        return f"{self.item} / {self.department} / {employee}: {self.current_quantity}"
+
+
+class SupplyCustodyMovementQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        return _only_actor_null_update(
+            self,
+            kwargs,
+            actor_fields={"created_by", "created_by_id"},
+            message="保管流水只允许追加，不能更新。",
+        )
+
+    def delete(self):
+        raise ValidationError("保管流水只允许追加，不能删除。")
+
+
+class SupplyCustodyMovement(models.Model):
+    Action = SupplyCustodyAction
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(
+        "masterdata.Company",
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="supply_custody_movements",
+    )
+    item = models.ForeignKey(
+        SupplyItem,
+        verbose_name="物品",
+        on_delete=models.PROTECT,
+        related_name="custody_movements",
+    )
+    from_custody = models.ForeignKey(
+        SupplyCustody,
+        verbose_name="转出保管记录",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="outgoing_movements",
+    )
+    to_custody = models.ForeignKey(
+        SupplyCustody,
+        verbose_name="转入保管记录",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="incoming_movements",
+    )
+    action = models.CharField(
+        "动作", max_length=16, choices=SupplyCustodyAction.choices
+    )
+    quantity = models.DecimalField("数量", **QUANTITY)
+    amount = models.DecimalField("金额", **MONEY)
+    unit_cost = models.DecimalField("单位成本", **UNIT_COST)
+    business_date = models.DateField("业务日期")
+    source_document_line = models.ForeignKey(
+        SupplyDocumentLine,
+        verbose_name="来源单据明细",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="custody_movements",
+    )
+    reason = models.TextField("原因", blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="操作人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_supply_custody_movements",
+    )
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+    reverses_movement = models.OneToOneField(
+        "self",
+        verbose_name="被冲销保管流水",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="reversal_movement",
+    )
+
+    objects = SupplyCustodyMovementQuerySet.as_manager()
+
+    class Meta:
+        verbose_name = "数量型低值耐用品保管流水"
+        verbose_name_plural = "数量型低值耐用品保管流水"
+        ordering = ("-created_at",)
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(action__in=SupplyCustodyAction.values),
+                name="ck_supply_custody_movement_action",
+            ),
+            models.CheckConstraint(
+                condition=Q(quantity__gt=0),
+                name="ck_supply_custody_movement_qty",
+            ),
+            models.CheckConstraint(
+                condition=Q(amount__gte=0, unit_cost__gte=0),
+                name="ck_supply_custody_movement_amount",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(action__in=("issue", "opening"), from_custody__isnull=True, to_custody__isnull=False)
+                    | Q(action__in=("return", "loss", "scrap"), from_custody__isnull=False, to_custody__isnull=True)
+                    | (
+                        Q(action="transfer", from_custody__isnull=False, to_custody__isnull=False)
+                        & ~Q(from_custody=F("to_custody"))
+                    )
+                    | Q(action="correction")
+                    | Q(action="reversal", from_custody__isnull=False, to_custody__isnull=True)
+                ),
+                name="ck_supply_custody_movement_shape",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(action="reversal", reverses_movement__isnull=False)
+                    | (~Q(action="reversal") & Q(reverses_movement__isnull=True))
+                ),
+                name="ck_supply_custody_movement_reversal",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("company", "item", "created_at"),
+                name="supply_custody_move_item_idx",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        from .domain import quantize_money, quantize_quantity, quantize_unit_cost
+
+        if self.item_id:
+            if self.item.company_id != self.company_id:
+                raise ValidationError({"item": "保管流水物品必须属于同一公司。"})
+            if self.item.item_type != SupplyItemType.DURABLE_QUANTITY:
+                raise ValidationError({"item": "保管流水仅适用于数量型低值耐用品。"})
+        for field_name in ("from_custody", "to_custody"):
+            custody = getattr(self, field_name, None)
+            if custody is not None and (
+                custody.company_id != self.company_id or custody.item_id != self.item_id
+            ):
+                raise ValidationError({field_name: "保管流水引用的保管记录不属于同一公司或物品。"})
+        if self.source_document_line_id:
+            line = self.source_document_line
+            if line.company_id != self.company_id or line.item_id != self.item_id:
+                raise ValidationError({"source_document_line": "来源单据明细不属于同一公司或物品。"})
+        if self.reverses_movement_id:
+            original = self.reverses_movement
+            if original.company_id != self.company_id or original.item_id != self.item_id:
+                raise ValidationError({"reverses_movement": "被冲销保管流水不属于同一公司或物品。"})
+        self.quantity = quantize_quantity(self.quantity)
+        self.amount = quantize_money(self.amount)
+        self.unit_cost = quantize_unit_cost(self.unit_cost)
+        if self.quantity <= ZERO_QUANTITY:
+            raise ValidationError({"quantity": "保管流水数量必须大于 0。"})
+        if self.amount < ZERO_MONEY or self.unit_cost < ZERO_UNIT_COST:
+            raise ValidationError("保管流水金额和单位成本不得小于 0。")
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding or not getattr(self, "_controlled_insert", False):
+            raise ValidationError("保管流水只允许由受控库存 Service 追加。")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("保管流水只允许追加，不能删除。")
+
+    def __str__(self):
+        return f"{self.get_action_display()} / {self.item}: {self.quantity}"

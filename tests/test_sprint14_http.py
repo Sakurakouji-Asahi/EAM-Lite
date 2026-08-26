@@ -34,8 +34,8 @@ def test_stock_read_pages_are_available_to_approved_roles(client, role):
         assert client.get(reverse(name)).status_code == 200
 
 
-@pytest.mark.parametrize("role", ["employee", "department_manager", "hr"])
-def test_unapproved_roles_cannot_open_stock_pages_or_post_directly(client, role):
+@pytest.mark.parametrize("role", ["employee", "department_manager"])
+def test_sprint15_relation_roles_only_see_scoped_issue_return_documents(client, role):
     company = make_company()
     category = make_supply_category(company)
     warehouse = make_supply_warehouse(company)
@@ -49,6 +49,31 @@ def test_unapproved_roles_cannot_open_stock_pages_or_post_directly(client, role)
         key=f"denied-{role}",
     )
     actor = make_user(f"s14-denied-{role}", role)
+    client.force_login(actor)
+    listing = client.get(reverse("supplies:document-list"))
+    assert listing.status_code == 200
+    assert document.document_no.encode() not in listing.content
+    assert client.get(reverse("supplies:document-detail", args=[document.pk])).status_code == 404
+    assert client.post(
+        reverse("supplies:document-post", args=[document.pk]),
+        {"confirm": "on", "idempotency_key": document.idempotency_key},
+    ).status_code == 403
+
+
+def test_hr_cannot_open_stock_pages_or_post_directly(client):
+    company = make_company()
+    category = make_supply_category(company)
+    warehouse = make_supply_warehouse(company)
+    item = make_supply_item(company, category)
+    creator = make_user("s14-creator-hr", "warehouse")
+    document = make_supply_document(
+        actor=creator,
+        company=company,
+        warehouse=warehouse,
+        item=item,
+        key="denied-hr",
+    )
+    actor = make_user("s14-denied-hr", "hr")
     client.force_login(actor)
     assert client.get(reverse("supplies:document-list")).status_code == 403
     assert client.get(reverse("supplies:document-detail", args=[document.pk])).status_code == 403
@@ -121,7 +146,7 @@ def test_document_http_create_post_and_posted_edit_rejection(client):
     assert b"supply-document-form.js" in edit_page.content
     document_page = client.get(reverse("supplies:document-list"))
     assert "日常入库".encode() in document_page.content
-    assert "领用出库".encode() not in document_page.content
+    assert "领用出库".encode() in document_page.content
 
     post_response = client.post(
         reverse("supplies:document-post", args=[document.pk]),
@@ -195,4 +220,4 @@ def test_cost_values_are_visible_only_through_approved_stock_scope(client):
 
     employee = make_user("s14-cost-employee", "employee")
     client.force_login(employee)
-    assert client.get(reverse("supplies:document-detail", args=[document.pk])).status_code == 403
+    assert client.get(reverse("supplies:document-detail", args=[document.pk])).status_code == 404

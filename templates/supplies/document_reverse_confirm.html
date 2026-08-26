@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}冲销 {{ document.document_no }} - EAM-Lite{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3 mb-1">确认完整冲销</h1><p class="text-secondary mb-0">{{ document.document_no }} · {{ document.get_document_type_display }}</p></div><a class="btn btn-outline-secondary" href="{% url 'supplies:document-detail' document.pk %}">返回</a></header>
+<div class="alert alert-danger"><strong>不支持部分冲销。</strong>系统只在原单仍是对应仓库/物品的最新业务且余额精确匹配原快照时执行；原流水不会删除，将生成 CX 冲销单和反向流水。</div>
+<form method="post" class="card shadow-sm" novalidate><div class="card-body">
+  {% csrf_token %}{{ form.idempotency_key }}
+  {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+  <div class="mb-3"><label class="form-label" for="{{ form.reason.id_for_label }}">{{ form.reason.label }}<span class="required-mark">*</span></label>{{ form.reason }}{% for error in form.reason.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>
+  <button class="btn btn-danger" type="submit">生成并立即过账完整冲销</button>
+</div></form>
+{% endblock %}

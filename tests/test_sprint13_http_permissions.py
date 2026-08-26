@@ -31,13 +31,18 @@ def test_authorized_roles_can_view_supplies_dashboard_and_lists(client, role):
         assert client.get(reverse(name)).status_code == 200
 
 
-@pytest.mark.parametrize("role", ["employee", "hr", "department_manager"])
-def test_unrelated_roles_are_denied_direct_urls(client, role):
+def test_hr_is_denied_and_sprint15_relation_roles_only_gain_module_landing(client):
     make_company()
-    actor = make_user(f"denied-{role}", role)
-    client.force_login(actor)
+    hr = make_user("denied-hr", "hr")
+    client.force_login(hr)
     assert client.get(reverse("supplies:dashboard")).status_code == 403
     assert client.get(reverse("supplies:item-list")).status_code == 403
+
+    for role in ("employee", "department_manager"):
+        actor = make_user(f"relation-{role}", role)
+        client.force_login(actor)
+        assert client.get(reverse("supplies:dashboard")).status_code == 200
+        assert client.get(reverse("supplies:item-list")).status_code == 403
 
 
 def test_management_is_read_only_and_equipment_only_manages_durables(client):

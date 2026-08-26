@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}发起易耗品退回 - EAM-Lite{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3 mb-1">发起易耗品退回</h1><p class="text-secondary mb-0">原领用 {{ source_line.document.document_no }} #{{ source_line.line_no }}</p></div><a class="btn btn-outline-secondary" href="{% url 'supplies:document-detail' source_line.document_id %}">返回原领用单</a></header>
+<div class="card shadow-sm mb-4"><div class="card-body"><dl class="row mb-0"><dt class="col-sm-2">物品</dt><dd class="col-sm-4">{{ source_line.item }}</dd><dt class="col-sm-2">原领用数量</dt><dd class="col-sm-4">{{ source_line.quantity }} {{ source_line.item.unit }}</dd><dt class="col-sm-2">累计有效退回</dt><dd class="col-sm-4">{{ returned_quantity }}</dd><dt class="col-sm-2">当前可退</dt><dd class="col-sm-4">{{ returnable_quantity }}</dd>{% if show_cost %}<dt class="col-sm-2">原领用单位成本</dt><dd class="col-sm-4">{{ source_line.posted_unit_cost }}</dd>{% endif %}</dl></div></div>
+<div class="alert alert-info">退回物品和成本由原领用明细确定，不能替换；数量型耐用品归还将在后续 Sprint 开放。</div>
+<form method="post" class="card shadow-sm" novalidate><div class="card-body">
+  {% csrf_token %}{{ form.idempotency_key }}
+  {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+  {% for field in form.visible_fields %}<div class="mb-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %}<span class="required-mark">*</span>{% endif %}</label>{{ field }}{% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>{% endfor %}
+  <button class="btn btn-primary" type="submit">保存退回草稿</button>
+</div></form>
+{% endblock %}

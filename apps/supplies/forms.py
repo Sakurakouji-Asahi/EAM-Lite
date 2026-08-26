@@ -9,10 +9,12 @@ from django.forms import formset_factory
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.masterdata.models import Employee, Location
+from apps.masterdata.models import Department, Employee, Location
 from .domain import quantize_quantity, quantize_unit_cost, validate_zero_cost_reason
 from .models import (
     SupplyCategory,
+    SupplyDocumentLine,
+    SupplyDocumentStatus,
     SupplyDocumentType,
     SupplyItem,
     SupplyItemType,
@@ -24,6 +26,7 @@ from .permissions import (
     require_manage_supply_category,
     require_manage_supply_item,
     require_manage_supply_warehouse,
+    require_reverse_supply_document,
 )
 
 
@@ -203,11 +206,33 @@ class SupplyDeactivateForm(forms.Form):
 class SupplyDocumentForm(forms.Form):
     business_date = forms.DateField(
         label="业务日期",
-        widget=forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+        widget=forms.DateInput(
+            format="%Y-%m-%d",
+            attrs={"type": "date", "class": "form-control"},
+        ),
+    )
+    source_warehouse = forms.ModelChoiceField(
+        label="来源仓库",
+        queryset=SupplyWarehouse.objects.none(),
+        required=False,
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
     target_warehouse = forms.ModelChoiceField(
         label="目标仓库",
         queryset=SupplyWarehouse.objects.none(),
+        required=False,
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    department = forms.ModelChoiceField(
+        label="领用部门",
+        queryset=Department.objects.none(),
+        required=False,
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    employee = forms.ModelChoiceField(
+        label="领用员工",
+        queryset=Employee.objects.none(),
+        required=False,
         widget=forms.Select(attrs={"class": "form-select"}),
     )
     external_reference = forms.CharField(
@@ -244,8 +269,11 @@ class SupplyDocumentForm(forms.Form):
         if document_type not in {
             SupplyDocumentType.OPENING,
             SupplyDocumentType.RECEIPT,
+            SupplyDocumentType.ISSUE,
+            SupplyDocumentType.RETURN,
+            SupplyDocumentType.TRANSFER,
         }:
-            raise ValidationError("Sprint 14 只允许期初入库和日常入库表单。")
+            raise ValidationError("当前 Sprint 不允许该单据类型表单。")
         self.actor = actor
         self.company = company
         self.document_type = document_type
@@ -255,7 +283,10 @@ class SupplyDocumentForm(forms.Form):
             initial.update(
                 {
                     "business_date": instance.business_date,
+                    "source_warehouse": instance.source_warehouse_id,
                     "target_warehouse": instance.target_warehouse_id,
+                    "department": instance.department_id,
+                    "employee": instance.employee_id,
                     "external_reference": instance.external_reference,
                     "counterparty_name": instance.counterparty_name,
                     "remark": instance.remark,
@@ -267,21 +298,105 @@ class SupplyDocumentForm(forms.Form):
             initial.setdefault("idempotency_key", str(uuid.uuid4()))
         super().__init__(*args, initial=initial, **kwargs)
         warehouses = SupplyWarehouse.objects.filter(company=company, is_active=True)
-        if instance is not None and instance.target_warehouse_id:
+        if instance is not None and (
+            instance.target_warehouse_id or instance.source_warehouse_id
+        ):
             warehouses = SupplyWarehouse.objects.filter(company=company).filter(
-                Q(is_active=True) | Q(pk=instance.target_warehouse_id)
+                Q(is_active=True)
+                | Q(pk=instance.target_warehouse_id)
+                | Q(pk=instance.source_warehouse_id)
             )
+        self.fields["source_warehouse"].queryset = warehouses.order_by(
+            "normalized_code"
+        )
         self.fields["target_warehouse"].queryset = warehouses.order_by(
             "normalized_code"
         )
+        self.fields["department"].queryset = Department.objects.filter(
+            company=company, is_active=True
+        ).order_by("normalized_code")
+        self.fields["employee"].queryset = Employee.objects.filter(
+            company=company,
+            employment_status="active",
+            is_active=True,
+            department__is_active=True,
+        ).select_related("department").order_by("normalized_employee_no")
+
+        if document_type in {
+            SupplyDocumentType.OPENING,
+            SupplyDocumentType.RECEIPT,
+        }:
+            self.fields["target_warehouse"].required = True
+            for name in ("source_warehouse", "department", "employee"):
+                self.fields.pop(name)
+        elif document_type == SupplyDocumentType.ISSUE:
+            self.fields["source_warehouse"].required = True
+            self.fields["department"].required = True
+            for name in ("target_warehouse", "external_reference", "counterparty_name"):
+                self.fields.pop(name)
+        elif document_type == SupplyDocumentType.TRANSFER:
+            self.fields["source_warehouse"].required = True
+            self.fields["target_warehouse"].required = True
+            for name in ("department", "employee", "external_reference", "counterparty_name"):
+                self.fields.pop(name)
+        else:
+            self.fields["target_warehouse"].required = True
+            for name in ("source_warehouse", "external_reference", "counterparty_name"):
+                self.fields.pop(name)
+            self.fields["department"].disabled = True
+            self.fields["employee"].disabled = True
+
+    def _clean_warehouse(self, field_name):
+        warehouse = self.cleaned_data.get(field_name)
+        if warehouse is None:
+            return None
+        if warehouse.company_id != self.company.pk:
+            raise ValidationError("仓库不属于当前公司。")
+        if not warehouse.is_active:
+            raise ValidationError("仓库已停用；该草稿只能取消，不能继续编辑或过账。")
+        return warehouse
+
+    def clean_source_warehouse(self):
+        return self._clean_warehouse("source_warehouse")
 
     def clean_target_warehouse(self):
-        warehouse = self.cleaned_data["target_warehouse"]
-        if warehouse.company_id != self.company.pk:
-            raise ValidationError("目标仓库不属于当前公司。")
-        if not warehouse.is_active:
-            raise ValidationError("目标仓库已停用；该草稿只能取消，不能继续编辑或过账。")
-        return warehouse
+        return self._clean_warehouse("target_warehouse")
+
+    def clean_department(self):
+        department = self.cleaned_data.get("department")
+        if department is not None and (
+            department.company_id != self.company.pk or not department.is_active
+        ):
+            raise ValidationError("领用部门不属于当前公司或已经停用。")
+        return department
+
+    def clean_employee(self):
+        employee = self.cleaned_data.get("employee")
+        if employee is not None and (
+            employee.company_id != self.company.pk
+            or employee.employment_status != "active"
+            or not employee.is_active
+            or not employee.department.is_active
+        ):
+            raise ValidationError("领用员工必须是当前公司在职、启用员工。")
+        return employee
+
+    def clean(self):
+        cleaned = super().clean()
+        source = cleaned.get("source_warehouse")
+        target = cleaned.get("target_warehouse")
+        department = cleaned.get("department")
+        employee = cleaned.get("employee")
+        if self.document_type == SupplyDocumentType.ISSUE:
+            if employee is not None and (
+                department is None or employee.department_id != department.pk
+            ):
+                self.add_error("employee", "领用员工必须属于所选领用部门。")
+        if self.document_type == SupplyDocumentType.TRANSFER and (
+            source is not None and target is not None and source.pk == target.pk
+        ):
+            self.add_error("target_warehouse", "来源仓库和目标仓库不能相同。")
+        return cleaned
 
     def clean_idempotency_key(self):
         value = str(self.cleaned_data.get("idempotency_key") or "").strip()
@@ -310,6 +425,7 @@ class SupplyDocumentLineEntryForm(forms.Form):
         max_digits=18,
         decimal_places=6,
         min_value=Decimal("0"),
+        required=False,
         widget=forms.NumberInput(
             attrs={"step": "0.000001", "min": "0", "class": "form-control"}
         ),
@@ -320,15 +436,25 @@ class SupplyDocumentLineEntryForm(forms.Form):
         widget=forms.TextInput(attrs={"class": "form-control"}),
     )
 
-    def __init__(self, *args, actor=None, company=None, **kwargs):
+    def __init__(
+        self, *args, actor=None, company=None, document_type=None, **kwargs
+    ):
         if actor is None or company is None:
             raise PermissionDenied("库存单据明细表单必须绑定当前用户和公司。")
         require_create_supply_document(actor)
         self.company = company
+        self.document_type = document_type
         super().__init__(*args, **kwargs)
         self.fields["item"].queryset = SupplyItem.objects.filter(
             company=company, is_active=True
         ).select_related("category").order_by("normalized_item_code")
+        if document_type in {
+            SupplyDocumentType.OPENING,
+            SupplyDocumentType.RECEIPT,
+        }:
+            self.fields["entered_unit_cost"].required = True
+        else:
+            self.fields.pop("entered_unit_cost")
 
     def clean(self):
         cleaned = super().clean()
@@ -341,7 +467,7 @@ class SupplyDocumentLineEntryForm(forms.Form):
         if quantity is not None:
             cleaned["quantity"] = quantize_quantity(quantity)
         unit_cost = cleaned.get("entered_unit_cost")
-        if unit_cost is not None:
+        if "entered_unit_cost" in self.fields and unit_cost is not None:
             cleaned["entered_unit_cost"] = quantize_unit_cost(unit_cost)
             try:
                 cleaned["line_remark"] = validate_zero_cost_reason(
@@ -361,6 +487,108 @@ SupplyDocumentLineFormSet = formset_factory(
 )
 
 
+class SupplyConsumableReturnForm(forms.Form):
+    target_warehouse = forms.ModelChoiceField(
+        label="退回仓库",
+        queryset=SupplyWarehouse.objects.none(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    quantity = forms.DecimalField(
+        label="退回数量",
+        max_digits=18,
+        decimal_places=4,
+        min_value=Decimal("0.0001"),
+        widget=forms.NumberInput(
+            attrs={"step": "0.0001", "min": "0.0001", "class": "form-control"}
+        ),
+    )
+    reason = forms.CharField(
+        label="退回原因",
+        max_length=500,
+        widget=forms.Textarea(attrs={"rows": 3, "class": "form-control"}),
+    )
+    business_date = forms.DateField(
+        label="业务日期",
+        widget=forms.DateInput(
+            format="%Y-%m-%d",
+            attrs={"type": "date", "class": "form-control"},
+        ),
+    )
+    idempotency_key = forms.CharField(widget=forms.HiddenInput())
+
+    def __init__(
+        self,
+        *args,
+        actor=None,
+        company=None,
+        source_issue_line=None,
+        **kwargs,
+    ):
+        if actor is None or company is None or source_issue_line is None:
+            raise PermissionDenied("退回表单必须绑定当前用户、公司和原领用明细。")
+        require_create_supply_document(actor)
+        self.company = company
+        self.source_issue_line = source_issue_line
+        initial = dict(kwargs.pop("initial", {}) or {})
+        initial.setdefault("business_date", timezone.localdate())
+        initial.setdefault("idempotency_key", str(uuid.uuid4()))
+        super().__init__(*args, initial=initial, **kwargs)
+        self.fields["target_warehouse"].queryset = SupplyWarehouse.objects.filter(
+            company=company, is_active=True
+        ).order_by("normalized_code")
+
+    def clean_target_warehouse(self):
+        warehouse = self.cleaned_data["target_warehouse"]
+        if warehouse.company_id != self.company.pk or not warehouse.is_active:
+            raise ValidationError("退回仓库不属于当前公司或已经停用。")
+        return warehouse
+
+    def clean_quantity(self):
+        return quantize_quantity(self.cleaned_data["quantity"])
+
+    def clean_idempotency_key(self):
+        value = str(self.cleaned_data.get("idempotency_key") or "").strip()
+        if not value:
+            raise ValidationError("创建幂等键无效，请刷新页面重试。")
+        return value
+
+    def clean(self):
+        cleaned = super().clean()
+        source = SupplyDocumentLine.objects.select_related("document", "item").filter(
+            pk=self.source_issue_line.pk,
+            company=self.company,
+            document__document_type=SupplyDocumentType.ISSUE,
+            document__status=SupplyDocumentStatus.POSTED,
+            item__item_type=SupplyItemType.CONSUMABLE,
+        ).first()
+        if source is None:
+            raise ValidationError("原领用明细已失效，或不是可退回的低值易耗品。")
+        return cleaned
+
+
+class SupplyDocumentReverseForm(forms.Form):
+    reason = forms.CharField(
+        label="冲销原因",
+        max_length=500,
+        widget=forms.Textarea(attrs={"rows": 3, "class": "form-control"}),
+    )
+    idempotency_key = forms.CharField(widget=forms.HiddenInput())
+
+    def __init__(self, *args, actor=None, **kwargs):
+        if actor is None:
+            raise PermissionDenied("冲销表单必须绑定当前用户。")
+        require_reverse_supply_document(actor)
+        initial = dict(kwargs.pop("initial", {}) or {})
+        initial.setdefault("idempotency_key", str(uuid.uuid4()))
+        super().__init__(*args, initial=initial, **kwargs)
+
+    def clean_idempotency_key(self):
+        value = str(self.cleaned_data.get("idempotency_key") or "").strip()
+        if not value:
+            raise ValidationError("冲销幂等键无效，请刷新页面重试。")
+        return value
+
+
 class SupplyDocumentCancelForm(forms.Form):
     reason = forms.CharField(
         label="取消原因",
@@ -371,7 +599,7 @@ class SupplyDocumentCancelForm(forms.Form):
 
 class SupplyDocumentPostForm(forms.Form):
     confirm = forms.BooleanField(
-        label="我已核对仓库、物品、数量和成本；确认立即过账且历史不可编辑。",
+        label="我已核对仓库、物品和数量；确认立即过账且历史不可编辑。",
         widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
     )
     idempotency_key = forms.CharField(widget=forms.HiddenInput())

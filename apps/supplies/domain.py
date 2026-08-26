@@ -75,6 +75,16 @@ class ReceiptCalculation:
     average_unit_cost_after: Decimal
 
 
+@dataclass(frozen=True)
+class IssueCalculation:
+    issue_quantity: Decimal
+    issue_unit_cost: Decimal
+    issue_amount: Decimal
+    quantity_after: Decimal
+    amount_after: Decimal
+    average_unit_cost_after: Decimal
+
+
 def calculate_receipt(
     balance_quantity,
     balance_amount,
@@ -98,6 +108,92 @@ def calculate_receipt(
         receipt_quantity=in_quantity,
         receipt_unit_cost=in_unit_cost,
         receipt_amount=in_amount,
+        quantity_after=quantity_after,
+        amount_after=amount_after,
+        average_unit_cost_after=average_after,
+    )
+
+
+def calculate_receipt_from_amount(
+    balance_quantity,
+    balance_amount,
+    receipt_quantity,
+    receipt_amount,
+) -> ReceiptCalculation:
+    """Add stock using an already quantified, authoritative amount.
+
+    Returns and transfers must carry the exact amount from their source.  They
+    must not multiply a six-decimal unit-cost snapshot a second time because
+    that can create an otherwise unexplained one-cent difference.
+    """
+
+    quantity_before = quantize_quantity(balance_quantity)
+    amount_before = quantize_money(balance_amount)
+    if quantity_before < ZERO_QTY or amount_before < ZERO_MONEY:
+        raise ValidationError("过账前库存数量和金额不得小于 0。")
+    if quantity_before == ZERO_QTY and amount_before != ZERO_MONEY:
+        raise ValidationError("过账前库存数量为 0 时库存金额必须为 0。")
+
+    in_quantity = quantize_quantity(receipt_quantity)
+    in_amount = quantize_money(receipt_amount)
+    if in_quantity <= ZERO_QTY:
+        raise ValidationError("入库数量必须大于 0。")
+    if in_amount < ZERO_MONEY:
+        raise ValidationError("入库金额不得小于 0。")
+    in_unit_cost = quantize_unit_cost(in_amount / in_quantity)
+    quantity_after = quantize_quantity(quantity_before + in_quantity)
+    amount_after = quantize_money(amount_before + in_amount)
+    average_after = calculate_average_unit_cost(quantity_after, amount_after)
+    return ReceiptCalculation(
+        receipt_quantity=in_quantity,
+        receipt_unit_cost=in_unit_cost,
+        receipt_amount=in_amount,
+        quantity_after=quantity_after,
+        amount_after=amount_after,
+        average_unit_cost_after=average_after,
+    )
+
+
+def calculate_issue(
+    balance_quantity,
+    balance_amount,
+    issue_quantity,
+) -> IssueCalculation:
+    """Remove stock at the current moving average without leaving a tail."""
+
+    quantity_before = quantize_quantity(balance_quantity)
+    amount_before = quantize_money(balance_amount)
+    out_quantity = quantize_quantity(issue_quantity)
+    if quantity_before < ZERO_QTY or amount_before < ZERO_MONEY:
+        raise ValidationError("过账前库存数量和金额不得小于 0。")
+    if quantity_before == ZERO_QTY and amount_before != ZERO_MONEY:
+        raise ValidationError("过账前库存数量为 0 时库存金额必须为 0。")
+    if out_quantity <= ZERO_QTY:
+        raise ValidationError("出库数量必须大于 0。")
+    if out_quantity > quantity_before:
+        raise ValidationError("库存不足。")
+
+    issue_unit_cost = calculate_average_unit_cost(
+        quantity_before, amount_before
+    )
+    if out_quantity == quantity_before:
+        issue_amount = amount_before
+        quantity_after = ZERO_QTY
+        amount_after = ZERO_MONEY
+        average_after = ZERO_COST
+    else:
+        issue_amount = quantize_money(out_quantity * issue_unit_cost)
+        quantity_after = quantize_quantity(quantity_before - out_quantity)
+        amount_after = quantize_money(amount_before - issue_amount)
+        if amount_after < ZERO_MONEY:
+            raise ValidationError("出库金额超过当前库存金额。")
+        average_after = calculate_average_unit_cost(
+            quantity_after, amount_after
+        )
+    return IssueCalculation(
+        issue_quantity=out_quantity,
+        issue_unit_cost=issue_unit_cost,
+        issue_amount=issue_amount,
         quantity_after=quantity_after,
         amount_after=amount_after,
         average_unit_cost_after=average_after,

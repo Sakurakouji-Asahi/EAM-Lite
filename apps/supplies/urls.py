@@ -50,8 +50,20 @@ urlpatterns = [
     path(
         "documents/<uuid:pk>/post/", views.document_post, name="document-post"
     ),
+    path(
+        "documents/<uuid:pk>/reverse/",
+        views.document_reverse,
+        name="document-reverse",
+    ),
+    path(
+        "documents/returns/from/<uuid:line_pk>/",
+        views.consumable_return_create,
+        name="consumable-return-create",
+    ),
     path("stock/", views.stock_balance_list, name="stock-balance-list"),
     path("stock/ledger/", views.stock_ledger_list, name="stock-ledger-list"),
+    path("custodies/", views.custody_list, name="custody-list"),
+    path("custodies/<uuid:pk>/", views.custody_detail, name="custody-detail"),
     path(
         "imports/opening-stock/",
         views.opening_stock_import,
