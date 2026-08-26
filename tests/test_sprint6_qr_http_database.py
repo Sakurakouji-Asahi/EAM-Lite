@@ -385,6 +385,43 @@ def test_edge_opaque_origin_scan_confirmation_keeps_standard_csrf_checks():
     QR_BASE_URL="http://testserver",
     ALLOWED_HOSTS=["testserver", "alternate.test"],
 )
+def test_web_opaque_origin_confirmation_keeps_standard_csrf_checks():
+    context, asset, qr_identity = formal_asset_context("S6WEBOPAQUE")
+    _print(context, asset, "S6WEBOPAQUE-print")
+    qr_identity.refresh_from_db()
+    csrf_client = Client(enforce_csrf_checks=True)
+    csrf_client.force_login(context["finance"])
+    web_url = reverse("assets:qr-web-attach", args=[asset.pk])
+    assert csrf_client.get(web_url).status_code == 200
+    csrf_token = csrf_client.cookies["csrftoken"].value
+
+    response = csrf_client.post(
+        web_url,
+        {
+            "csrfmiddlewaretoken": csrf_token,
+            "qr_identity_id": str(qr_identity.pk),
+            "label_attached": "on",
+            "responsibility_confirmed": "on",
+            "target_status": "in_use",
+            "idempotency_key": "S6WEBOPAQUE-attach",
+        },
+        HTTP_ORIGIN="null",
+    )
+
+    assert response.status_code == 302
+    assert response.url == reverse("assets:asset-detail", args=[asset.pk])
+    asset.refresh_from_db()
+    qr_identity.refresh_from_db()
+    audit = AuditLog.objects.get(action="asset_label.attached", object_id=str(asset.pk))
+    assert asset.asset_status == "in_use"
+    assert qr_identity.label_status == "attached"
+    assert audit.new_data_json["confirmation_method"] == "web_opaque_origin"
+
+
+@override_settings(
+    QR_BASE_URL="http://testserver",
+    ALLOWED_HOSTS=["testserver", "alternate.test"],
+)
 def test_edge_opaque_origin_compatibility_is_limited_to_valid_qr_form():
     context, asset, qr_identity = formal_asset_context("S6EDGEBORDER")
     _print(context, asset, "S6EDGEBORDER-print")
@@ -431,6 +468,19 @@ def test_edge_opaque_origin_compatibility_is_limited_to_valid_qr_form():
     assert csrf_client.post(
         reverse("logout"),
         {"csrfmiddlewaretoken": csrf_token},
+        HTTP_ORIGIN="null",
+    ).status_code == 403
+    web_url = reverse("assets:qr-web-attach", args=[asset.pk])
+    web_without_token = {
+        "qr_identity_id": str(qr_identity.pk),
+        "label_attached": "on",
+        "responsibility_confirmed": "on",
+        "target_status": "in_use",
+        "idempotency_key": "S6EDGEBORDER-web-attach",
+    }
+    assert csrf_client.post(
+        web_url,
+        web_without_token,
         HTTP_ORIGIN="null",
     ).status_code == 403
 

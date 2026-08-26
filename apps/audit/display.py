@@ -315,6 +315,7 @@ VALUE_LABELS = {
     "scan": "扫码确认",
     "scan_opaque_origin": "Edge 扫码兼容确认",
     "web": "Web 确认",
+    "web_opaque_origin": "Web 不透明来源兼容确认",
     "completed": "已完成",
     "failed": "失败",
     "expired": "已过期",

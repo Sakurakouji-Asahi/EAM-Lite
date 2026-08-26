@@ -38,3 +38,6 @@ def test_audit_payload_localizes_qr_confirmation_method():
     assert localize_audit_payload(
         {"confirmation_method": "scan_opaque_origin"}
     ) == {"确认方式": "Edge 扫码兼容确认"}
+    assert localize_audit_payload(
+        {"confirmation_method": "web_opaque_origin"}
+    ) == {"确认方式": "Web 不透明来源兼容确认"}

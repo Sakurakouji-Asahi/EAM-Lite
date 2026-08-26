@@ -386,7 +386,12 @@ def confirm_label_attachment(
     if not key:
         raise ValidationError({"idempotency_key": "确认贴标必须提供幂等键。"})
     method = str(confirmation_method or "").strip().casefold()
-    if method not in {"scan", "scan_opaque_origin", "web"}:
+    if method not in {
+        "scan",
+        "scan_opaque_origin",
+        "web",
+        "web_opaque_origin",
+    }:
         raise ValidationError({"confirmation_method": "贴标确认方式无效。"})
     asset = Asset.objects.select_for_update(of=("self",)).select_related(
         "department", "responsible_employee", "location"
@@ -530,7 +535,7 @@ def confirm_label_attachment(
             raise ValidationError({"target_status": "首次贴标只能选择在用或闲置。"})
         confirmation_reason = (
             "Web 端逐项确认首次贴标"
-            if method == "web"
+            if method in {"web", "web_opaque_origin"}
             else "现场扫码确认首次贴标"
         )
         movement = AssetMovement(

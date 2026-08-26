@@ -771,7 +771,15 @@ def qr_web_attach(request, pk):
                     scanned_token=qr_identity.public_token,
                     target_status=form.cleaned_data.get("target_status") or None,
                     idempotency_key=form.cleaned_data["idempotency_key"],
-                    confirmation_method="web",
+                    confirmation_method=(
+                        "web_opaque_origin"
+                        if getattr(
+                            request,
+                            "qr_opaque_origin_csrf_compatibility",
+                            False,
+                        )
+                        else "web"
+                    ),
                     request=request,
                 )
             except (PermissionDenied, ValidationError) as exc:
