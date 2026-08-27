@@ -16,6 +16,7 @@
   {% if asset_nav.can_view %}<a href="{% url 'assets:asset-list' %}"><strong>资产总账</strong><span>查询资产和当前状态</span></a>{% endif %}
   {% if asset_nav.can_create %}<a href="{% url 'assets:asset-create' %}"><strong>新增资产</strong><span>建立一条资产草稿</span></a>{% endif %}
   {% if asset_nav.can_manage_labels %}<a href="{% url 'assets:label-queue' %}"><strong>标签与贴标</strong><span>打印和确认二维码</span></a>{% endif %}
+  {% if supplies_nav.can_view %}<a href="{% url 'supplies:dashboard' %}"><strong>低值物品</strong><span>库存、保管、盘点和正式报表</span></a>{% endif %}
   {% if inventory_nav.can_view %}<a href="{% url 'inventory:task-list' %}"><strong>盘点任务</strong><span>查看执行进度和差异</span></a>{% endif %}
   {% if maintenance_nav.can_view %}<a href="{% url 'maintenance:due-list' %}"><strong>待保养</strong><span>处理到期保养事项</span></a>{% endif %}
   {% if reports_nav.can_view %}<a href="{% url 'reports:report-center' %}"><strong>报表中心</strong><span>筛选、预览和导出</span></a>{% endif %}

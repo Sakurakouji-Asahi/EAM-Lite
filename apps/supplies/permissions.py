@@ -13,12 +13,14 @@ from .models import (
     SupplyCountLine,
     SupplyCountTask,
     SupplyCustody,
+    SupplyCustodyMovement,
     SupplyDocument,
     SupplyItem,
     SupplyItemType,
     SupplyStockBalance,
     SupplyStockLedger,
     SupplyWarehouse,
+    EmployeeSupplyClearanceItem,
 )
 
 
@@ -455,4 +457,65 @@ def scoped_supply_custodies(user, company, queryset=None):
         filters |= Q(department_id__in=resolve_department_ids(user, company))
     if "employee" in roles:
         filters |= Q(employee__user=user)
+    return queryset.filter(filters).distinct()
+
+
+def scoped_supply_custody_movements(user, company, queryset=None):
+    queryset = (
+        queryset
+        if queryset is not None
+        else SupplyCustodyMovement.objects.all()
+    )
+    queryset = queryset.filter(company=company)
+    roles = role_names_for(user)
+    if roles.intersection(SUPPLY_VIEW_ROLES):
+        return queryset
+    filters = Q(pk__in=[])
+    if "department_manager" in roles:
+        department_ids = resolve_department_ids(user, company)
+        filters |= Q(from_custody__department_id__in=department_ids)
+        filters |= Q(to_custody__department_id__in=department_ids)
+    if "employee" in roles:
+        filters |= Q(from_custody__employee__user=user)
+        filters |= Q(to_custody__employee__user=user)
+    return queryset.filter(filters).distinct()
+
+
+def scoped_supply_count_lines(user, company, queryset=None):
+    queryset = queryset if queryset is not None else SupplyCountLine.objects.all()
+    queryset = queryset.filter(company=company)
+    roles = role_names_for(user)
+    if roles.intersection(SUPPLY_VIEW_ROLES):
+        return queryset
+    filters = Q(pk__in=[])
+    if "department_manager" in roles:
+        filters |= Q(
+            count_task__count_domain=SupplyCountDomain.CUSTODY,
+            count_task__department_id__in=resolve_department_ids(user, company),
+        )
+    if "employee" in roles:
+        filters |= Q(
+            count_task__count_domain=SupplyCountDomain.CUSTODY,
+            custody__employee__user=user,
+        )
+    return queryset.filter(filters).distinct()
+
+
+def scoped_employee_supply_clearance_items(user, company, queryset=None):
+    queryset = (
+        queryset
+        if queryset is not None
+        else EmployeeSupplyClearanceItem.objects.all()
+    )
+    queryset = queryset.filter(company=company)
+    roles = role_names_for(user)
+    if roles.intersection(SUPPLY_VIEW_ROLES):
+        return queryset
+    filters = Q(pk__in=[])
+    if "department_manager" in roles:
+        filters |= Q(
+            custody__department_id__in=resolve_department_ids(user, company)
+        )
+    if "employee" in roles:
+        filters |= Q(custody__employee__user=user)
     return queryset.filter(filters).distinct()

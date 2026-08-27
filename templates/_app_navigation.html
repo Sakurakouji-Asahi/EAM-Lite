@@ -21,6 +21,8 @@
       <summary>低值物品</summary>
       <div class="app-nav-items">
         <a class="app-nav-link{% if current_view == 'supplies:dashboard' %} active{% endif %}" href="{% url 'supplies:dashboard' %}"{% if current_view == 'supplies:dashboard' %} aria-current="page"{% endif %}>模块首页</a>
+        <a class="app-nav-link{% if current_view == 'reports:supply-report-index' or current_view == 'reports:supply-report-detail' %} active{% endif %}" href="{% url 'reports:supply-report-index' %}">正式报表</a>
+        <a class="app-nav-link{% if current_view == 'supplies:reconciliation-help' %} active{% endif %}" href="{% url 'supplies:reconciliation-help' %}">余额核对说明</a>
         {% if supplies_nav.can_view_documents %}<a class="app-nav-link{% if current_view == 'supplies:document-list' or current_view == 'supplies:document-detail' %} active{% endif %}" href="{% url 'supplies:document-list' %}">库存单据</a>{% endif %}
         {% if supplies_nav.can_view_stock %}<a class="app-nav-link{% if current_view == 'supplies:stock-balance-list' %} active{% endif %}" href="{% url 'supplies:stock-balance-list' %}">当前库存余额</a>
         <a class="app-nav-link{% if current_view == 'supplies:stock-ledger-list' %} active{% endif %}" href="{% url 'supplies:stock-ledger-list' %}">库存流水</a>{% endif %}

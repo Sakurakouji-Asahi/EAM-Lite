@@ -1425,6 +1425,10 @@ class SupplyStockLedger(models.Model):
             models.Index(
                 fields=("company", "document"), name="supply_ledger_document_idx"
             ),
+            models.Index(
+                fields=("company", "-occurred_at", "-id"),
+                name="supply_ledger_company_time_idx",
+            ),
         ]
 
     def clean(self):

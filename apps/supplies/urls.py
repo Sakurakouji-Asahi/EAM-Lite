@@ -7,6 +7,11 @@ app_name = "supplies"
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
+    path(
+        "reconciliation/",
+        views.reconciliation_help,
+        name="reconciliation-help",
+    ),
     path("categories/", views.category_list, name="category-list"),
     path("categories/new/", views.category_create, name="category-create"),
     path("categories/<uuid:pk>/edit/", views.category_edit, name="category-edit"),

@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}低值物品报表 | EAM-Lite{% endblock %}
+{% block content %}
+<header class="app-page-header">
+  <div><h1 class="h3 mb-1">低值物品正式报表</h1><p class="text-secondary mb-0">页面、Dashboard 钻取与 Excel 使用相同的公司、角色、日期和成本口径。</p></div>
+  <a class="btn btn-outline-secondary" href="{% url 'supplies:dashboard' %}">返回低值物品 Dashboard</a>
+</header>
+<div class="row g-3">
+  {% for definition in definitions %}
+  <div class="col-12 col-md-6 col-xl-4">
+    <a class="card shadow-sm h-100 text-decoration-none text-body" href="{% url 'reports:supply-report-detail' definition.key %}">
+      <div class="card-body"><h2 class="h5">{{ definition.title }}</h2><p class="text-secondary mb-0">筛选、分页查看并按当前权限生成 XLSX。</p></div>
+    </a>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

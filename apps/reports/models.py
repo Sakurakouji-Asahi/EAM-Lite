@@ -63,6 +63,21 @@ class ExportLog(models.Model):
         MAINTENANCE_RECORDS = "maintenance_records", "保养记录"
         OFFBOARDING_UNRESOLVED = "offboarding_unresolved", "离职资产未清"
         DISPOSAL_LIST = "disposal_list", "处置清单"
+        SUPPLY_STOCK_BALANCE = "supply_stock_balance", "当前库存余额表"
+        SUPPLY_LOW_STOCK = "supply_low_stock", "低库存预警表"
+        SUPPLY_STOCK_MOVEMENT = "supply_stock_movement", "库存收发存表"
+        SUPPLY_STOCK_LEDGER = "supply_stock_ledger", "库存流水明细表"
+        SUPPLY_ISSUE_DETAIL = "supply_issue_detail", "领用明细表"
+        SUPPLY_DEPARTMENT_ISSUE = "supply_department_issue", "部门领用汇总表"
+        SUPPLY_EMPLOYEE_ISSUE = "supply_employee_issue", "员工领用汇总表"
+        SUPPLY_CUSTODY_BALANCE = "supply_custody_balance", "耐用品保管余额表"
+        SUPPLY_CUSTODY_MOVEMENT = "supply_custody_movement", "保管动作明细表"
+        SUPPLY_COUNT_DIFFERENCE = "supply_count_difference", "盘点差异处理表"
+        CONTROLLED_NON_FIXED_ASSETS = (
+            "controlled_non_fixed_assets",
+            "逐件受控非固定资产清单",
+        )
+        SUPPLY_MANAGEMENT_AMOUNT = "supply_management_amount", "综合管理金额表"
         TPLUS_RECONCILIATION = "tplus_reconciliation", "T+ 人工对账"
 
     class Status(models.TextChoices):

@@ -599,6 +599,15 @@ def _disposal_rows(*, actor, company, filters):
 def build_report_dataset(*, actor, company, report_key, filters=None):
     require_view_report(actor, report_key)
     definition = get_report_definition(report_key)
+    if definition.supply:
+        from apps.reports.supply_queries import build_supply_report_dataset
+
+        return build_supply_report_dataset(
+            actor=actor,
+            company=company,
+            report_key=report_key,
+            filters=filters,
+        )
     if definition.tplus:
         raise ReportValidationError(("请使用 T+ 专用查询接口。",))
     with transaction.atomic():

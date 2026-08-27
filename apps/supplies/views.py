@@ -22,6 +22,7 @@ from apps.masterdata.permissions import (
     scoped_departments,
     scoped_employees,
 )
+from apps.reports.supply_queries import build_supply_dashboard
 
 from .forms import (
     SupplyCategoryForm,
@@ -247,9 +248,7 @@ def _cleaned_line_rows(formset):
 def dashboard(request):
     company = _company_or_404()
     require_view_supply_module(request.user)
-    categories = scoped_supply_categories(request.user, company)
-    warehouses = scoped_supply_warehouses(request.user, company)
-    items = scoped_supply_items(request.user, company)
+    dashboard_data = build_supply_dashboard(actor=request.user, company=company)
     individual_asset_initialized = InitializationSetting.objects.filter(
         company=company, initialization_completed=True
     ).exists()
@@ -258,21 +257,7 @@ def dashboard(request):
         "supplies/dashboard.html",
         {
             "company": company,
-            "category_count": categories.filter(is_active=True).count(),
-            "warehouse_count": warehouses.filter(is_active=True).count(),
-            "item_count": items.filter(is_active=True).count(),
-            "consumable_count": items.filter(
-                is_active=True, item_type=SupplyItemType.CONSUMABLE
-            ).count(),
-            "durable_count": items.filter(
-                is_active=True, item_type=SupplyItemType.DURABLE_QUANTITY
-            ).count(),
-            "document_count": scoped_supply_documents(
-                request.user, company
-            ).count(),
-            "custody_count": scoped_supply_custodies(
-                request.user, company
-            ).filter(status="open").count(),
+            "dashboard": dashboard_data,
             "can_view_master_data": can_view_supply_master_data(request.user),
             "can_view_custodies": can_view_supply_custodies(request.user),
             "can_manage_categories": can_manage_supply_category(request.user),
@@ -286,6 +271,17 @@ def dashboard(request):
             and individual_asset_initialized,
             "individual_asset_initialized": individual_asset_initialized,
         },
+    )
+
+
+@login_required
+def reconciliation_help(request):
+    company = _company_or_404()
+    require_view_supply_module(request.user)
+    return render(
+        request,
+        "supplies/reconciliation_help.html",
+        {"company": company},
     )
 
 
@@ -1746,7 +1742,11 @@ def count_task_list(request):
         queryset = queryset.filter(count_domain=domain)
     else:
         domain = ""
-    if status in SupplyCountStatus.values:
+    if status == "open":
+        queryset = queryset.exclude(
+            status__in=(SupplyCountStatus.CLOSED, SupplyCountStatus.CANCELLED)
+        )
+    elif status in SupplyCountStatus.values:
         queryset = queryset.filter(status=status)
     else:
         status = ""
@@ -1780,7 +1780,7 @@ def count_task_list(request):
             "date_from": date_from_value,
             "date_to": date_to_value,
             "domains": SupplyCountDomain.choices,
-            "statuses": SupplyCountStatus.choices,
+            "statuses": (("open", "未关闭"), *SupplyCountStatus.choices),
             "warehouses": SupplyWarehouse.objects.filter(company=company).order_by("normalized_code"),
             "departments": scoped_departments(request.user, company).order_by("normalized_code"),
             "employees": scoped_employees(request.user, company).order_by("normalized_employee_no"),

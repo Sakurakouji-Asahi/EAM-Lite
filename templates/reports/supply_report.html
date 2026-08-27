@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}{{ definition.title }} | EAM-Lite{% endblock %}
+{% block content %}
+<header class="app-page-header">
+  <div><h1 class="h3 mb-1">{{ definition.title }}</h1><p class="text-secondary mb-0">业务日期起止均包含；敏感列按当前账号权限从查询、页面和导出中裁剪。</p></div>
+  <a class="btn btn-outline-secondary" href="{% url 'reports:supply-report-index' %}">全部低值物品报表</a>
+</header>
+<section class="card shadow-sm mb-3 app-filter-card"><div class="card-body">
+  <form method="get" class="row g-3" novalidate>
+    {% if form.non_field_errors %}<div class="col-12"><div class="alert alert-danger mb-0">{{ form.non_field_errors }}</div></div>{% endif %}
+    {% for field in form %}
+      {% if field.field.widget.input_type == 'checkbox' %}
+      <div class="col-12 col-md-4 align-self-end"><div class="form-check">{{ field }}<label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label></div>{% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</div>
+      {% else %}
+      <div class="col-12 col-md-6 col-xl-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% for error in field.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}</div>
+      {% endif %}
+    {% endfor %}
+    <div class="col-12 d-flex gap-2"><button class="btn btn-primary" type="submit">查询</button><a class="btn btn-outline-secondary" href="{% url 'reports:supply-report-detail' definition.key %}">重置</a></div>
+  </form>
+</div></section>
+{% if dataset %}
+<section class="card shadow-sm">
+  <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <div><strong>{{ dataset.definition.title }}</strong><div class="report-meta"><span>数据截止 {{ dataset.data_snapshot_at|date:'Y-m-d H:i:s' }}</span><span>共 {{ dataset.row_count }} 行</span></div></div>
+    {% if can_export %}<form method="post" action="{% url 'reports:supply-report-export' definition.key %}" class="m-0">{% csrf_token %}{% for field in form %}{{ field.as_hidden }}{% endfor %}<input type="hidden" name="idempotency_key" value="{{ export_idempotency_key }}"><button class="btn btn-success" type="submit">生成完整 Excel</button></form>{% endif %}
+  </div>
+  {% for warning in dataset.warnings %}<div class="alert alert-warning m-3 mb-0">{{ warning }}</div>{% endfor %}
+  <div class="table-responsive"><table class="table table-hover align-middle mb-0"><thead><tr>{% for column in columns %}<th class="text-nowrap">{{ column.label }}</th>{% endfor %}</tr></thead><tbody>
+    {% for row in table_rows %}<tr>{% for column, value in row %}<td class="{% if column.kind == 'money' or column.kind == 'decimal' or column.kind == 'quantity' or column.kind == 'unit_cost' or column.kind == 'integer' or column.kind == 'rate' %}text-end{% endif %}">{% if value is None or value == '' %}<span class="text-secondary">—</span>{% elif column.kind == 'money' %}{{ value|floatformat:2 }}{% elif column.kind == 'quantity' %}{{ value|floatformat:4 }}{% elif column.kind == 'unit_cost' %}{{ value|floatformat:6 }}{% elif column.kind == 'date' %}{{ value|date:'Y-m-d' }}{% elif column.kind == 'datetime' %}{{ value|date:'Y-m-d H:i:s' }}{% elif column.kind == 'boolean' %}{% if value %}是{% else %}否{% endif %}{% else %}{{ value }}{% endif %}</td>{% endfor %}</tr>
+    {% empty %}<tr><td colspan="{{ columns|length }}" class="text-center text-secondary py-4">当前条件下没有数据。</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% if page_obj.paginator.num_pages > 1 %}<div class="card-footer d-flex justify-content-between align-items-center"><span>第 {{ page_obj.number }} / {{ page_obj.paginator.num_pages }} 页</span><div class="btn-group">{% if page_obj.has_previous %}<a class="btn btn-outline-secondary" href="?{% if pagination_query %}{{ pagination_query }}&amp;{% endif %}page={{ page_obj.previous_page_number }}">上一页</a>{% endif %}{% if page_obj.has_next %}<a class="btn btn-outline-secondary" href="?{% if pagination_query %}{{ pagination_query }}&amp;{% endif %}page={{ page_obj.next_page_number }}">下一页</a>{% endif %}</div></div>{% endif %}
+</section>
+{% elif definition.key == 'supply_stock_movement' %}<div class="alert alert-info">库存收发存必须先选择开始日期和结束日期。</div>{% endif %}
+{% endblock %}
