@@ -57,6 +57,7 @@ from apps.finance.services import (
     create_value_adjustment,
     deactivate_fixed_asset_category,
     generate_depreciation_batch,
+    ensure_asset_is_depreciable,
     preview_asset_depreciation,
     record_work_usage,
     review_profile_actual_continuation_date,
@@ -81,6 +82,13 @@ def _company():
     if company is None:
         raise Http404("尚未配置启用公司。")
     return company
+
+
+def _require_depreciable_asset(asset):
+    try:
+        return ensure_asset_is_depreciable(asset)
+    except ValidationError as exc:
+        raise PermissionDenied("; ".join(exc.messages)) from exc
 
 
 def _service_error(form, exc):
@@ -681,7 +689,10 @@ def batch_reverse(request, pk):
 
 
 def _profile_for_asset(company, pk):
-    asset = get_object_or_404(Asset, pk=pk, company=company)
+    asset = get_object_or_404(
+        Asset.objects.select_related("finance"), pk=pk, company=company
+    )
+    _require_depreciable_asset(asset)
     target_date = timezone.localdate()
     profiles = list(
         AssetDepreciationProfile.objects.filter(
@@ -707,11 +718,12 @@ def profile_continuation_review(request, profile_pk):
     require_manage_finance(request.user)
     company = _company()
     profile = get_object_or_404(
-        AssetDepreciationProfile.objects.select_related("asset"),
+        AssetDepreciationProfile.objects.select_related("asset", "asset__finance"),
         pk=profile_pk,
         company=company,
         asset__in=scoped_finance_assets(request.user, company),
     )
+    _require_depreciable_asset(profile.asset)
     if request.method not in {"GET", "POST"}:
         return HttpResponseNotAllowed(["GET", "POST"])
     form = ProfileContinuationReviewForm(request.POST or None, actor=request.user)
@@ -810,7 +822,10 @@ def profile_version(request, pk):
 @login_required
 def value_adjustment(request, pk):
     require_manage_finance(request.user)
-    asset = get_object_or_404(Asset, pk=pk, company=_company())
+    asset = get_object_or_404(
+        Asset.objects.select_related("finance"), pk=pk, company=_company()
+    )
+    _require_depreciable_asset(asset)
     form = ValueAdjustmentForm(request.POST or None, actor=request.user)
     if request.method == "POST" and form.is_valid():
         values = form.cleaned_data.copy()
@@ -852,7 +867,10 @@ def value_adjustment_reverse(request, pk, adjustment_pk):
 @login_required
 def theoretical_run(request, pk):
     require_manage_finance(request.user)
-    asset = get_object_or_404(Asset, pk=pk, company=_company())
+    asset = get_object_or_404(
+        Asset.objects.select_related("finance"), pk=pk, company=_company()
+    )
+    _require_depreciable_asset(asset)
     form = TheoreticalRunForm(request.POST or None, actor=request.user)
     if request.method == "POST" and form.is_valid():
         try:

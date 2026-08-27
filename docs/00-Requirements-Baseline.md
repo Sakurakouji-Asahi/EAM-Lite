@@ -62,3 +62,20 @@
 - No depreciation Sprint may be accepted without the calculation examples and rounding rules in `08-Depreciation-Calculation-Spec.md`.
 - No production deployment may be accepted without backup restoration verification and LAN security requirements in `09-Security-Backup-and-Deployment.md`.
 - Full V1 acceptance follows `12-UAT-Acceptance.md`.
+
+## V1.2 limited low-value-goods supplement
+
+V1.2 adds a bounded low-value-goods domain without changing the V1.1 asset
+ledger rules:
+
+- individually tracked low-value durables continue to use `Asset` plus
+  `controlled_non_fixed`;
+- quantity-managed consumables and quantity-managed low-value durables use the
+  independent `apps.supplies` domain;
+- `Asset.quantity=1`, fixed-asset accounting, depreciation and QR lifecycle
+  rules remain unchanged;
+- production materials, purchasing, accounting vouchers, T+ API posting and
+  general ERP inventory remain excluded.
+
+Detailed staged requirements are `docs/13` through `docs/16`; implementation
+is authorized one Sprint at a time.

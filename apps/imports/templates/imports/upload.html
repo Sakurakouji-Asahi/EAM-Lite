@@ -11,6 +11,18 @@
   资产照片或附件不能填写本机路径或 URL；草稿创建后再通过受保护的附件入口上传。
 </div>
 <p class="text-secondary">无财务权限时，原值、会计认定、期初累计折旧和折旧参数等财务列必须全部留空；系统不会静默忽略这些字段。</p>
+{% elif definition.import_type == "item_master" %}
+<div class="alert alert-warning">
+  <strong>物品档案规则：</strong>管理模式只能为 consumable 或 durable_quantity；最低库存最多 4 位小数且不得为负数。确认后不会建立任何库存。
+</div>
+{% elif definition.import_type == "opening_stock" %}
+<div class="alert alert-warning">
+  <strong>期初库存规则：</strong>公司、仓库、物品必须使用启用档案编码；数量大于 0 且最多 4 位小数，单位成本最多 6 位小数。0 成本必须填写原因。确认后仅生成草稿，不自动过账。
+</div>
+{% elif definition.import_type == "opening_custody" %}
+<div class="alert alert-warning">
+  <strong>期初保管规则：</strong>只允许数量型低值耐用品；员工可留空，填写时必须属于责任部门且在职、启用。确认后直接建立开放保管和不可变 opening 流水，不改变仓库库存，也不提供破坏性回滚。
+</div>
 {% endif %}
 <p><a href="{% url 'imports:template' definition.import_type %}">下载标准模板</a></p>
 <form method="post" enctype="multipart/form-data" novalidate>

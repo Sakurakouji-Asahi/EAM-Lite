@@ -140,6 +140,7 @@ def _object_queryset(user, company):
             "requested_coding_scheme",
             "created_by",
             "submitted_by",
+            "finance",
         ),
     )
 
@@ -323,6 +324,7 @@ def asset_list(request):
         "location": request.GET.get("location", ""),
         "asset_status": request.GET.get("asset_status", ""),
         "record_status": request.GET.get("record_status", ""),
+        "accounting_treatment": request.GET.get("accounting_treatment", ""),
     }
     queryset = _safe_filter(
         queryset,
@@ -359,6 +361,20 @@ def asset_list(request):
             if filters["asset_status"] in valid_statuses
             else queryset.none()
         )
+    treatment = filters["accounting_treatment"]
+    if treatment in {"fixed_asset", "controlled_non_fixed"}:
+        queryset = queryset.filter(
+            finance__accounting_treatment=treatment,
+            finance__finance_confirmed_at__isnull=False,
+        )
+    elif treatment == "unconfirmed":
+        queryset = queryset.filter(
+            Q(finance__isnull=True)
+            | Q(finance__finance_confirmed_at__isnull=True)
+            | Q(finance__accounting_treatment__isnull=True)
+        )
+    elif treatment:
+        queryset = queryset.none()
 
     can_create = bool(roles.intersection(ASSET_GLOBAL_WRITE_ROLES)) or bool(
         "department_manager" in roles
@@ -396,6 +412,8 @@ def asset_list(request):
             ),
             "list_has_p1": list_has_p1,
             "can_create": can_create,
+            "individual_durable_hint": request.GET.get("source")
+            == "individual_durable",
         },
     )
 
@@ -455,6 +473,8 @@ def _render_asset_form(request, *, company, asset=None):
             "form": form,
             "form_sections": _form_sections(form),
             "custom_value_forms": custom_forms,
+            "individual_durable_hint": request.GET.get("source")
+            == "individual_durable",
             "cancel_url": (
                 redirect("assets:asset-detail", pk=asset.pk).url
                 if asset is not None

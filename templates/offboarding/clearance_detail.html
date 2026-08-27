@@ -12,15 +12,15 @@
       <a class="btn btn-outline-secondary" href="{% url 'offboarding:clearance-list' %}">返回列表</a>
       {% if can_refresh %}<a class="btn btn-outline-primary" href="{% url 'offboarding:clearance-refresh' clearance.pk %}">刷新/重新核对</a>{% endif %}
       {% if can_upload_clearance %}<a class="btn btn-outline-primary" href="{% url 'offboarding:attachment-upload' clearance.pk 'clearance' clearance.pk %}">上传整单证据</a>{% endif %}
-      {% if can_complete and clearance.unresolved_assets == 0 %}<a class="btn btn-danger" href="{% url 'offboarding:clearance-complete' clearance.pk %}">完成清退</a>{% endif %}
+      {% if can_complete and clearance.unresolved_assets == 0 and clearance.unresolved_supply_custodies == 0 %}<a class="btn btn-danger" href="{% url 'offboarding:clearance-complete' clearance.pk %}">完成清退</a>{% endif %}
       {% if can_create_supplement and not active_for_employee %}<a class="btn btn-warning" href="{% url 'offboarding:clearance-supplement' clearance.pk %}">建立补充清退</a>{% endif %}
       {% if can_create_supplement and active_for_employee %}<a class="btn btn-warning" href="{% url 'offboarding:clearance-detail' active_for_employee.pk %}">打开活动补充单</a>{% endif %}
     </div>
   </header>
 
-  {% if clearance.unresolved_assets %}
+  {% if clearance.unresolved_assets or clearance.unresolved_supply_custodies %}
     <div class="alert alert-danger" role="alert">
-      <strong>清退被阻断：</strong>仍有 {{ clearance.unresolved_assets }} 项未解决资产。HR 无权强制清零，必须通过正式归还、转交或处置流程形成证据。
+      <strong>清退被阻断：</strong>逐件资产未解决 {{ clearance.unresolved_assets }} 项；数量型低值耐用品未解决 {{ clearance.unresolved_supply_custodies }} 项。HR 无权强制清零，必须通过正式业务动作形成证据。
     </div>
   {% elif can_complete %}
     <div class="alert alert-success" role="status">全部项目已形成解决证据。HR 仍需进入“完成清退”执行二次确认{% if not clearance.is_supplement %}并填写实际离职日期{% endif %}。</div>
@@ -32,6 +32,11 @@
     <div class="col-6 col-xl-3"><div class="card shadow-sm h-100"><div class="card-body"><div class="text-secondary small">已处理</div><div class="fs-3">{{ processed_assets }}</div></div></div></div>
     <div class="col-6 col-xl-3"><div class="card shadow-sm h-100"><div class="card-body"><div class="text-secondary small">未处理</div><div class="fs-3 text-{% if clearance.unresolved_assets %}danger{% else %}success{% endif %}">{{ clearance.unresolved_assets }}</div></div></div></div>
     <div class="col-6 col-xl-3"><div class="card shadow-sm h-100"><div class="card-body"><div class="text-secondary small">发起时间</div><div>{{ clearance.initiated_at|date:"Y-m-d H:i" }}</div></div></div></div>
+  </div>
+  <div class="row g-3 mb-3">
+    <div class="col-6 col-xl-3"><div class="card shadow-sm h-100"><div class="card-body"><div class="text-secondary small">耐用品保管总数</div><div class="fs-3">{{ clearance.total_supply_custodies_snapshot }}</div></div></div></div>
+    <div class="col-6 col-xl-3"><div class="card shadow-sm h-100"><div class="card-body"><div class="text-secondary small">耐用品已处理</div><div class="fs-3">{{ processed_supply_custodies }}</div></div></div></div>
+    <div class="col-6 col-xl-3"><div class="card shadow-sm h-100"><div class="card-body"><div class="text-secondary small">耐用品未处理</div><div class="fs-3 text-{% if clearance.unresolved_supply_custodies %}danger{% else %}success{% endif %}">{{ clearance.unresolved_supply_custodies }}</div></div></div></div>
   </div>
 
   <section class="card shadow-sm mb-3" aria-labelledby="clearance-summary-title">
@@ -115,4 +120,12 @@
   {% empty %}
     <div class="card card-body shadow-sm text-secondary">该清退单当前没有项目。</div>
   {% endfor %}
+
+  <h2 class="h4 mt-4 mb-3">数量型低值耐用品</h2>
+  {% for row in supply_item_rows %}{% with item=row.item %}
+    <article class="card shadow-sm mb-3">
+      <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2"><div><h3 class="h5 mb-1">{{ item.item_code_snapshot }} · {{ item.item_name_snapshot }}</h3><span class="badge text-bg-{% if item.resolution == 'pending' %}danger{% else %}success{% endif %}">{{ item.get_resolution_display }}</span></div><div class="d-flex flex-wrap gap-2">{% if row.can_return %}<a class="btn btn-sm btn-outline-success" href="{% url 'supplies:durable-return-create' item.custody_id %}">归还仓库</a>{% endif %}{% if row.can_transfer %}<a class="btn btn-sm btn-outline-primary" href="{% url 'supplies:custody-transfer' item.custody_id %}">转交</a>{% endif %}{% if row.can_write_off %}<a class="btn btn-sm btn-outline-danger" href="{% url 'supplies:custody-write-off' item.custody_id 'loss' %}">报损</a><a class="btn btn-sm btn-outline-danger" href="{% url 'supplies:custody-write-off' item.custody_id 'scrap' %}">报废</a>{% endif %}</div></div>
+      <div class="card-body"><div class="row g-3"><div class="col-12 col-lg-6"><h4 class="h6">发起时快照（不可变）</h4><dl class="row small mb-0"><dt class="col-4 text-secondary">部门/员工</dt><dd class="col-8">{{ item.department_snapshot }} / {{ item.employee_snapshot }}</dd><dt class="col-4 text-secondary">数量</dt><dd class="col-8">{{ item.quantity_snapshot }}</dd>{% if show_supply_cost %}<dt class="col-4 text-secondary">管理金额</dt><dd class="col-8">¥{{ item.amount_snapshot }}</dd>{% endif %}</dl></div><div class="col-12 col-lg-6"><h4 class="h6">当前与解决证据</h4><dl class="row small mb-0"><dt class="col-4 text-secondary">当前保管</dt><dd class="col-8"><a href="{% url 'supplies:custody-detail' item.custody_id %}">{{ item.custody.get_status_display }} · {{ item.custody.current_quantity }}</a></dd><dt class="col-4 text-secondary">解决流水</dt><dd class="col-8">{% if item.custody_movement_id %}{{ item.custody_movement.get_action_display }} · {{ item.custody_movement_id }}{% else %}尚未形成{% endif %}</dd>{% if item.resolved_at %}<dt class="col-4 text-secondary">处理时间</dt><dd class="col-8">{{ item.resolved_at|date:'Y-m-d H:i' }}</dd>{% endif %}</dl></div></div>{% if item.resolution == 'pending' %}<div class="alert alert-info mt-3 mb-0">部分归还、部分转交、部分报损或部分报废不会提前解决；来源保管义务全部结清后，最后一条真实流水才成为解决证据。</div>{% endif %}</div>
+    </article>
+  {% endwith %}{% empty %}<div class="card card-body shadow-sm text-secondary">该清退单没有数量型低值耐用品保管项目；低值易耗品历史领用不会出现在这里。</div>{% endfor %}
 {% endblock %}

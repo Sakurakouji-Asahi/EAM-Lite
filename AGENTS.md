@@ -19,6 +19,7 @@ Primary responsibilities:
 - Employee asset clearance
 - Reporting
 - Audit trail
+- Company-internal low-value consumables and non-serialized quantity-managed durables
 
 EAM-Lite is NOT:
 - An ERP replacement
@@ -26,6 +27,10 @@ EAM-Lite is NOT:
 - A MES system
 - A purchasing system
 - A general accounting ledger
+
+The approved V1.2 `apps.supplies` exception is limited to company-internal
+low-value consumables and quantity-managed low-value durables. It does not turn
+EAM-Lite into production-material, purchasing, sales or general ERP inventory.
 
 The official accounting system remains external. V1 only exports Excel data for reconciliation with T+.
 
@@ -69,6 +74,14 @@ Do not implement inside an uploaded archive directory. Initialize or use a Git r
 Fixed-asset recognition and fixed-asset accounting category belong to Finance data. Never infer one directly from the other.
 
 Every formal V1 asset is individually tracked and has quantity 1. Do not implement partial-quantity transfer, inventory or disposal in V1.
+
+### 3.0.1 V1.2 Low-Value Goods Boundary
+
+- Individually tracked low-value durables continue to use `Asset` plus
+  `AssetFinance(accounting_treatment="controlled_non_fixed")`.
+- Quantity-managed consumables and quantity-managed low-value durables use the
+  separate `apps.supplies` domain.
+- `Asset.quantity = 1` remains unchanged; never use `Asset` for batch quantity.
 
 ### 3.1 Asset Codes Are Configurable
 
@@ -353,7 +366,7 @@ V1 excludes:
 - RFID
 - MES
 - Purchase management
-- General material inventory
+- Production-material, finished-goods and general ERP inventory outside the approved `apps.supplies` boundary
 - Runtime-hour maintenance
 - Partial-quantity asset tracking
 

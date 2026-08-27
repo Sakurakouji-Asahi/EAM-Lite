@@ -721,3 +721,18 @@ V1 只允许以下固定 registry；未知 key、错误 value_type、越权角�
 - 只做前端权限/公司过滤。
 - 把附件放公开 static/media URL，或在二维码中嵌入敏感字段。
 - V1 直接写 T+、自动制证或把外部卡片号当作 EAM-Lite 主键。
+
+## 17. V1.2 `apps.supplies` 扩展总览
+
+V1.2 的数量型低值物品使用独立 `apps.supplies`，不得写入或放宽
+`Asset.quantity`。Sprint 13 只建立：
+
+- `SupplyCategory`：公司内规范化分类编码唯一的树形分类；
+- `SupplyWarehouse`：复用现有 `Location` 和 `Employee` 的仓库档案；
+- `SupplyItem`：仅允许 `consumable` / `durable_quantity` 的数量型物品档案；
+- 复用现有 `ImportBatch` / `ImportRow` 的 `item_master` 暂存与幂等确认。
+
+三类主档均显式保存公司边界，使用 UUID 主键、`PROTECT` 业务引用、
+规范化编码唯一约束及批准的检查约束。详细字段、后续单据/流水/余额/
+保管/盘点/清退模型及 Sprint 迁移顺序以 `docs/14`、`docs/15` 为准；
+Sprint 13 不创建任何库存余额、库存流水或过账单据表。

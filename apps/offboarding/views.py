@@ -50,6 +50,11 @@ from apps.offboarding.permissions import (
     scoped_clearance_items,
     scoped_clearances,
 )
+from apps.supplies.models import EmployeeSupplyClearanceItem
+from apps.supplies.permissions import (
+    can_manage_supply_custody,
+    can_view_supply_cost,
+)
 
 
 _CLEARANCE_VIEW_ROLES = frozenset(
@@ -255,7 +260,12 @@ def clearance_list(request):
         processed_assets=ExpressionWrapper(
             F("total_assets_snapshot") - F("unresolved_assets"),
             output_field=IntegerField(),
-        )
+        ),
+        processed_supply_custodies=ExpressionWrapper(
+            F("total_supply_custodies_snapshot")
+            - F("unresolved_supply_custodies"),
+            output_field=IntegerField(),
+        ),
     )
     return render(
         request,
@@ -413,6 +423,39 @@ def clearance_detail(request, pk):
                 "current_location_path": _location_path(item.asset.location),
             }
         )
+    supply_items = list(
+        EmployeeSupplyClearanceItem.objects.filter(clearance=clearance)
+        .select_related(
+            "custody__item",
+            "custody__department",
+            "custody__employee",
+            "custody_movement__to_custody__department",
+            "custody_movement__to_custody__employee",
+            "resolved_by",
+        )
+        .order_by("item_code_snapshot", "pk")
+    )
+    supply_item_rows = []
+    for supply_item in supply_items:
+        custody = supply_item.custody
+        pending = active and supply_item.resolution == "pending"
+        supply_item_rows.append(
+            {
+                "item": supply_item,
+                "can_return": pending
+                and can_manage_supply_custody(
+                    request.user, custody, action="return_draft"
+                ),
+                "can_transfer": pending
+                and can_manage_supply_custody(
+                    request.user, custody, action="transfer"
+                ),
+                "can_write_off": pending
+                and can_manage_supply_custody(
+                    request.user, custody, action="loss"
+                ),
+            }
+        )
     active_for_employee = EmployeeAssetClearance.objects.filter(
         company=clearance.company,
         employee=clearance.employee,
@@ -446,6 +489,12 @@ def clearance_detail(request, pk):
             "processed_assets": (
                 clearance.total_assets_snapshot - clearance.unresolved_assets
             ),
+            "supply_item_rows": supply_item_rows,
+            "processed_supply_custodies": (
+                clearance.total_supply_custodies_snapshot
+                - clearance.unresolved_supply_custodies
+            ),
+            "show_supply_cost": can_view_supply_cost(request.user),
         },
     )
 

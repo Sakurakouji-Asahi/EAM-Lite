@@ -8,8 +8,12 @@ from django.core.exceptions import DisallowedHost, SuspiciousOperation
 from django.http import UnreadablePostError
 
 
-_QR_CONFIRM_PATH = re.compile(
-    r"^/assets/scan/[A-Za-z0-9_-]{22,128}/confirm/$"
+_QR_CONFIRM_PATHS = (
+    re.compile(r"^/assets/scan/[A-Za-z0-9_-]{22,128}/confirm/$"),
+    re.compile(
+        r"^/assets/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+        r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/labels/confirm/$"
+    ),
 )
 
 
@@ -18,10 +22,11 @@ class QrOpaqueOriginCsrfCompatibilityMiddleware:
 
     Edge on Android can open a scanned LAN URL in an opaque browser context
     and submit ``Origin: null`` even though the visible URL is the EAM host.
-    The compatibility path is intentionally narrow: it only treats that
-    origin as absent for the QR attachment POST, with the configured QR host,
-    session cookie, CSRF cookie and submitted CSRF token all still required.
-    Django's normal CsrfViewMiddleware performs the actual token validation.
+    The compatibility paths are intentionally narrow: they only treat that
+    origin as absent for QR scan attachment and per-asset Web attachment POSTs,
+    with the configured QR host, session cookie, CSRF cookie and submitted
+    CSRF token all still required. Django's normal CsrfViewMiddleware performs
+    the actual token validation.
     """
 
     def __init__(self, get_response):
@@ -43,7 +48,10 @@ class QrOpaqueOriginCsrfCompatibilityMiddleware:
             return False
         if request.META.get("HTTP_ORIGIN", "").strip().casefold() != "null":
             return False
-        if not _QR_CONFIRM_PATH.fullmatch(request.path_info):
+        if not any(
+            pattern.fullmatch(request.path_info)
+            for pattern in _QR_CONFIRM_PATHS
+        ):
             return False
         try:
             if request.get_host().casefold() != self.expected_host:

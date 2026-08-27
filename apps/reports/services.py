@@ -30,7 +30,7 @@ from apps.reports.permissions import (
     require_tplus_export,
 )
 from apps.reports.queries import build_report_dataset, build_tplus_dataset
-from apps.reports.schemas import validate_totals
+from apps.reports.schemas import validate_totals, visible_report_definition
 
 
 def _serializable(value):
@@ -55,13 +55,26 @@ def _request_hash(payload):
 
 
 def _stored_export_filters(*, actor, company, report_key, filters):
+    from apps.assets.permissions import can_view_financial_fields
     from apps.masterdata.permissions import resolve_department_ids, role_names_for
     from apps.reports.schemas import get_report_definition
+    from apps.supplies.permissions import can_view_supply_cost
 
     result = dict(filters or {})
     roles = role_names_for(actor)
     definition = get_report_definition(report_key)
     result["_report_schema_version"] = definition.schema_version
+    if definition.supply:
+        visible = visible_report_definition(
+            report_key,
+            include_supply_cost=can_view_supply_cost(actor),
+            include_asset_finance=can_view_financial_fields(actor),
+        )
+        cost_columns = [
+            column.key for column in visible.columns if column.access
+        ]
+        result["_includes_cost_fields"] = bool(cost_columns)
+        result["_cost_columns"] = cost_columns
     global_roles = (
         {"finance", "equipment", "management", "hr"}
         if definition.hr_clearance

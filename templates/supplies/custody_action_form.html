@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} - EAM-Lite{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3 mb-1">{{ title }}</h1><p class="text-secondary mb-0">{{ custody.item }} · {{ custody.department }} / {{ custody.employee|default:'部门保管' }}</p></div><a class="btn btn-outline-secondary" href="{% url 'supplies:custody-detail' custody.pk %}">返回保管详情</a></header>
+<div class="card shadow-sm mb-3"><div class="card-body"><dl class="row mb-0"><dt class="col-sm-2">当前数量</dt><dd class="col-sm-4">{{ custody.current_quantity }} {{ custody.item.unit }}</dd>{% if show_cost %}<dt class="col-sm-2">当前金额</dt><dd class="col-sm-4">{{ custody.current_amount }}</dd><dt class="col-sm-2">单位成本快照</dt><dd class="col-sm-4">{{ custody.unit_cost_snapshot }}</dd>{% endif %}</dl></div></div>
+<div class="alert alert-warning">{{ warning }}</div>
+<form method="post" class="card shadow-sm" novalidate><div class="card-body">{% csrf_token %}{{ form.idempotency_key }}{% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}{% for field in form.visible_fields %}<div class="mb-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %}<span class="required-mark">*</span>{% endif %}</label>{{ field }}{% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>{% endfor %}<button class="btn btn-danger" type="submit">{{ submit_label }}</button></div></form>
+{% endblock %}

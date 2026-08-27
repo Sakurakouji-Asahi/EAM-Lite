@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}低值物品余额核对 | EAM-Lite{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3 mb-1">余额核对与受控重建</h1><p class="text-secondary mb-0">日常业务不依赖重建；重建仅用于不可变流水与缓存发生异常差异后的维护窗口处理。</p></div><a class="btn btn-outline-secondary" href="{% url 'supplies:dashboard' %}">返回 Dashboard</a></header>
+<div class="row g-3">
+  <section class="col-12 col-xl-6"><div class="card shadow-sm h-100"><div class="card-header"><h2 class="h5 mb-0">1. 只读核对</h2></div><div class="card-body"><p>由管理员在应用服务器执行，命令不会写入数据：</p><pre class="mb-0"><code>python manage.py reconcile_supply_balances --company {{ company.code }}
+python manage.py reconcile_supply_custodies --company {{ company.code }}</code></pre></div></div></section>
+  <section class="col-12 col-xl-6"><div class="card shadow-sm h-100"><div class="card-header"><h2 class="h5 mb-0">2. dry-run</h2></div><div class="card-body"><p>发现差异后先填写真实操作人和原因；不加 <code>--confirm</code> 只输出差异：</p><pre class="mb-0"><code>python manage.py rebuild_supply_balances --company {{ company.code }} --actor &lt;用户名&gt; --reason "&lt;原因&gt;"
+python manage.py rebuild_supply_custodies --company {{ company.code }} --actor &lt;用户名&gt; --reason "&lt;原因&gt;"</code></pre></div></div></section>
+  <section class="col-12"><div class="card shadow-sm"><div class="card-header"><h2 class="h5 mb-0">3. 维护窗口确认</h2></div><div class="card-body"><p>核对 dry-run 差异、暂停相关业务并完成审批后，追加 <code>--confirm</code>。系统按稳定顺序锁定仓库/余额或保管记录，拒绝活动盘点，事务化更新缓存、再次核对并写审计。历史库存流水、保管流水、单据、来源链和单位成本快照均不会修改或删除。</p><div class="alert alert-warning mb-0">不要直接修改数据库、删除流水、删除保管记录或改写历史迁移。</div></div></div></section>
+</div>
+{% endblock %}

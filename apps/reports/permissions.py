@@ -6,7 +6,7 @@ from django.core.exceptions import PermissionDenied
 from django.db.models import Q
 
 from apps.masterdata.permissions import resolve_department_ids, role_names_for
-from apps.reports.schemas import get_report_definition
+from apps.reports.schemas import SUPPLY_REPORT_KEYS, get_report_definition
 
 
 PHYSICAL_VIEW_ROLES = frozenset(
@@ -18,6 +18,25 @@ PHYSICAL_EXPORT_ROLES = frozenset(
 FINANCIAL_VIEW_ROLES = frozenset({"finance", "management"})
 FINANCIAL_EXPORT_ROLES = frozenset({"finance", "management"})
 
+SUPPLY_STOCK_REPORTS = frozenset(
+    {
+        "supply_stock_balance",
+        "supply_low_stock",
+        "supply_stock_movement",
+        "supply_stock_ledger",
+    }
+)
+SUPPLY_RELATION_REPORTS = frozenset(
+    {
+        "supply_issue_detail",
+        "supply_department_issue",
+        "supply_employee_issue",
+        "supply_custody_balance",
+        "supply_custody_movement",
+        "supply_count_difference",
+    }
+)
+
 
 def _roles(user):
     return role_names_for(user)
@@ -26,6 +45,27 @@ def _roles(user):
 def can_view_report(user, report_key):
     definition = get_report_definition(report_key)
     roles = _roles(user)
+    if report_key in SUPPLY_REPORT_KEYS:
+        from apps.supplies.permissions import (
+            can_view_supply_cost,
+            can_view_supply_custodies,
+            can_view_supply_stock,
+        )
+
+        if report_key in SUPPLY_STOCK_REPORTS:
+            return can_view_supply_stock(user)
+        if report_key in SUPPLY_RELATION_REPORTS:
+            return can_view_supply_custodies(user)
+        if report_key == "controlled_non_fixed_assets":
+            return bool(roles.intersection(PHYSICAL_VIEW_ROLES))
+        if report_key == "supply_management_amount":
+            return bool(
+                roles.intersection(
+                    {"system_admin", "finance", "warehouse", "equipment", "management"}
+                )
+                and can_view_supply_cost(user)
+            )
+        return False
     if definition.tplus:
         return "finance" in roles
     if definition.hr_clearance:
@@ -43,6 +83,11 @@ def require_view_report(user, report_key):
 def can_export_report(user, report_key):
     definition = get_report_definition(report_key)
     roles = _roles(user)
+    if report_key in SUPPLY_REPORT_KEYS:
+        # Supply exports are the downloadable form of the exact same scoped
+        # report. Department managers and employees may therefore export only
+        # their already-authorized department/self rows.
+        return can_view_report(user, report_key)
     if definition.tplus:
         return "finance" in roles
     if definition.hr_clearance:
@@ -122,11 +167,33 @@ def can_view_export(user, export_log):
         return False
     roles = role_names_for(user)
     definition = get_report_definition(export_log.export_type)
-    global_roles = (
-        {"finance", "equipment", "management", "hr"}
-        if definition.hr_clearance
-        else {"finance", "equipment", "warehouse", "management", "system_admin"}
-    )
+    if definition.supply:
+        from apps.assets.permissions import can_view_financial_fields
+        from apps.reports.schemas import visible_report_definition
+        from apps.supplies.permissions import can_view_supply_cost
+
+        visible = visible_report_definition(
+            export_log.export_type,
+            include_supply_cost=can_view_supply_cost(user),
+            include_asset_finance=can_view_financial_fields(user),
+        )
+        allowed_cost_columns = {
+            column.key for column in visible.columns if column.access
+        }
+        exported_cost_columns = set(
+            export_log.filters_json.get("_cost_columns") or ()
+        )
+        if not exported_cost_columns.issubset(allowed_cost_columns):
+            return False
+        global_roles = {
+            "finance", "equipment", "warehouse", "management", "system_admin"
+        }
+    else:
+        global_roles = (
+            {"finance", "equipment", "management", "hr"}
+            if definition.hr_clearance
+            else {"finance", "equipment", "warehouse", "management", "system_admin"}
+        )
     if roles.intersection(global_roles):
         return True
     if export_log.requested_by_id != getattr(user, "pk", None):

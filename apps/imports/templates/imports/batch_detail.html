@@ -10,12 +10,24 @@
   <dt class="col-sm-2">原文件</dt><dd class="col-sm-10"><a href="{% url 'imports:source' batch.pk %}">受保护下载</a></dd>
 </dl>
 {% if batch.status == 'invalid' %}
-<div class="alert alert-danger">本批次存在阻断错误，确认入口已关闭，数据库没有创建任何{% if is_asset_initialization %}资产或财务{% else %}正式基础资料{% endif %}。请修正原文件后重新上传完整批次。</div>
+<div class="alert alert-danger">本批次存在阻断错误，确认入口已关闭，数据库没有创建任何{% if is_asset_initialization %}资产或财务{% elif is_item_master %}低值物品档案{% elif is_opening_stock %}期初入库草稿{% elif is_opening_custody %}期初保管或保管流水{% else %}正式基础资料{% endif %}。请修正原文件后重新上传完整批次。</div>
 {% elif batch.status == 'validated' %}
 {% if is_asset_initialization %}
 <div class="alert alert-warning">
   <strong>请核对后再确认：</strong>确认后将原子创建 {{ batch.valid_rows }} 项资产草稿；任何一项写入失败都会整批回滚。
   本次不会生成正式编号或二维码，不会进入待贴标/在用状态，也不会自动确认财务或折旧。
+</div>
+{% elif is_item_master %}
+<div class="alert alert-warning">
+  <strong>请核对后再确认：</strong>确认后将原子创建 {{ batch.valid_rows }} 项低值物品档案；任何一项失败都会整批回滚。本次不会创建库存余额、库存流水或保管记录。
+</div>
+{% elif is_opening_stock %}
+<div class="alert alert-warning">
+  <strong>请核对后再确认：</strong>确认后按仓库原子生成一张或多张期初入库草稿；任何一项失败都会整批回滚。草稿不会改变库存，仍须进入单据逐张确认过账。
+</div>
+{% elif is_opening_custody %}
+<div class="alert alert-warning">
+  <strong>请核对后再确认：</strong>确认后将原子建立开放保管和不可变 opening 保管流水，不改变仓库库存；确认后不提供破坏性回滚。
 </div>
 {% else %}
 <div class="alert alert-warning">确认后将整批新增 {{ batch.valid_rows }} 条记录；任何写入失败都会整批回滚。</div>
@@ -24,15 +36,18 @@
   {% csrf_token %}
   <div class="form-check mb-3">
     <input class="form-check-input" type="checkbox" name="confirm" value="1" id="confirm-import" required>
-    <label class="form-check-label" for="confirm-import">{% if is_asset_initialization %}我已核对错误、警告和理论差异；确认本次只创建草稿，不生成正式编号或二维码。{% else %}我确认整批写入；本导入只新增，不覆盖现有记录。{% endif %}</label>
+    <label class="form-check-label" for="confirm-import">{% if is_asset_initialization %}我已核对错误、警告和理论差异；确认本次只创建草稿，不生成正式编号或二维码。{% elif is_item_master %}我确认整批新增物品档案，不创建任何库存或保管数据。{% elif is_opening_stock %}我确认按仓库生成期初入库草稿，且本次不会自动过账。{% elif is_opening_custody %}我确认直接建立期初保管和不可变流水，且确认后不能破坏性回滚。{% else %}我确认整批写入；本导入只新增，不覆盖现有记录。{% endif %}</label>
   </div>
   <button class="btn btn-danger" type="submit">{% if is_asset_initialization %}确认整批创建草稿{% else %}确认整批导入{% endif %}</button>
 </form>
 {% elif batch.status == 'confirmed' %}
-<div class="alert alert-success">本批次已成功确认，重复提交不会重复创建。{% if is_asset_initialization %}所有导入记录仍为草稿，正式编号尚未生成；请继续补齐受保护的资产照片并走实物复核、财务确认和贴标流程。{% endif %}</div>
+<div class="alert alert-success">本批次已成功确认，重复提交不会重复创建。{% if is_asset_initialization %}所有导入记录仍为草稿，正式编号尚未生成；请继续补齐受保护的资产照片并走实物复核、财务确认和贴标流程。{% elif is_item_master %}本批次只形成物品档案，库存仍为空。{% elif is_opening_stock %}期初入库草稿已经生成，当前库存仍未变化；请前往库存单据列表核对并过账。{% elif is_opening_custody %}期初保管和 opening 流水已建立，仓库库存未变化；该批次不提供破坏性回滚。{% endif %}</div>
 {% elif batch.status == 'failed' %}
 <div class="alert alert-danger">本批次处理失败，未形成可确认结果。请根据错误原因修正后重新上传；不要重复使用本批次继续写入。</div>
+{% elif batch.status == 'cancelled' %}
+<div class="alert alert-secondary">本批次已取消，未创建业务数据，不能再确认。</div>
 {% endif %}
+{% if batch.status != 'confirmed' and batch.status != 'cancelled' %}<form method="post" action="{% url 'imports:cancel' batch.pk %}" class="card card-body mt-3">{% csrf_token %}<label class="form-label" for="cancel-reason">取消原因</label><textarea class="form-control mb-2" id="cancel-reason" name="reason" required></textarea><button class="btn btn-outline-danger align-self-start" type="submit">取消本批次</button></form>{% endif %}
 <div class="table-responsive mt-4">
 <table class="table table-sm table-bordered align-middle">
   <thead><tr><th>行</th><th>状态</th><th>原始数据</th><th>校验/测算预览</th><th>阻断错误</th><th>警告/人工核对</th><th>创建结果</th></tr></thead>

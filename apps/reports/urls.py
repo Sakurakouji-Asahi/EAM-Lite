@@ -7,6 +7,17 @@ app_name = "reports"
 
 urlpatterns = [
     path("", views.report_center, name="report-center"),
+    path("supplies/", views.supply_report_index, name="supply-report-index"),
+    path(
+        "supplies/<str:report_key>/",
+        views.supply_report_detail,
+        name="supply-report-detail",
+    ),
+    path(
+        "supplies/<str:report_key>/export/",
+        views.supply_report_export,
+        name="supply-report-export",
+    ),
     path("export/", views.report_export, name="report-export"),
     path("exports/<uuid:pk>/", views.export_detail, name="export-detail"),
     path("exports/<uuid:pk>/download/", views.export_download, name="export-download"),

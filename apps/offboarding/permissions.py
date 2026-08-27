@@ -46,6 +46,10 @@ def scoped_clearances(user, company, queryset=None):
             items__original_department_id__in=resolve_department_ids(user, company)
         ) | Q(
             items__asset__department_id__in=resolve_department_ids(user, company)
+        ) | Q(
+            supply_items__custody__department_id__in=resolve_department_ids(
+                user, company
+            )
         )
     employee = _employee_for(user, company)
     if employee is not None and "employee" in roles:
@@ -55,6 +59,7 @@ def scoped_clearances(user, company, queryset=None):
             Q(items__movement__operated_by=user)
             | Q(items__movement__to_employee__user=user)
             | Q(items__source_loan__received_by_employee__user=user)
+            | Q(supply_items__custody_movement__created_by=user)
         )
     return queryset.filter(filters).distinct()
 

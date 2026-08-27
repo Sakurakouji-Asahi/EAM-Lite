@@ -14,6 +14,18 @@
           每行只代表一件实物，数量必须为 1。确认后只创建资产草稿，不生成正式编号、二维码或实际折旧分录。
         </div>
         <p class="small text-secondary">模板中的公司、实物分类、部门、责任员工和位置必须分别使用 code / employee_no 精确匹配；当前公司启用的资产自定义字段会随模板生成。</p>
+      {% elif definition.import_type == "item_master" %}
+        <div class="alert alert-info py-2">
+          确认后只创建数量型物品档案，不创建库存余额、库存流水或保管记录。逐件低值耐用品仍使用资产模块。
+        </div>
+      {% elif definition.import_type == "opening_stock" %}
+        <div class="alert alert-info py-2">
+          确认后按仓库生成期初入库草稿，不自动过账；库存只有在用户逐张确认过账后才会增加。
+        </div>
+      {% elif definition.import_type == "opening_custody" %}
+        <div class="alert alert-warning py-2">
+          确认后直接建立数量型耐用品开放保管和不可变 opening 流水，不改变仓库库存，也不提供破坏性回滚。
+        </div>
       {% else %}
         <p class="small text-secondary">导入只新增，不按名称或编码覆盖现有记录。</p>
       {% endif %}

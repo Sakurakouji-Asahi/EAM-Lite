@@ -19,6 +19,8 @@ FORMULA_PREFIXES = ("=", "+", "-", "@")
 HEADER_FILL = PatternFill("solid", fgColor="D9EAF7")
 HEADER_FONT = Font(bold=True)
 MONEY_FORMAT = '#,##0.00;[Red]-#,##0.00'
+QUANTITY_FORMAT = '#,##0.0000;[Red]-#,##0.0000'
+UNIT_COST_FORMAT = '#,##0.000000;[Red]-#,##0.000000'
 RATE_FORMAT = "0.00%"
 DATE_FORMAT = "yyyy-mm-dd"
 DATETIME_FORMAT = "yyyy-mm-dd hh:mm:ss"
@@ -65,6 +67,10 @@ def _cell(ws, value, kind=CellKind.TEXT, *, header=False):
     cell = WriteOnlyCell(ws, value=_excel_datetime(value))
     if kind in {CellKind.MONEY, CellKind.DECIMAL}:
         cell.number_format = MONEY_FORMAT
+    elif kind == CellKind.QUANTITY:
+        cell.number_format = QUANTITY_FORMAT
+    elif kind == CellKind.UNIT_COST:
+        cell.number_format = UNIT_COST_FORMAT
     elif kind == CellKind.RATE:
         cell.number_format = RATE_FORMAT
     elif kind == CellKind.DATE:
@@ -89,6 +95,34 @@ def _append_table(ws, columns, rows):
         ws.append([_cell(ws, row.get(column.key), column.kind) for column in columns])
 
 
+EXCEL_MAX_DATA_ROWS = 1_048_575
+
+
+def _append_split_table(workbook, sheet_name, columns, rows):
+    """Write a row stream without materializing it and split at Excel's limit."""
+
+    total = len(rows)
+    sheet_count = max(1, (total + EXCEL_MAX_DATA_ROWS - 1) // EXCEL_MAX_DATA_ROWS)
+    worksheets = []
+    for index in range(sheet_count):
+        suffix = f"-{index + 1}" if sheet_count > 1 else ""
+        allowed = 31 - len(suffix)
+        ws = workbook.create_sheet(f"{sheet_name[:allowed]}{suffix}")
+        row_count = min(
+            EXCEL_MAX_DATA_ROWS,
+            max(0, total - index * EXCEL_MAX_DATA_ROWS),
+        )
+        _configure_table(ws, columns, row_count)
+        ws.append([_cell(ws, column.label, header=True) for column in columns])
+        worksheets.append(ws)
+    for row_number, row in enumerate(rows):
+        sheet_index = row_number // EXCEL_MAX_DATA_ROWS
+        worksheets[sheet_index].append(
+            [_cell(worksheets[sheet_index], row.get(column.key), column.kind) for column in columns]
+        )
+    return worksheets
+
+
 def write_report_workbook(dataset, destination, *, generated_at=None):
     """Write one fixed-schema generic report workbook to a path/file object."""
     generated_at = generated_at or timezone.now()
@@ -104,6 +138,10 @@ def write_report_workbook(dataset, destination, *, generated_at=None):
         ("数据截止时间", dataset.data_snapshot_at),
         ("Schema版本", dataset.definition.schema_version),
         ("数据行数", dataset.row_count),
+        (
+            "是否包含成本字段",
+            "是" if dataset.filters.get("_includes_cost_fields") else "否",
+        ),
     ]
     information_rows.extend(
         (f"筛选条件：{key}", value)
@@ -113,8 +151,12 @@ def write_report_workbook(dataset, destination, *, generated_at=None):
         kind = _metadata_kind(value)
         information.append([_cell(information, label, header=True), _cell(information, value, kind)])
     information.protection.sheet = True
-    sheet = workbook.create_sheet(dataset.definition.sheet_name[:31])
-    _append_table(sheet, dataset.definition.columns, dataset.rows)
+    _append_split_table(
+        workbook,
+        dataset.definition.sheet_name,
+        dataset.definition.columns,
+        dataset.rows,
+    )
     workbook.save(destination)
 
 

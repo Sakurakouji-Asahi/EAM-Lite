@@ -98,14 +98,38 @@ def _policy(company, actor, key="S4-HTTP"):
     )
 
 
-def _finance_row(context):
+def _finance_row(context, *, fixed=False):
     asset = context["asset"]
-    AssetFinance.objects.create(
-        company=context["company"],
-        asset=asset,
-        accounting_treatment="controlled_non_fixed",
-        original_cost=Decimal("12345.67"),
-    )
+    values = {
+        "company": context["company"],
+        "asset": asset,
+        "accounting_treatment": (
+            "fixed_asset" if fixed else "controlled_non_fixed"
+        ),
+        "original_cost": Decimal("12345.67"),
+    }
+    if fixed:
+        today = timezone.localdate()
+        asset.commissioning_date = today
+        asset.save(update_fields=["commissioning_date", "updated_at"])
+        values.update(
+            {
+                "fixed_asset_category": create_fixed_asset_category(
+                    actor=context["finance"],
+                    company=context["company"],
+                    data={
+                        "code": "S4-HTTP-FA",
+                        "name": "Sprint 4 HTTP 固定资产类别",
+                        "useful_life_months_default": 60,
+                    },
+                ),
+                "capitalization_date": today,
+                "recognition_threshold_snapshot": Decimal("5000.00"),
+                "finance_confirmed_by": context["finance"],
+                "finance_confirmed_at": timezone.now(),
+            }
+        )
+    AssetFinance.objects.create(**values)
     return asset
 
 
@@ -415,7 +439,7 @@ def test_batch_reverse_get_key_is_reused_by_post_retry(client):
 
 def test_profile_entry_view_resolves_the_unique_profile_effective_today(client):
     context = _context()
-    asset = _finance_row(context)
+    asset = _finance_row(context, fixed=True)
     policy = _policy(context["company"], context["finance"])
     today = timezone.localdate()
     policy.status = "active"

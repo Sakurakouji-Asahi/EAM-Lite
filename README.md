@@ -3,13 +3,14 @@
 EAM-Lite 是公司局域网内使用的轻量级企业资产管理系统。本仓库根目录就是包含
 AGENTS.md、docs/、tasks/ 和 manage.py 的当前目录，不存在第二层项目仓库。
 
-当前软件版本为 **v0.1.0**，采用已批准的 **Requirements V1.1** 业务需求基线。软件版本号
-与需求文档修订号相互独立：v0.1.0 表示当前预发布功能基线，Requirements V1.1 表示第一版业务
-需求经过一次正式修订。
+当前软件版本为 **v0.2.0**，采用已批准的 **Requirements V1.1** 基线及 **V1.2 低值物品有限扩展**。
+软件版本号与需求文档修订号相互独立：v0.2.0 表示 Sprint 0–18 的当前功能基线，Requirements
+V1.1/V1.2 表示对应业务需求修订。
 
-v0.1.0 已累计整合 Sprint 0–12 的代码范围。现有功能包括身份与审计、
+v0.2.0 已累计整合 Sprint 0–18 的代码范围。现有功能包括身份与审计、
 基础资料、导入、资产编码与主档、财务确认与折旧、二维码标签、调拨借用与处置、盘点、
-保养、离职清退、Dashboard、固定报表和 T+ 人工对账导出。T+ 仍是正式会计系统；本应用
+保养、离职清退、Dashboard、固定报表、T+ 人工对账导出，以及公司内部数量型低值物品的
+库存、保管、盘点、清退和正式报表。T+ 仍是正式会计系统；本应用
 不调用 T+ API、不写 T+ 数据库，也不自动入账。
 
 仓库已包含 Gunicorn/Caddy/PostgreSQL 18 Compose、生产 fail-closed 配置、加密数据库+附件
@@ -19,6 +20,42 @@ v0.1.0 已累计整合 Sprint 0–12 的代码范围。现有功能包括身份�
 
 `v0.1.0` Git 标签是不可变的预发布软件功能基线，不等于生产环境已完成负责人签字。后续新增功能
 从 `codex/v0.2-development` 分支继续开发，生产上线门槛仍由 Sprint 12 UAT 证据单独跟踪。
+
+## V1.2 低值物品分阶段扩展
+
+V1.2 采用独立 `apps.supplies` 管理数量型低值易耗品和数量型低值耐用品；
+需要逐件二维码、序列号、单件责任人或位置的低值耐用品继续使用现有
+`Asset + AssetFinance(accounting_treatment="controlled_non_fixed")`，
+`Asset.quantity=1` 永不放宽。
+
+扩展按 Sprint 13–18 顺序实施，每次只授权一个 Sprint：基础档案与物品
+导入 → 库存入库与流水 → 领退调拨 → 耐用品保管与逐件资产集成 → 盘点
+和离职清退 → 报表与 UAT。需求、技术、数据字典和验收基线分别见
+`docs/13-Low-Value-Goods-Requirements.md` 至 `docs/16-Low-Value-Goods-UAT.md`。
+该扩展不包含生产物料、采购、供应商、会计凭证、T+ API 或通用 ERP 库存。
+
+Sprint 18 完成后，低值物品入口为“首页 → 低值物品”。模块 Dashboard 展示按单位分组的库存和
+开放保管数量、低库存、逐件受控非固定资产及待办；“正式报表”提供 12 张分页报表和同口径
+XLSX。初始化、三种模式判定、物品/期初库存/期初保管导入、日常领退调拨、耐用品动作、盘点、
+离职清退、月末核对和维护窗口步骤见
+`docs/17-Low-Value-Goods-Operations.md`，UAT 证据见
+`docs/18-Low-Value-Goods-UAT-Evidence.md`。
+
+月末先执行只读核对：
+
+~~~powershell
+python manage.py reconcile_supply_balances --company <公司编码>
+python manage.py reconcile_supply_custodies --company <公司编码>
+~~~
+
+仅在确认是缓存差异并获批维护窗口后，先执行不带 `--confirm` 的 dry-run，再受控确认：
+
+~~~powershell
+python manage.py rebuild_supply_balances --company <公司编码> --actor <用户名> --reason "<原因>" --confirm
+python manage.py rebuild_supply_custodies --company <公司编码> --actor <用户名> --reason "<原因>" --confirm
+~~~
+
+重建以不可变流水为唯一来源，拒绝活动盘点，不修改历史流水、来源链或保管单位成本快照。
 
 ## 版本与依赖
 
@@ -148,7 +185,14 @@ CREATEDB；不要把这项权限授予生产 runtime 账号。
 ## 一键本地启动
 
 Windows 本地验收可双击仓库根目录 `启动EAM-Lite.cmd`。启动器会等待 Docker Desktop、
-启动 PostgreSQL、执行迁移、检测局域网 IP、设置本地 QR 地址并打开浏览器。Secret 和自动
+启动 PostgreSQL、执行迁移、检测局域网 IP、设置本地 QR 地址并打开浏览器。重复双击时，
+若健康的 EAM-Lite 已在运行则直接打开页面；若精确识别到本仓库旧服务失去响应，则只停止
+该旧进程并自动重启；无法识别的其他端口占用程序只报告进程名称和 PID，不会自动终止。
+若 Docker Desktop 因 Windows 遗留的 `dockerInference` 或 Secrets Engine AF_UNIX 套接字
+崩溃，启动器只在最近后端日志精确命中该错误时，把对应运行目录改名留存、备份 Docker
+设置、关闭未使用的 Docker AI/Inference，并自动重试一次；不会恢复出厂设置，也不会修改
+Docker 的 WSL 数据盘、镜像、卷或数据库容器。
+Secret 和自动
 备份密钥只写入被 Git 忽略的 `var/local/`，不会写入源码。黑色服务窗口必须保持打开，
 `Ctrl+C` 停止。该方式使用 DEBUG 和 HTTP，仅限本地验收，不是生产部署。
 

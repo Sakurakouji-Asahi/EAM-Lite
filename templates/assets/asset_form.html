@@ -9,6 +9,12 @@
     <a class="btn btn-outline-secondary" href="{{ cancel_url }}">返回</a>
   </header>
 
+  {% if individual_durable_hint %}
+    <div class="alert alert-info">
+      <strong>逐件低值耐用品建档提示：</strong>每件单独建档，数量固定为 1；提交后仍由财务确认，并选择“受控非固定资产”。该类资产不计提折旧，后续继续使用现有二维码、调拨、盘点、处置和离职清退。
+    </div>
+  {% endif %}
+
   {% if form.errors %}
     <div class="alert alert-danger" role="alert">
       <strong>保存失败，请检查以下字段：</strong>

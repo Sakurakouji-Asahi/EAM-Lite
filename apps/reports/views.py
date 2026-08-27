@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from calendar import monthrange
 from datetime import date, timedelta
+from urllib.parse import urlencode
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -46,8 +47,11 @@ from apps.reports.queries import (
 )
 from apps.reports.schemas import (
     REPORT_REGISTRY,
+    SUPPLY_REPORT_REGISTRY,
+    SUPPLY_REPORT_KEYS,
     TPLUS_ENTRY_COLUMNS,
     TPLUS_TOTAL_METRICS,
+    get_report_definition,
 )
 
 
@@ -63,6 +67,7 @@ _REPORT_FILTER_KEYS = frozenset(
         "fixed_asset_category",
         "responsible_employee",
         "asset_status",
+        "accounting_treatment",
         "asset_scope",
         "label_scope",
         "maintenance_due_scope",
@@ -140,6 +145,7 @@ def _display_filters(filters):
         "fixed_asset_category": "固定资产类别 ID",
         "responsible_employee": "责任人 ID",
         "asset_status": "资产状态",
+        "accounting_treatment": "会计认定",
         "asset_scope": "资产范围",
         "label_scope": "标签范围",
         "maintenance_due_scope": "保养到期范围",
@@ -258,6 +264,160 @@ def report_export(request):
     return _no_store(redirect("reports:export-detail", pk=export_log.pk))
 
 
+def _supply_definition_or_404(report_key):
+    if report_key not in SUPPLY_REPORT_KEYS:
+        raise Http404("低值物品报表不存在。")
+    return SUPPLY_REPORT_REGISTRY[report_key]
+
+
+@never_cache
+@login_required
+@require_GET
+def supply_report_index(request):
+    definitions = tuple(
+        definition
+        for key, definition in SUPPLY_REPORT_REGISTRY.items()
+        if can_view_report(request.user, key)
+    )
+    if not definitions:
+        return _no_store(HttpResponseForbidden("您没有查看低值物品报表的权限。"))
+    return _render_sensitive(
+        request,
+        "reports/supply_report_index.html",
+        {"definitions": definitions},
+    )
+
+
+@never_cache
+@login_required
+@require_GET
+def supply_report_detail(request, report_key):
+    from apps.reports.supply_forms import FILTERS_BY_REPORT, SupplyReportFilterForm
+
+    definition = _supply_definition_or_404(report_key)
+    denied = _require_no_store(require_view_report, request.user, report_key)
+    if denied:
+        return denied
+    unexpected = set(request.GET) - FILTERS_BY_REPORT[report_key] - {"page"}
+    if unexpected:
+        return _no_store(HttpResponseBadRequest("包含不支持的低值物品报表筛选参数。"))
+    company = _company_or_400()
+    bound_data = request.GET.copy() if request.GET else None
+    if bound_data is None and report_key != "supply_stock_movement":
+        bound_data = {}
+    if bound_data is not None:
+        bound_data.pop("page", None)
+    form = SupplyReportFilterForm(
+        bound_data,
+        actor=request.user,
+        company=company,
+        report_key=report_key,
+    )
+    context = {
+        "definition": definition,
+        "form": form,
+        "dataset": None,
+        "can_export": False,
+    }
+    should_query = report_key != "supply_stock_movement" or bool(request.GET)
+    if should_query and form.is_valid():
+        try:
+            dataset = build_report_dataset(
+                actor=request.user,
+                company=company,
+                report_key=report_key,
+                filters=form.as_filters(),
+            )
+        except ReportValidationError as exc:
+            for error in exc.errors:
+                form.add_error(None, error)
+        else:
+            page_obj = Paginator(dataset.rows, 50).get_page(request.GET.get("page"))
+            columns = tuple(dataset.definition.columns)
+            context.update(
+                dataset=dataset,
+                definition=dataset.definition,
+                columns=columns,
+                page_obj=page_obj,
+                table_rows=tuple(
+                    tuple((column, row.get(column.key)) for column in columns)
+                    for row in page_obj.object_list
+                ),
+                can_export=can_export_report(request.user, report_key),
+                export_idempotency_key=uuid.uuid4().hex,
+                pagination_query=urlencode(
+                    [(key, value) for key, values in request.GET.lists() if key != "page" for value in values]
+                ),
+            )
+    status = 400 if should_query and not form.is_valid() else 200
+    return _render_sensitive(
+        request, "reports/supply_report.html", context, status=status
+    )
+
+
+@never_cache
+@login_required
+@require_POST
+def supply_report_export(request, report_key):
+    from apps.reports.services import generate_report_export
+    from apps.reports.supply_forms import FILTERS_BY_REPORT, SupplyReportFilterForm
+
+    _supply_definition_or_404(report_key)
+    denied = _require_no_store(require_export_report, request.user, report_key)
+    if denied:
+        return denied
+    unexpected = set(request.POST) - FILTERS_BY_REPORT[report_key] - {
+        "csrfmiddlewaretoken",
+        "idempotency_key",
+    }
+    if unexpected or request.GET:
+        return _no_store(HttpResponseBadRequest("包含不支持的低值物品导出参数。"))
+    company = _company_or_400()
+    form = SupplyReportFilterForm(
+        request.POST,
+        actor=request.user,
+        company=company,
+        report_key=report_key,
+    )
+    if not form.is_valid():
+        return _render_sensitive(
+            request,
+            "reports/supply_report.html",
+            {
+                "definition": SUPPLY_REPORT_REGISTRY[report_key],
+                "form": form,
+                "dataset": None,
+                "can_export": False,
+            },
+            status=400,
+        )
+    try:
+        export_log = generate_report_export(
+            actor=request.user,
+            company=company,
+            report_key=report_key,
+            filters=form.as_filters(),
+            idempotency_key=request.POST.get("idempotency_key") or uuid.uuid4().hex,
+            request=request,
+        )
+    except (ReportValidationError, ValidationError) as exc:
+        errors = getattr(exc, "errors", None) or exc.messages
+        for error in errors:
+            form.add_error(None, error)
+        return _render_sensitive(
+            request,
+            "reports/supply_report.html",
+            {
+                "definition": SUPPLY_REPORT_REGISTRY[report_key],
+                "form": form,
+                "dataset": None,
+                "can_export": False,
+            },
+            status=400,
+        )
+    return _no_store(redirect("reports:export-detail", pk=export_log.pk))
+
+
 def _period_bounds(period):
     year, month = (int(part) for part in period.split("-", 1))
     start = date(year, month, 1)
@@ -369,7 +529,7 @@ def export_detail(request, pk):
         "reports/export_detail.html",
         {
             "export_log": export_log,
-            "definition": REPORT_REGISTRY[export_log.export_type],
+            "definition": get_report_definition(export_log.export_type),
             "can_download": can_download_export(request.user, export_log),
             "display_filters": {
                 key: value
