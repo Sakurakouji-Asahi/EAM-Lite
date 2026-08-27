@@ -306,6 +306,7 @@ def uninstall(apps, schema_editor):
         previous = importlib.import_module(
             "apps.supplies.migrations.0006_sprint15_postgresql_guards"
         )
+        schema_editor.execute(previous.DROP_SPRINT15_GUARDS)
         schema_editor.execute(previous.CREATE_GUARDS)
 
 

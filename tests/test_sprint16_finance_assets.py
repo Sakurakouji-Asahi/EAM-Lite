@@ -4,6 +4,7 @@ from decimal import Decimal
 import pytest
 from django.core.exceptions import ValidationError
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.finance.models import AssetDepreciationProfile
 from apps.finance.services import (
@@ -52,7 +53,7 @@ def test_controlled_non_fixed_is_rejected_by_preview_direct_services_batch_and_u
             "accounting_treatment": "controlled_non_fixed",
             "original_cost": Decimal("100.00"),
         },
-        code_effective_date=date(2026, 8, 26),
+        code_effective_date=timezone.localdate(),
         idempotency_key="s16-guard-formalize",
         reason="逐件低值耐用品测试",
     )
@@ -109,7 +110,7 @@ def test_asset_list_four_way_accounting_filter_and_individual_durable_shortcuts(
             "accounting_treatment": "controlled_non_fixed",
             "original_cost": Decimal("2000.00"),
         },
-        code_effective_date=date(2026, 8, 26),
+        code_effective_date=timezone.localdate(),
         idempotency_key="s16-list-controlled",
         reason="逐件低值耐用品",
     )

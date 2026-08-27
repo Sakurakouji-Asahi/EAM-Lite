@@ -1474,7 +1474,10 @@ def transfer_custody(
         .select_related("company", "item", "department", "employee")
         .get(pk=custody.pk, company=custody.company)
     )
-    existing = SupplyCustodyMovement.objects.select_for_update().select_related(
+    existing_queryset = SupplyCustodyMovement.objects.select_for_update()
+    if connection.vendor == "postgresql":
+        existing_queryset = existing_queryset.select_for_update(of=("self",))
+    existing = existing_queryset.select_related(
         "to_custody", "to_custody__department"
     ).filter(company=custody.company, idempotency_key=idempotency_key).first()
     if existing is not None:
