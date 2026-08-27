@@ -66,8 +66,16 @@ class Command(BaseCommand):
                     and movement.amount == original.amount
                     and movement.unit_cost == original.unit_cost
                 )
+            elif movement.action == "correction":
+                shape_valid = (
+                    movement.from_custody_id is None
+                    and movement.to_custody_id is not None
+                ) or (
+                    movement.from_custody_id is not None
+                    and movement.to_custody_id is None
+                )
             else:
-                shape_valid = movement.action == "correction"
+                shape_valid = False
             if not shape_valid:
                 integrity_errors.append(f"流水 {movement.pk} 的动作方向或冲销快照不正确")
             if movement.to_custody_id is not None:

@@ -14,6 +14,8 @@ from apps.masterdata.permissions import resolve_department_ids, role_names_for
 from .domain import quantize_quantity, quantize_unit_cost, validate_zero_cost_reason
 from .models import (
     SupplyCategory,
+    SupplyCountDomain,
+    SupplyCountResolutionType,
     SupplyCustody,
     SupplyCustodyAction,
     SupplyDocumentLine,
@@ -24,8 +26,11 @@ from .models import (
     SupplyWarehouse,
 )
 from .permissions import (
+    can_create_supply_count_task,
+    can_view_supply_cost,
     can_manage_supply_item,
     require_create_supply_document,
+    require_execute_supply_count_task,
     require_manage_supply_category,
     require_manage_supply_custody,
     require_manage_supply_item,
@@ -752,3 +757,294 @@ class SupplyDocumentPostForm(forms.Form):
         if document is not None:
             initial.setdefault("idempotency_key", document.idempotency_key)
         super().__init__(*args, initial=initial, **kwargs)
+
+
+class SupplyCountTaskForm(forms.Form):
+    name = forms.CharField(label="盘点任务名称", max_length=200)
+    count_domain = forms.ChoiceField(
+        label="盘点域", choices=SupplyCountDomain.choices
+    )
+    warehouse = forms.ModelChoiceField(
+        label="盘点仓库", queryset=SupplyWarehouse.objects.none(), required=False
+    )
+    department = forms.ModelChoiceField(
+        label="盘点部门", queryset=Department.objects.none(), required=False
+    )
+    employee = forms.ModelChoiceField(
+        label="盘点员工（可选）", queryset=Employee.objects.none(), required=False
+    )
+    planned_start = forms.DateField(
+        label="计划开始日期", widget=forms.DateInput(attrs={"type": "date"})
+    )
+    planned_end = forms.DateField(
+        label="计划结束日期", widget=forms.DateInput(attrs={"type": "date"})
+    )
+    remark = forms.CharField(
+        label="备注", required=False, widget=forms.Textarea(attrs={"rows": 3})
+    )
+    idempotency_key = forms.CharField(widget=forms.HiddenInput())
+
+    def __init__(self, *args, actor=None, company=None, **kwargs):
+        if actor is None or company is None:
+            raise PermissionDenied("盘点任务表单必须绑定当前用户和公司。")
+        self.actor = actor
+        self.company = company
+        initial = dict(kwargs.pop("initial", {}) or {})
+        initial.setdefault("planned_start", timezone.localdate())
+        initial.setdefault("planned_end", timezone.localdate())
+        initial.setdefault("idempotency_key", str(uuid.uuid4()))
+        super().__init__(*args, initial=initial, **kwargs)
+        allowed_domains = [
+            choice
+            for choice in SupplyCountDomain.choices
+            if can_create_supply_count_task(
+                actor,
+                company=company,
+                count_domain=choice[0],
+                department=(
+                    Department.objects.filter(
+                        company=company,
+                        pk__in=resolve_department_ids(actor, company),
+                    ).first()
+                    if choice[0] == SupplyCountDomain.CUSTODY
+                    and "department_manager" in role_names_for(actor)
+                    else None
+                ),
+            )
+        ]
+        self.fields["count_domain"].choices = allowed_domains
+        self.fields["warehouse"].queryset = SupplyWarehouse.objects.filter(
+            company=company, is_active=True
+        ).order_by("normalized_code")
+        departments = Department.objects.filter(company=company, is_active=True)
+        roles = role_names_for(actor)
+        if "department_manager" in roles and not roles.intersection(
+            {"system_admin", "finance", "equipment"}
+        ):
+            departments = departments.filter(
+                pk__in=resolve_department_ids(actor, company)
+            )
+        self.fields["department"].queryset = departments.order_by("normalized_code")
+        self.fields["employee"].queryset = Employee.objects.filter(
+            company=company
+        ).select_related("department").order_by("normalized_employee_no")
+        _bootstrap_widgets(self)
+
+    def clean_idempotency_key(self):
+        value = str(self.cleaned_data.get("idempotency_key") or "").strip()
+        if not value:
+            raise ValidationError("创建幂等键无效，请刷新页面重试。")
+        return value
+
+    def clean(self):
+        cleaned = super().clean()
+        domain = cleaned.get("count_domain")
+        warehouse = cleaned.get("warehouse")
+        department = cleaned.get("department")
+        employee = cleaned.get("employee")
+        if domain == SupplyCountDomain.WAREHOUSE_STOCK:
+            if warehouse is None:
+                self.add_error("warehouse", "仓库库存盘点必须选择仓库。")
+            if department is not None or employee is not None:
+                raise ValidationError("仓库库存盘点不得填写部门或员工。")
+        elif domain == SupplyCountDomain.CUSTODY:
+            if department is None:
+                self.add_error("department", "保管盘点必须选择部门。")
+            if warehouse is not None:
+                self.add_error("warehouse", "保管盘点不得选择仓库。")
+            if employee is not None and (
+                department is None or employee.department_id != department.pk
+            ):
+                self.add_error("employee", "盘点员工必须属于所选部门。")
+        if domain and not can_create_supply_count_task(
+            self.actor,
+            company=self.company,
+            count_domain=domain,
+            department=department,
+        ):
+            raise PermissionDenied("您没有在所选范围创建盘点任务的权限。")
+        return cleaned
+
+
+class SupplyCountRecordForm(forms.Form):
+    counted_quantity = forms.DecimalField(
+        label="实盘数量",
+        max_digits=18,
+        decimal_places=4,
+        min_value=Decimal("0"),
+        widget=forms.NumberInput(attrs={"step": "0.0001", "min": "0"}),
+    )
+    remark = forms.CharField(
+        label="差异原因/备注",
+        required=False,
+        widget=forms.Textarea(attrs={"rows": 2}),
+    )
+    adjustment_unit_cost = forms.DecimalField(
+        label="零库存盘盈单位成本",
+        max_digits=18,
+        decimal_places=6,
+        min_value=Decimal("0"),
+        required=False,
+        widget=forms.NumberInput(attrs={"step": "0.000001", "min": "0"}),
+    )
+    zero_cost_reason = forms.CharField(
+        label="0 成本原因",
+        max_length=500,
+        required=False,
+        widget=forms.Textarea(attrs={"rows": 2}),
+    )
+
+    def __init__(self, *args, actor=None, line=None, **kwargs):
+        if actor is None or line is None:
+            raise PermissionDenied("实盘录入表单必须绑定当前用户和盘点行。")
+        self.actor = actor
+        self.line = line
+        initial = dict(kwargs.pop("initial", {}) or {})
+        initial.setdefault("counted_quantity", line.counted_quantity)
+        initial.setdefault("remark", line.remark)
+        initial.setdefault("adjustment_unit_cost", line.adjustment_unit_cost)
+        initial.setdefault("zero_cost_reason", line.zero_cost_reason)
+        super().__init__(*args, initial=initial, **kwargs)
+        show_adjustment_cost = bool(
+            can_view_supply_cost(actor)
+            and line.count_task.count_domain == SupplyCountDomain.WAREHOUSE_STOCK
+            and line.expected_quantity == 0
+        )
+        if not show_adjustment_cost:
+            self.fields.pop("adjustment_unit_cost")
+            self.fields.pop("zero_cost_reason")
+        _bootstrap_widgets(self)
+
+    def clean_counted_quantity(self):
+        return quantize_quantity(self.cleaned_data["counted_quantity"])
+
+
+class SupplyCountAddItemForm(forms.Form):
+    item = forms.ModelChoiceField(
+        label="新增应盘物品", queryset=SupplyItem.objects.none()
+    )
+
+    def __init__(self, *args, actor=None, task=None, **kwargs):
+        if actor is None or task is None:
+            raise PermissionDenied("新增盘点物品表单必须绑定任务和用户。")
+        require_execute_supply_count_task(actor, task)
+        super().__init__(*args, **kwargs)
+        self.fields["item"].queryset = SupplyItem.objects.filter(
+            company=task.company, is_active=True
+        ).exclude(count_lines__count_task=task).order_by("normalized_item_code")
+        _bootstrap_widgets(self)
+
+
+class SupplyCountCancelForm(forms.Form):
+    reason = forms.CharField(
+        label="取消原因",
+        max_length=500,
+        widget=forms.Textarea(attrs={"rows": 3}),
+    )
+
+
+class SupplyCountAdjustmentCostForm(forms.Form):
+    unit_cost = forms.DecimalField(
+        label="盘盈单位成本",
+        max_digits=18,
+        decimal_places=6,
+        min_value=Decimal("0"),
+        widget=forms.NumberInput(attrs={"step": "0.000001", "min": "0"}),
+    )
+    zero_cost_reason = forms.CharField(
+        label="0 成本原因",
+        max_length=500,
+        required=False,
+        widget=forms.Textarea(attrs={"rows": 3}),
+    )
+
+    def __init__(self, *args, actor=None, line=None, **kwargs):
+        if actor is None or line is None or not can_view_supply_cost(actor):
+            raise PermissionDenied("您没有维护盘盈成本的权限。")
+        require_execute_supply_count_task(actor, line.count_task)
+        initial = dict(kwargs.pop("initial", {}) or {})
+        initial.setdefault("unit_cost", line.adjustment_unit_cost)
+        initial.setdefault("zero_cost_reason", line.zero_cost_reason)
+        super().__init__(*args, initial=initial, **kwargs)
+        _bootstrap_widgets(self)
+
+
+class SupplyCountCustodyResolutionForm(forms.Form):
+    resolution_type = forms.ChoiceField(
+        label="解决方式", choices=SupplyCountResolutionType.choices
+    )
+    target_warehouse = forms.ModelChoiceField(
+        label="归还仓库", queryset=SupplyWarehouse.objects.none(), required=False
+    )
+    target_department = forms.ModelChoiceField(
+        label="目标责任部门", queryset=Department.objects.none(), required=False
+    )
+    target_employee = forms.ModelChoiceField(
+        label="目标责任员工", queryset=Employee.objects.none(), required=False
+    )
+    business_date = forms.DateField(
+        label="业务日期", widget=forms.DateInput(attrs={"type": "date"})
+    )
+    reason = forms.CharField(
+        label="解决原因", max_length=500, widget=forms.Textarea(attrs={"rows": 3})
+    )
+    idempotency_key = forms.CharField(widget=forms.HiddenInput())
+
+    def __init__(self, *args, actor=None, line=None, **kwargs):
+        if actor is None or line is None:
+            raise PermissionDenied("差异解决表单必须绑定盘点行和用户。")
+        require_execute_supply_count_task(actor, line.count_task)
+        self.actor = actor
+        self.line = line
+        initial = dict(kwargs.pop("initial", {}) or {})
+        initial.setdefault("business_date", timezone.localdate())
+        initial.setdefault("idempotency_key", str(uuid.uuid4()))
+        super().__init__(*args, initial=initial, **kwargs)
+        if line.difference_quantity and line.difference_quantity > 0:
+            self.fields["resolution_type"].choices = [
+                (SupplyCountResolutionType.CORRECTION, "盘点正向更正")
+            ]
+        self.fields["target_warehouse"].queryset = SupplyWarehouse.objects.filter(
+            company=line.company, is_active=True
+        ).order_by("normalized_code")
+        departments = Department.objects.filter(company=line.company, is_active=True)
+        roles = role_names_for(actor)
+        if "department_manager" in roles and not roles.intersection(
+            {"system_admin", "finance", "equipment"}
+        ):
+            departments = departments.filter(
+                pk__in=resolve_department_ids(actor, line.company)
+            )
+        self.fields["target_department"].queryset = departments.order_by(
+            "normalized_code"
+        )
+        self.fields["target_employee"].queryset = Employee.objects.filter(
+            company=line.company,
+            employment_status="active",
+            is_active=True,
+            department__is_active=True,
+        ).select_related("department").order_by("normalized_employee_no")
+        _bootstrap_widgets(self)
+
+    def clean_idempotency_key(self):
+        value = str(self.cleaned_data.get("idempotency_key") or "").strip()
+        if not value:
+            raise ValidationError("动作幂等键无效，请刷新页面重试。")
+        return value
+
+    def clean(self):
+        cleaned = super().clean()
+        resolution_type = cleaned.get("resolution_type")
+        if resolution_type == SupplyCountResolutionType.RETURN:
+            if cleaned.get("target_warehouse") is None:
+                self.add_error("target_warehouse", "归还解决必须选择仓库。")
+        elif resolution_type == SupplyCountResolutionType.TRANSFER:
+            department = cleaned.get("target_department")
+            employee = cleaned.get("target_employee")
+            if department is None:
+                self.add_error("target_department", "转交解决必须选择目标部门。")
+            if employee is not None and (
+                department is None or employee.department_id != department.pk
+            ):
+                self.add_error("target_employee", "目标员工必须属于目标部门。")
+        return cleaned

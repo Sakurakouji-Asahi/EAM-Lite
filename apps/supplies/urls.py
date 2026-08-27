@@ -90,6 +90,49 @@ urlpatterns = [
         views.opening_custody_import,
         name="opening-custody-import",
     ),
+    path("counts/", views.count_task_list, name="count-task-list"),
+    path("counts/new/", views.count_task_create, name="count-task-create"),
+    path("counts/<uuid:pk>/", views.count_task_detail, name="count-task-detail"),
+    path(
+        "counts/<uuid:pk>/publish/",
+        views.count_task_publish,
+        name="count-task-publish",
+    ),
+    path(
+        "counts/<uuid:pk>/add-item/",
+        views.count_task_add_item,
+        name="count-task-add-item",
+    ),
+    path(
+        "counts/<uuid:pk>/lines/<uuid:line_pk>/record/",
+        views.count_line_record,
+        name="count-line-record",
+    ),
+    path(
+        "counts/<uuid:pk>/lines/<uuid:line_pk>/cost/",
+        views.count_line_adjustment_cost,
+        name="count-line-adjustment-cost",
+    ),
+    path(
+        "counts/<uuid:pk>/lines/<uuid:line_pk>/resolve/",
+        views.count_line_resolve,
+        name="count-line-resolve",
+    ),
+    path(
+        "counts/<uuid:pk>/stop/",
+        views.count_task_stop,
+        name="count-task-stop",
+    ),
+    path(
+        "counts/<uuid:pk>/close/",
+        views.count_task_close,
+        name="count-task-close",
+    ),
+    path(
+        "counts/<uuid:pk>/cancel/",
+        views.count_task_cancel,
+        name="count-task-cancel",
+    ),
     path(
         "individual-durables/new/",
         views.individual_durable_create,

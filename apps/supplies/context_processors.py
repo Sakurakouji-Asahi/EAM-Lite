@@ -1,10 +1,11 @@
 from django.db.utils import OperationalError, ProgrammingError
 
-from apps.masterdata.permissions import current_company
+from apps.masterdata.permissions import current_company, role_names_for
 
 from .models import SupplyItemType
 from .permissions import (
     can_create_supply_document,
+    can_create_supply_count_task,
     can_import_opening_custody,
     can_manage_supply_category,
     can_manage_supply_item,
@@ -61,6 +62,32 @@ def supplies_navigation(request):
             ),
             "can_view_custodies": bool(
                 company is not None and can_view_supply_custodies(user)
+            ),
+            "can_view_counts": bool(
+                company is not None
+                and role_names_for(user).intersection(
+                    {
+                        "system_admin",
+                        "finance",
+                        "warehouse",
+                        "equipment",
+                        "management",
+                        "department_manager",
+                        "employee",
+                    }
+                )
+            ),
+            "can_create_counts": bool(
+                company is not None
+                and role_names_for(user).intersection(
+                    {
+                        "system_admin",
+                        "finance",
+                        "warehouse",
+                        "equipment",
+                        "department_manager",
+                    }
+                )
             ),
             "can_post_documents": bool(
                 company is not None and can_post_supply_document(user)

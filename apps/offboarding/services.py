@@ -339,12 +339,21 @@ def _recount(clearance):
     unresolved = items.filter(
         resolution__in=UNRESOLVED_ITEM_RESOLUTIONS
     ).count()
+    from apps.supplies.models import EmployeeSupplyClearanceItem
+
+    supply_items = EmployeeSupplyClearanceItem.objects.filter(clearance=clearance)
+    supply_total = supply_items.count()
+    supply_unresolved = supply_items.filter(resolution="pending").count()
     values = {
         "total_assets_snapshot": total,
         "unresolved_assets": unresolved,
+        "total_supply_custodies_snapshot": supply_total,
+        "unresolved_supply_custodies": supply_unresolved,
     }
     if clearance.status in ACTIVE_CLEARANCE_STATUSES:
-        values["status"] = clearance_status_for_unresolved(unresolved)
+        values["status"] = clearance_status_for_unresolved(
+            unresolved + supply_unresolved
+        )
     _base_update(
         EmployeeAssetClearance,
         clearance.pk,
@@ -447,6 +456,13 @@ def initiate_clearance(
             entry=entry,
             discovered_at=initiated_at,
         )
+    from apps.supplies.services import create_supply_clearance_items
+
+    create_supply_clearance_items(
+        clearance=clearance,
+        actor=actor,
+        request=request,
+    )
     _recount(clearance)
     _audit(
         actor=actor,
@@ -457,6 +473,8 @@ def initiate_clearance(
             "employment_status": "leaving",
             "item_count": clearance.total_assets_snapshot,
             "unresolved_assets": clearance.unresolved_assets,
+            "supply_custody_count": clearance.total_supply_custodies_snapshot,
+            "unresolved_supply_custodies": clearance.unresolved_supply_custodies,
         },
         request=request,
     )
@@ -717,6 +735,14 @@ def _refresh_locked(clearance, *, actor, reason, request=None):
         # evidence. A newly rediscovered second source still blocks resolution
         # through the authoritative current-relationship check, but does not
         # rewrite that historical snapshot.
+    from apps.supplies.services import create_supply_clearance_items
+
+    created_supply_items = create_supply_clearance_items(
+        clearance=clearance,
+        actor=actor,
+        historical_only=True,
+        request=request,
+    )
     _recount(clearance)
     _audit(
         actor=actor,
@@ -727,6 +753,10 @@ def _refresh_locked(clearance, *, actor, reason, request=None):
             "changed_item_ids": changed,
             "post_initiation_asset_ids_skipped": skipped,
             "unresolved_assets": clearance.unresolved_assets,
+            "created_supply_item_ids": [
+                str(item.pk) for item in created_supply_items
+            ],
+            "unresolved_supply_custodies": clearance.unresolved_supply_custodies,
         },
         request=request,
     )
@@ -790,7 +820,19 @@ def create_supplemental_clearance(
         return existing
     initiated_at = timezone.now()
     sources = _collect_sources(employee)
-    if not sources:
+    from apps.supplies.models import SupplyCustody, SupplyCustodyStatus, SupplyItemType
+
+    original_supply_ids = set(
+        original.supply_items.values_list("custody_id", flat=True)
+    )
+    supply_candidates = SupplyCustody.objects.filter(
+        company=original.company,
+        employee=employee,
+        status=SupplyCustodyStatus.OPEN,
+        current_quantity__gt=0,
+        item__item_type=SupplyItemType.DURABLE_QUANTITY,
+    ).exclude(pk__in=original_supply_ids)
+    if not sources and not supply_candidates.exists():
         raise ValidationError("当前未发现需要补充清退的异常资产。")
     original_asset_ids = set(
         original.items.values_list("asset_id", flat=True)
@@ -834,6 +876,14 @@ def create_supplemental_clearance(
             entry=entry,
             discovered_at=initiated_at,
         )
+    from apps.supplies.services import create_supply_clearance_items
+
+    create_supply_clearance_items(
+        clearance=clearance,
+        actor=actor,
+        historical_only=True,
+        request=request,
+    )
     _recount(clearance)
     _audit(
         actor=actor,
@@ -843,6 +893,7 @@ def create_supplemental_clearance(
             "original_clearance_id": str(original.pk),
             "reason": explanation,
             "item_count": clearance.total_assets_snapshot,
+            "supply_custody_count": clearance.total_supply_custodies_snapshot,
         },
         request=request,
     )
@@ -885,6 +936,14 @@ def _current_sources_must_be_covered(clearance, *, actor, request=None):
             "存在清退发起后新增给离职员工的资产关系，必须先纠正后才能完成："
             + "、".join(post_initiation)
         )
+    from apps.supplies.services import create_supply_clearance_items
+
+    create_supply_clearance_items(
+        clearance=clearance,
+        actor=actor,
+        historical_only=True,
+        request=request,
+    )
 
 
 @transaction.atomic
@@ -934,6 +993,15 @@ def complete_clearance(
         raise ValidationError(
             {"clearance": f"仍有 {clearance.unresolved_assets} 项资产未解决，不能完成清退。"}
         )
+    if clearance.unresolved_supply_custodies:
+        raise ValidationError(
+            {
+                "clearance": (
+                    "该员工仍有数量型低值耐用品未完成归还、转交、报损或报废，"
+                    "暂不能完成离职清退。"
+                )
+            }
+        )
 
     employee = clearance.employee
     employee.refresh_from_db()
@@ -959,6 +1027,7 @@ def complete_clearance(
         {
             "status": EmployeeAssetClearance.Status.COMPLETED,
             "unresolved_assets": 0,
+            "unresolved_supply_custodies": 0,
             "completed_at": now,
             "completed_by_id": actor.pk,
         },
@@ -974,6 +1043,8 @@ def complete_clearance(
             "status": "completed",
             "termination_date": employee.termination_date,
             "supplemental": clearance.supplements_clearance_id is not None,
+            "asset_count": clearance.total_assets_snapshot,
+            "supply_custody_count": clearance.total_supply_custodies_snapshot,
         },
         request=request,
     )

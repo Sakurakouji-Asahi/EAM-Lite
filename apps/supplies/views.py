@@ -25,6 +25,12 @@ from apps.masterdata.permissions import (
 
 from .forms import (
     SupplyCategoryForm,
+    SupplyCountAddItemForm,
+    SupplyCountAdjustmentCostForm,
+    SupplyCountCancelForm,
+    SupplyCountCustodyResolutionForm,
+    SupplyCountRecordForm,
+    SupplyCountTaskForm,
     SupplyConsumableReturnForm,
     SupplyCustodyTransferForm,
     SupplyCustodyWriteOffForm,
@@ -40,6 +46,10 @@ from .forms import (
 )
 from .models import (
     SupplyCategory,
+    SupplyCountDomain,
+    SupplyCountLine,
+    SupplyCountStatus,
+    SupplyCountTask,
     SupplyCustody,
     SupplyCustodyAction,
     SupplyDocument,
@@ -54,12 +64,15 @@ from .models import (
 )
 from .permissions import (
     can_create_supply_document,
+    can_create_supply_count_task,
+    can_execute_supply_count_task,
     can_manage_supply_category,
     can_manage_supply_item,
     can_manage_supply_warehouse,
     can_manage_supply_custody,
     can_post_supply_document,
     can_reverse_supply_document,
+    can_record_supply_count,
     can_view_supply_custodies,
     can_view_supply_cost,
     can_view_supply_master_data,
@@ -69,12 +82,14 @@ from .permissions import (
     require_create_supply_document,
     require_post_supply_document,
     require_reverse_supply_document,
+    require_execute_supply_count_task,
     require_view_supply_custodies,
     require_view_supply_documents,
     require_view_supply_master_data,
     require_view_supply_module,
     require_view_supply_stock,
     scoped_supply_categories,
+    scoped_supply_count_tasks,
     scoped_supply_items,
     scoped_supply_documents,
     scoped_supply_custodies,
@@ -84,6 +99,11 @@ from .permissions import (
 )
 from .services import (
     cancel_supply_document,
+    add_supply_count_item,
+    cancel_supply_count_task,
+    close_supply_count_task,
+    correct_custody_for_count,
+    create_supply_count_task,
     create_supply_document,
     create_supply_category,
     create_supply_item,
@@ -92,8 +112,13 @@ from .services import (
     deactivate_supply_item,
     deactivate_supply_warehouse,
     post_supply_document,
+    publish_supply_count_task,
+    record_supply_count,
+    return_custody_for_count,
     return_custody_to_warehouse,
     reverse_supply_document,
+    set_supply_count_adjustment_cost,
+    stop_supply_count_entry,
     transfer_custody,
     update_supply_category,
     update_supply_item,
@@ -112,6 +137,7 @@ SPRINT15_DOCUMENT_TYPES = frozenset(
         SupplyDocumentType.RETURN,
         SupplyDocumentType.TRANSFER,
         SupplyDocumentType.REVERSAL,
+        SupplyDocumentType.COUNT_ADJUSTMENT,
     }
 )
 SPRINT15_DOCUMENT_TYPE_CHOICES = tuple(
@@ -177,6 +203,13 @@ def _iso_date(value):
 def _uuid_or_none(value):
     try:
         return UUID(str(value or "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _int_or_none(value):
+    try:
+        return int(str(value or "").strip())
     except (TypeError, ValueError):
         return None
 
@@ -655,6 +688,7 @@ def document_list(request):
             "employee",
             "created_by",
             "posted_by",
+            "source_count_task__warehouse",
         ).prefetch_related("lines__item"),
     )
     query = request.GET.get("q", "").strip()
@@ -683,6 +717,7 @@ def document_list(request):
         queryset = (
             queryset.filter(
                 Q(source_warehouse_id=warehouse_id) | Q(target_warehouse_id=warehouse_id)
+                | Q(source_count_task__warehouse_id=warehouse_id)
             )
             if warehouse_id
             else queryset.none()
@@ -865,6 +900,7 @@ def document_detail(request, pk):
                 "cancelled_by",
                 "reversed_by",
                 "reversal_of",
+                "source_count_task__warehouse",
             ).prefetch_related(
                 "lines__item",
                 "lines__source_issue_line__document",
@@ -1660,3 +1696,402 @@ def opening_stock_import(request):
     if company is None:
         raise Http404
     return redirect("imports:upload", import_type="opening_stock")
+
+
+def _count_task_or_404(request, company, pk):
+    return get_object_or_404(
+        scoped_supply_count_tasks(
+            request.user,
+            company,
+            SupplyCountTask.objects.select_related(
+                "warehouse",
+                "department",
+                "employee",
+                "created_by",
+                "published_by",
+                "stopped_by",
+                "closed_by",
+                "cancelled_by",
+            ),
+        ),
+        pk=pk,
+    )
+
+
+@login_required
+def count_task_list(request):
+    company = _company_or_404()
+    queryset = scoped_supply_count_tasks(
+        request.user,
+        company,
+        SupplyCountTask.objects.select_related(
+            "warehouse", "department", "employee", "created_by"
+        ),
+    )
+    if not queryset.exists() and not role_names_for(request.user).intersection(
+        {"system_admin", "finance", "warehouse", "equipment", "management", "department_manager", "employee"}
+    ):
+        raise PermissionDenied("您没有查看低值物品盘点任务的权限。")
+    query = request.GET.get("q", "").strip()
+    domain = request.GET.get("count_domain", "").strip()
+    status = request.GET.get("status", "").strip()
+    warehouse_value = request.GET.get("warehouse", "").strip()
+    department_value = request.GET.get("department", "").strip()
+    employee_value = request.GET.get("employee", "").strip()
+    date_from_value = request.GET.get("date_from", "").strip()
+    date_to_value = request.GET.get("date_to", "").strip()
+    if query:
+        queryset = queryset.filter(Q(task_no__icontains=query) | Q(name__icontains=query))
+    if domain in SupplyCountDomain.values:
+        queryset = queryset.filter(count_domain=domain)
+    else:
+        domain = ""
+    if status in SupplyCountStatus.values:
+        queryset = queryset.filter(status=status)
+    else:
+        status = ""
+    warehouse_id = _uuid_or_none(warehouse_value)
+    department_id = _int_or_none(department_value)
+    employee_id = _int_or_none(employee_value)
+    if warehouse_value:
+        queryset = queryset.filter(warehouse_id=warehouse_id) if warehouse_id else queryset.none()
+    if department_value:
+        queryset = queryset.filter(department_id=department_id) if department_id else queryset.none()
+    if employee_value:
+        queryset = queryset.filter(employee_id=employee_id) if employee_id else queryset.none()
+    date_from = _iso_date(date_from_value)
+    date_to = _iso_date(date_to_value)
+    if date_from_value:
+        queryset = queryset.filter(planned_start__gte=date_from) if date_from else queryset.none()
+    if date_to_value:
+        queryset = queryset.filter(planned_end__lte=date_to) if date_to else queryset.none()
+    return render(
+        request,
+        "supplies/count_task_list.html",
+        {
+            "page_obj": _page(queryset.order_by("-created_at", "-task_no"), request),
+            "pagination_query": _pagination_query(request),
+            "query": query,
+            "selected_domain": domain,
+            "selected_status": status,
+            "selected_warehouse": warehouse_value,
+            "selected_department": department_value,
+            "selected_employee": employee_value,
+            "date_from": date_from_value,
+            "date_to": date_to_value,
+            "domains": SupplyCountDomain.choices,
+            "statuses": SupplyCountStatus.choices,
+            "warehouses": SupplyWarehouse.objects.filter(company=company).order_by("normalized_code"),
+            "departments": scoped_departments(request.user, company).order_by("normalized_code"),
+            "employees": scoped_employees(request.user, company).order_by("normalized_employee_no"),
+            "can_create_warehouse": can_create_supply_count_task(
+                request.user, company=company, count_domain=SupplyCountDomain.WAREHOUSE_STOCK
+            ),
+            "can_create_custody": can_create_supply_count_task(
+                request.user,
+                company=company,
+                count_domain=SupplyCountDomain.CUSTODY,
+                department=scoped_departments(request.user, company).first(),
+            ),
+        },
+    )
+
+
+@login_required
+def count_task_create(request):
+    company = _company_or_404()
+    form = SupplyCountTaskForm(
+        request.POST or None,
+        actor=request.user,
+        company=company,
+        initial={"count_domain": request.GET.get("count_domain", "")},
+    )
+    if not form.fields["count_domain"].choices:
+        raise PermissionDenied("您没有创建低值物品盘点任务的权限。")
+    if request.method == "POST" and form.is_valid():
+        try:
+            task = create_supply_count_task(
+                actor=request.user,
+                company=company,
+                data=form.cleaned_data,
+                request=request,
+            )
+        except ValidationError as exc:
+            _service_error(form, exc)
+        else:
+            messages.success(request, "盘点任务草稿已创建；草稿尚不冻结业务。")
+            return redirect("supplies:count-task-detail", pk=task.pk)
+    return render(request, "supplies/count_task_form.html", {"form": form})
+
+
+@login_required
+def count_task_detail(request, pk):
+    company = _company_or_404()
+    task = _count_task_or_404(request, company, pk)
+    lines = SupplyCountLine.objects.filter(count_task=task).select_related(
+        "item",
+        "stock_balance",
+        "custody__department",
+        "custody__employee",
+        "adjustment_document_line__document",
+        "resolution_custody_movement__from_custody",
+        "resolution_custody_movement__to_custody",
+        "counted_by",
+        "resolved_by",
+    )
+    roles = role_names_for(request.user)
+    if "employee" in roles and not roles.intersection(
+        {"system_admin", "finance", "warehouse", "equipment", "management", "department_manager"}
+    ):
+        lines = lines.filter(custody__employee__user=request.user)
+    line_rows = [
+        {"line": line, "can_record": can_record_supply_count(request.user, line)}
+        for line in lines.order_by("item_code_snapshot", "pk")
+    ]
+    return render(
+        request,
+        "supplies/count_task_detail.html",
+        {
+            "task": task,
+            "line_rows": line_rows,
+            "show_cost": can_view_supply_cost(request.user),
+            "can_execute": can_execute_supply_count_task(request.user, task),
+        },
+    )
+
+
+def _count_confirm_action(request, *, task, title, warning, service, success):
+    require_execute_supply_count_task(request.user, task)
+    error = None
+    if request.method == "POST":
+        try:
+            service(task=task, actor=request.user, request=request)
+        except ValidationError as exc:
+            error = "；".join(getattr(exc, "messages", [str(exc)]))
+        else:
+            messages.success(request, success)
+            return redirect("supplies:count-task-detail", pk=task.pk)
+    return render(
+        request,
+        "supplies/count_action_confirm.html",
+        {"task": task, "title": title, "warning": warning, "error": error},
+    )
+
+
+@login_required
+def count_task_publish(request, pk):
+    company = _company_or_404()
+    task = _count_task_or_404(request, company, pk)
+    return _count_confirm_action(
+        request,
+        task=task,
+        title="发布盘点任务",
+        warning="发布将固化快照；仓库盘点会立即冻结该仓库全部库存过账。",
+        service=publish_supply_count_task,
+        success="盘点任务已发布，快照已固化。",
+    )
+
+
+@login_required
+def count_task_stop(request, pk):
+    company = _company_or_404()
+    task = _count_task_or_404(request, company, pk)
+    return _count_confirm_action(
+        request,
+        task=task,
+        title="停止实盘录入",
+        warning="停止后所有实盘数量只读，任务进入差异处理。",
+        service=stop_supply_count_entry,
+        success="实盘录入已停止，差异数量已固定。",
+    )
+
+
+@login_required
+def count_task_close(request, pk):
+    company = _company_or_404()
+    task = _count_task_or_404(request, company, pk)
+    return _count_confirm_action(
+        request,
+        task=task,
+        title="关闭盘点任务",
+        warning="关闭仓库盘点会在同一事务生成并过账调整单；保管差异必须已有真实流水证据。",
+        service=close_supply_count_task,
+        success="盘点任务已关闭。",
+    )
+
+
+@login_required
+def count_task_cancel(request, pk):
+    company = _company_or_404()
+    task = _count_task_or_404(request, company, pk)
+    require_execute_supply_count_task(request.user, task)
+    form = SupplyCountCancelForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        try:
+            cancel_supply_count_task(
+                task=task,
+                actor=request.user,
+                reason=form.cleaned_data["reason"],
+                request=request,
+            )
+        except ValidationError as exc:
+            _service_error(form, exc)
+        else:
+            messages.success(request, "盘点任务已取消；快照和录入历史已保留。")
+            return redirect("supplies:count-task-detail", pk=task.pk)
+    return render(
+        request,
+        "supplies/count_cancel_form.html",
+        {"task": task, "form": form},
+    )
+
+
+@login_required
+def count_line_record(request, pk, line_pk):
+    company = _company_or_404()
+    task = _count_task_or_404(request, company, pk)
+    line = get_object_or_404(
+        SupplyCountLine.objects.select_related(
+            "count_task", "custody__employee", "custody__department"
+        ),
+        pk=line_pk,
+        count_task=task,
+    )
+    if not can_record_supply_count(request.user, line):
+        raise PermissionDenied("您不能录入此盘点行。")
+    form = SupplyCountRecordForm(request.POST or None, actor=request.user, line=line)
+    if request.method == "POST" and form.is_valid():
+        try:
+            record_supply_count(
+                line=line,
+                counted_quantity=form.cleaned_data["counted_quantity"],
+                remark=form.cleaned_data.get("remark", ""),
+                adjustment_unit_cost=form.cleaned_data.get("adjustment_unit_cost"),
+                zero_cost_reason=form.cleaned_data.get("zero_cost_reason", ""),
+                actor=request.user,
+                request=request,
+            )
+        except ValidationError as exc:
+            _service_error(form, exc)
+        else:
+            messages.success(request, "实盘数量已保存。")
+            return redirect("supplies:count-task-detail", pk=task.pk)
+    return render(
+        request,
+        "supplies/count_record_form.html",
+        {"task": task, "line": line, "form": form, "show_cost": can_view_supply_cost(request.user)},
+    )
+
+
+@login_required
+def count_task_add_item(request, pk):
+    company = _company_or_404()
+    task = _count_task_or_404(request, company, pk)
+    form = SupplyCountAddItemForm(request.POST or None, actor=request.user, task=task)
+    if request.method == "POST" and form.is_valid():
+        try:
+            add_supply_count_item(
+                task=task,
+                item=form.cleaned_data["item"],
+                actor=request.user,
+                request=request,
+            )
+        except ValidationError as exc:
+            _service_error(form, exc)
+        else:
+            messages.success(request, "零库存盘盈候选物品已加入本次快照。")
+            return redirect("supplies:count-task-detail", pk=task.pk)
+    return render(
+        request,
+        "supplies/count_add_item_form.html",
+        {"task": task, "form": form},
+    )
+
+
+@login_required
+def count_line_adjustment_cost(request, pk, line_pk):
+    company = _company_or_404()
+    task = _count_task_or_404(request, company, pk)
+    line = get_object_or_404(SupplyCountLine.objects.select_related("count_task"), pk=line_pk, count_task=task)
+    form = SupplyCountAdjustmentCostForm(request.POST or None, actor=request.user, line=line)
+    if request.method == "POST" and form.is_valid():
+        try:
+            set_supply_count_adjustment_cost(
+                line=line,
+                unit_cost=form.cleaned_data["unit_cost"],
+                zero_cost_reason=form.cleaned_data.get("zero_cost_reason", ""),
+                actor=request.user,
+                request=request,
+            )
+        except ValidationError as exc:
+            _service_error(form, exc)
+        else:
+            messages.success(request, "盘盈单位成本已保存。")
+            return redirect("supplies:count-task-detail", pk=task.pk)
+    return render(
+        request,
+        "supplies/count_cost_form.html",
+        {"task": task, "line": line, "form": form},
+    )
+
+
+@login_required
+def count_line_resolve(request, pk, line_pk):
+    company = _company_or_404()
+    task = _count_task_or_404(request, company, pk)
+    line = get_object_or_404(
+        SupplyCountLine.objects.select_related("count_task", "custody__item"),
+        pk=line_pk,
+        count_task=task,
+    )
+    form = SupplyCountCustodyResolutionForm(request.POST or None, actor=request.user, line=line)
+    if request.method == "POST" and form.is_valid():
+        resolution_type = form.cleaned_data["resolution_type"]
+        quantity = abs(line.difference_quantity)
+        common = {
+            "count_line": line,
+            "business_date": form.cleaned_data["business_date"],
+            "reason": form.cleaned_data["reason"],
+            "actor": request.user,
+            "idempotency_key": form.cleaned_data["idempotency_key"],
+            "request": request,
+        }
+        try:
+            if resolution_type == "return":
+                return_custody_for_count(
+                    target_warehouse=form.cleaned_data["target_warehouse"],
+                    **common,
+                )
+            elif resolution_type == "transfer":
+                transfer_custody(
+                    custody=line.custody,
+                    quantity=quantity,
+                    target_department=form.cleaned_data["target_department"],
+                    target_employee=form.cleaned_data.get("target_employee"),
+                    **common,
+                )
+            elif resolution_type in {"loss", "scrap"}:
+                write_off_custody(
+                    custody=line.custody,
+                    quantity=quantity,
+                    action=resolution_type,
+                    **common,
+                )
+            else:
+                correct_custody_for_count(
+                    count_line=line,
+                    actor=request.user,
+                    reason=form.cleaned_data["reason"],
+                    idempotency_key=form.cleaned_data["idempotency_key"],
+                    request=request,
+                )
+        except ValidationError as exc:
+            _service_error(form, exc)
+        else:
+            messages.success(request, "保管盘点差异已关联真实解决流水。")
+            return redirect("supplies:count-task-detail", pk=task.pk)
+    return render(
+        request,
+        "supplies/count_resolution_form.html",
+        {"task": task, "line": line, "form": form},
+    )

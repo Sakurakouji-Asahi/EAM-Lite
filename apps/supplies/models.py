@@ -77,6 +77,42 @@ class SupplyCustodyAction(models.TextChoices):
     REVERSAL = "reversal", "冲销"
 
 
+class SupplyCountDomain(models.TextChoices):
+    WAREHOUSE_STOCK = "warehouse_stock", "仓库库存盘点"
+    CUSTODY = "custody", "耐用品保管盘点"
+
+
+class SupplyCountStatus(models.TextChoices):
+    DRAFT = "draft", "草稿"
+    IN_PROGRESS = "in_progress", "进行中"
+    RECONCILIATION = "reconciliation", "差异处理中"
+    CLOSED = "closed", "已关闭"
+    CANCELLED = "cancelled", "已取消"
+
+
+class SupplyCountResolutionType(models.TextChoices):
+    RETURN = "return", "归还"
+    TRANSFER = "transfer", "转交"
+    LOSS = "loss", "报损"
+    SCRAP = "scrap", "报废"
+    CORRECTION = "correction", "盘点更正"
+
+
+class EmployeeSupplyClearanceResolution(models.TextChoices):
+    PENDING = "pending", "待处理"
+    RETURNED = "returned", "已归还"
+    TRANSFERRED = "transferred", "已转交"
+    LOST = "lost", "已报损"
+    SCRAPPED = "scrapped", "已报废"
+
+
+SUPPLY_SEQUENCE_CHOICES = (
+    *SupplyDocumentType.choices,
+    ("count_task", "盘点任务"),
+)
+SUPPLY_SEQUENCE_VALUES = (*SupplyDocumentType.values, "count_task")
+
+
 def _clean_required_text(value, *, field_name, label):
     cleaned = clean_display_identifier(value)
     if not cleaned:
@@ -474,7 +510,7 @@ class SupplyDocumentSequence(models.Model):
         related_name="supply_document_sequences",
     )
     sequence_type = models.CharField(
-        "序号类型", max_length=32, choices=SupplyDocumentType.choices
+        "序号类型", max_length=32, choices=SUPPLY_SEQUENCE_CHOICES
     )
     year = models.PositiveSmallIntegerField("年度")
     current_value = models.PositiveBigIntegerField("当前序号", default=0)
@@ -489,7 +525,7 @@ class SupplyDocumentSequence(models.Model):
                 name="uq_supply_doc_sequence_scope",
             ),
             models.CheckConstraint(
-                condition=Q(sequence_type__in=SupplyDocumentType.values),
+                condition=Q(sequence_type__in=SUPPLY_SEQUENCE_VALUES),
                 name="ck_supply_doc_sequence_type",
             ),
             models.CheckConstraint(
@@ -598,6 +634,14 @@ class SupplyDocument(models.Model):
         on_delete=models.PROTECT,
         related_name="reversal_document",
     )
+    source_count_task = models.OneToOneField(
+        "SupplyCountTask",
+        verbose_name="来源盘点任务",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="adjustment_document",
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         verbose_name="创建人",
@@ -677,6 +721,7 @@ class SupplyDocument(models.Model):
                         department__isnull=True,
                         employee__isnull=True,
                         reversal_of__isnull=True,
+                        source_count_task__isnull=True,
                     )
                     | Q(
                         document_type="issue",
@@ -684,6 +729,7 @@ class SupplyDocument(models.Model):
                         target_warehouse__isnull=True,
                         department__isnull=False,
                         reversal_of__isnull=True,
+                        source_count_task__isnull=True,
                     )
                     | Q(
                         document_type="return",
@@ -691,6 +737,7 @@ class SupplyDocument(models.Model):
                         target_warehouse__isnull=False,
                         department__isnull=False,
                         reversal_of__isnull=True,
+                        source_count_task__isnull=True,
                     )
                     | Q(
                         document_type="transfer",
@@ -699,17 +746,24 @@ class SupplyDocument(models.Model):
                         department__isnull=True,
                         employee__isnull=True,
                         reversal_of__isnull=True,
+                        source_count_task__isnull=True,
                     )
                     | Q(
                         document_type="reversal",
                         reversal_of__isnull=False,
+                        source_count_task__isnull=True,
                     )
                     | Q(
                         document_type="count_adjustment",
+                        source_warehouse__isnull=True,
+                        target_warehouse__isnull=True,
+                        department__isnull=True,
+                        employee__isnull=True,
                         reversal_of__isnull=True,
+                        source_count_task__isnull=False,
                     )
                 ),
-                name="ck_supply_document_s15_shape",
+                name="ck_supply_document_s17_shape",
             ),
             models.CheckConstraint(
                 condition=(
@@ -822,6 +876,27 @@ class SupplyDocument(models.Model):
                 raise ValidationError({"reversal_of": "冲销单不能关联自身。"})
             if self.reversal_of.document_type == SupplyDocumentType.REVERSAL:
                 raise ValidationError({"reversal_of": "冲销单不能再次作为被冲销原单。"})
+        elif self.document_type == SupplyDocumentType.COUNT_ADJUSTMENT:
+            if self.source_count_task_id is None:
+                raise ValidationError({"source_count_task": "盘点调整单必须关联来源盘点任务。"})
+            if any(
+                (
+                    self.source_warehouse_id,
+                    self.target_warehouse_id,
+                    self.department_id,
+                    self.employee_id,
+                    self.reversal_of_id,
+                )
+            ):
+                raise ValidationError("盘点调整单的仓库只能由来源盘点任务确定。")
+            if (
+                self.source_count_task.company_id != self.company_id
+                or self.source_count_task.count_domain
+                != SupplyCountDomain.WAREHOUSE_STOCK
+            ):
+                raise ValidationError({"source_count_task": "来源必须是同公司的仓库库存盘点任务。"})
+        elif self.source_count_task_id:
+            raise ValidationError({"source_count_task": "只有盘点调整单可以关联盘点任务。"})
         for field_name in ("source_warehouse", "target_warehouse", "department", "employee"):
             value = getattr(self, field_name, None)
             if value is not None and value.company_id != self.company_id:
@@ -1060,6 +1135,25 @@ class SupplyDocumentLine(models.Model):
                     )
             if not str(self.line_remark or "").strip():
                 raise ValidationError({"line_remark": "退回原因不能为空。"})
+        elif (
+            self.document_id
+            and self.document.document_type == SupplyDocumentType.COUNT_ADJUSTMENT
+        ):
+            if self.adjustment_direction not in SupplyAdjustmentDirection.values:
+                raise ValidationError({"adjustment_direction": "盘点调整明细必须填写盘盈或盘亏方向。"})
+            if self.source_issue_line_id or self.source_custody_id:
+                raise ValidationError("盘点调整明细不得关联原领用或原保管记录。")
+            if self.adjustment_direction == SupplyAdjustmentDirection.INCREASE:
+                if self.entered_unit_cost is None:
+                    raise ValidationError({"entered_unit_cost": "盘盈明细必须保存盘点确定的单位成本。"})
+                self.entered_unit_cost = quantize_unit_cost(self.entered_unit_cost)
+                if self.entered_unit_cost < ZERO_COST:
+                    raise ValidationError({"entered_unit_cost": "盘盈单位成本不得小于 0。"})
+                self.line_remark = validate_zero_cost_reason(
+                    self.entered_unit_cost, self.line_remark
+                )
+            elif self.entered_unit_cost is not None:
+                raise ValidationError({"entered_unit_cost": "盘亏成本只能由冻结余额计算。"})
         if self.document_id and self.document.document_type != SupplyDocumentType.COUNT_ADJUSTMENT:
             if self.adjustment_direction:
                 raise ValidationError({"adjustment_direction": "非盘点调整明细不得填写调整方向。"})
@@ -1682,6 +1776,10 @@ class SupplyCustodyMovement(models.Model):
                 name="ck_supply_custody_movement_amount",
             ),
             models.CheckConstraint(
+                condition=~Q(action=SupplyCustodyAction.CORRECTION) | ~Q(reason=""),
+                name="ck_supply_custody_correction_reason",
+            ),
+            models.CheckConstraint(
                 condition=(
                     Q(action__in=("issue", "opening"), from_custody__isnull=True, to_custody__isnull=False)
                     | Q(action__in=("return", "loss", "scrap"), from_custody__isnull=False, to_custody__isnull=True)
@@ -1689,7 +1787,13 @@ class SupplyCustodyMovement(models.Model):
                         Q(action="transfer", from_custody__isnull=False, to_custody__isnull=False)
                         & ~Q(from_custody=F("to_custody"))
                     )
-                    | Q(action="correction")
+                    | (
+                        Q(action="correction")
+                        & (
+                            Q(from_custody__isnull=True, to_custody__isnull=False)
+                            | Q(from_custody__isnull=False, to_custody__isnull=True)
+                        )
+                    )
                     | (
                         Q(action="reversal")
                         & (
@@ -1759,6 +1863,13 @@ class SupplyCustodyMovement(models.Model):
                 raise ValidationError("保管冲销流水必须精确反转原动作方向、数量和金额。")
         elif self.action == SupplyCustodyAction.REVERSAL:
             raise ValidationError({"reverses_movement": "冲销动作必须关联原保管流水。"})
+        if self.action == SupplyCustodyAction.CORRECTION:
+            if (self.from_custody_id is None) == (self.to_custody_id is None):
+                raise ValidationError("盘点更正流水必须且只能有一个保管方向。")
+            if self.source_document_line_id or self.reverses_movement_id:
+                raise ValidationError("盘点更正不得伪造库存单据或冲销来源。")
+            if not str(self.reason or "").strip():
+                raise ValidationError({"reason": "盘点更正原因不能为空。"})
         self.idempotency_key = str(self.idempotency_key or "").strip() or None
         self.quantity = quantize_quantity(self.quantity)
         self.amount = quantize_money(self.amount)
@@ -1778,3 +1889,701 @@ class SupplyCustodyMovement(models.Model):
 
     def __str__(self):
         return f"{self.get_action_display()} / {self.item}: {self.quantity}"
+
+
+class SupplyCountTaskQuerySet(models.QuerySet):
+    _ACTOR_FIELDS = {
+        "created_by",
+        "created_by_id",
+        "published_by",
+        "published_by_id",
+        "stopped_by",
+        "stopped_by_id",
+        "closed_by",
+        "closed_by_id",
+        "cancelled_by",
+        "cancelled_by_id",
+    }
+
+    def update(self, **kwargs):
+        return _only_actor_null_update(
+            self,
+            kwargs,
+            actor_fields=self._ACTOR_FIELDS,
+            message="盘点任务只能通过受控盘点 Service 修改。",
+        )
+
+    def delete(self):
+        if self.exclude(status=SupplyCountStatus.DRAFT).exists():
+            raise ValidationError("已发布盘点任务不得物理删除。")
+        return models.QuerySet.delete(self)
+
+
+class SupplyCountTask(models.Model):
+    CountDomain = SupplyCountDomain
+    Status = SupplyCountStatus
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(
+        "masterdata.Company",
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="supply_count_tasks",
+    )
+    task_no = models.CharField("盘点任务编号", max_length=64)
+    name = models.CharField("盘点任务名称", max_length=200)
+    count_domain = models.CharField(
+        "盘点域", max_length=32, choices=SupplyCountDomain.choices
+    )
+    warehouse = models.ForeignKey(
+        SupplyWarehouse,
+        verbose_name="盘点仓库",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="count_tasks",
+    )
+    department = models.ForeignKey(
+        "masterdata.Department",
+        verbose_name="盘点部门",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="supply_count_tasks",
+    )
+    employee = models.ForeignKey(
+        "masterdata.Employee",
+        verbose_name="盘点员工",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="supply_count_tasks",
+    )
+    planned_start = models.DateField("计划开始日期")
+    planned_end = models.DateField("计划结束日期")
+    snapshot_at = models.DateTimeField("快照时间", null=True, blank=True)
+    status = models.CharField(
+        "状态",
+        max_length=20,
+        choices=SupplyCountStatus.choices,
+        default=SupplyCountStatus.DRAFT,
+    )
+    idempotency_key = models.CharField("创建幂等键", max_length=128)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="创建人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_supply_count_tasks",
+    )
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+    published_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="发布人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="published_supply_count_tasks",
+    )
+    published_at = models.DateTimeField("发布时间", null=True, blank=True)
+    stopped_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="停止录入人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="stopped_supply_count_tasks",
+    )
+    stopped_at = models.DateTimeField("停止录入时间", null=True, blank=True)
+    closed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="关闭人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="closed_supply_count_tasks",
+    )
+    closed_at = models.DateTimeField("关闭时间", null=True, blank=True)
+    cancelled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="取消人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="cancelled_supply_count_tasks",
+    )
+    cancelled_at = models.DateTimeField("取消时间", null=True, blank=True)
+    cancellation_reason = models.TextField("取消原因", blank=True)
+    remark = models.TextField("备注", blank=True)
+
+    objects = SupplyCountTaskQuerySet.as_manager()
+
+    class Meta:
+        verbose_name = "低值物品盘点任务"
+        verbose_name_plural = "低值物品盘点任务"
+        ordering = ("-created_at", "-task_no")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "task_no"),
+                name="uq_supply_count_task_company_no",
+            ),
+            models.UniqueConstraint(
+                fields=("company", "idempotency_key"),
+                name="uq_supply_count_task_company_idem",
+            ),
+            models.UniqueConstraint(
+                fields=("company", "warehouse"),
+                condition=Q(
+                    count_domain="warehouse_stock",
+                    status__in=("in_progress", "reconciliation"),
+                ),
+                name="uq_supply_count_active_warehouse",
+            ),
+            models.UniqueConstraint(
+                fields=("company", "employee"),
+                condition=Q(
+                    count_domain="custody",
+                    employee__isnull=False,
+                    status__in=("in_progress", "reconciliation"),
+                ),
+                name="uq_supply_count_active_employee",
+            ),
+            models.CheckConstraint(
+                condition=Q(count_domain__in=SupplyCountDomain.values),
+                name="ck_supply_count_task_domain",
+            ),
+            models.CheckConstraint(
+                condition=Q(status__in=SupplyCountStatus.values),
+                name="ck_supply_count_task_status",
+            ),
+            models.CheckConstraint(
+                condition=Q(planned_end__gte=F("planned_start")),
+                name="ck_supply_count_task_dates",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        count_domain="warehouse_stock",
+                        warehouse__isnull=False,
+                        department__isnull=True,
+                        employee__isnull=True,
+                    )
+                    | Q(
+                        count_domain="custody",
+                        warehouse__isnull=True,
+                        department__isnull=False,
+                    )
+                ),
+                name="ck_supply_count_task_scope",
+            ),
+            models.CheckConstraint(
+                condition=~Q(task_no="") & ~Q(name="") & ~Q(idempotency_key=""),
+                name="ck_supply_count_task_required_text",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(cancelled_at__isnull=True, cancellation_reason="")
+                    | (Q(cancelled_at__isnull=False) & ~Q(cancellation_reason=""))
+                ),
+                name="ck_supply_count_task_cancel_fields",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("company", "status", "count_domain"),
+                name="supply_count_status_idx",
+            ),
+            models.Index(
+                fields=("company", "department", "employee", "status"),
+                name="supply_count_custody_scope_idx",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        self.task_no = str(self.task_no or "").strip()
+        self.name = str(self.name or "").strip()
+        self.idempotency_key = str(self.idempotency_key or "").strip()
+        self.cancellation_reason = str(self.cancellation_reason or "").strip()
+        self.remark = str(self.remark or "").strip()
+        if not self.task_no:
+            raise ValidationError({"task_no": "盘点任务编号不能为空。"})
+        if not self.name:
+            raise ValidationError({"name": "盘点任务名称不能为空。"})
+        if not self.idempotency_key:
+            raise ValidationError({"idempotency_key": "盘点任务幂等键不能为空。"})
+        if self.planned_start and self.planned_end and self.planned_end < self.planned_start:
+            raise ValidationError({"planned_end": "计划结束日期不得早于计划开始日期。"})
+        if self.count_domain == SupplyCountDomain.WAREHOUSE_STOCK:
+            if self.warehouse_id is None or self.department_id or self.employee_id:
+                raise ValidationError("仓库库存盘点必须且只能指定仓库。")
+        elif self.count_domain == SupplyCountDomain.CUSTODY:
+            if self.department_id is None or self.warehouse_id:
+                raise ValidationError("保管盘点必须指定部门且不得指定仓库。")
+        for field_name in ("warehouse", "department", "employee"):
+            value = getattr(self, field_name, None)
+            if value is not None and value.company_id != self.company_id:
+                raise ValidationError({field_name: "盘点范围对象必须属于同一公司。"})
+        if self.employee_id and self.employee.department_id != self.department_id:
+            raise ValidationError({"employee": "盘点员工必须属于所选部门。"})
+        if self.status == SupplyCountStatus.DRAFT:
+            if any((self.snapshot_at, self.published_at, self.stopped_at, self.closed_at, self.cancelled_at)):
+                raise ValidationError("草稿盘点不得包含发布、停止、关闭或取消时间。")
+        elif self.status == SupplyCountStatus.IN_PROGRESS:
+            if not self.snapshot_at or not self.published_at or self.stopped_at or self.closed_at or self.cancelled_at:
+                raise ValidationError("进行中盘点的发布快照字段不完整。")
+        elif self.status == SupplyCountStatus.RECONCILIATION:
+            if not self.snapshot_at or not self.published_at or not self.stopped_at or self.closed_at or self.cancelled_at:
+                raise ValidationError("差异处理中盘点的停止录入字段不完整。")
+        elif self.status == SupplyCountStatus.CLOSED:
+            if not self.snapshot_at or not self.published_at or not self.stopped_at or not self.closed_at or self.cancelled_at:
+                raise ValidationError("已关闭盘点的状态时间字段不完整。")
+        elif self.status == SupplyCountStatus.CANCELLED:
+            if not self.cancelled_at or not self.cancellation_reason or self.closed_at:
+                raise ValidationError("取消盘点必须保存取消时间和原因。")
+
+    def save(self, *args, **kwargs):
+        if self._state.adding:
+            if not getattr(self, "_controlled_insert", False):
+                raise ValidationError("盘点任务只能通过受控盘点 Service 创建。")
+        elif not getattr(self, "_controlled_transition", False):
+            raise ValidationError("盘点任务只能通过受控盘点 Service 修改。")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status != SupplyCountStatus.DRAFT:
+            raise ValidationError("已发布盘点任务不得物理删除。")
+        return super().delete(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.task_no} / {self.name}"
+
+
+class SupplyCountLineQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        raise ValidationError("盘点行只能通过受控盘点 Service 修改。")
+
+    def delete(self):
+        raise ValidationError("盘点快照行不得物理删除。")
+
+
+class SupplyCountLine(models.Model):
+    ResolutionType = SupplyCountResolutionType
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(
+        "masterdata.Company",
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="supply_count_lines",
+    )
+    count_task = models.ForeignKey(
+        SupplyCountTask,
+        verbose_name="盘点任务",
+        on_delete=models.PROTECT,
+        related_name="lines",
+    )
+    item = models.ForeignKey(
+        SupplyItem,
+        verbose_name="物品",
+        on_delete=models.PROTECT,
+        related_name="count_lines",
+    )
+    stock_balance = models.ForeignKey(
+        SupplyStockBalance,
+        verbose_name="发布时库存余额",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="count_lines",
+    )
+    custody = models.ForeignKey(
+        SupplyCustody,
+        verbose_name="发布时保管记录",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="count_lines",
+    )
+    item_code_snapshot = models.CharField("物品编码快照", max_length=100)
+    item_name_snapshot = models.CharField("物品名称快照", max_length=200)
+    department_snapshot = models.CharField("责任部门快照", max_length=200, blank=True)
+    employee_snapshot = models.CharField("责任员工快照", max_length=200, blank=True)
+    expected_quantity = models.DecimalField("应盘数量", **QUANTITY)
+    expected_amount = models.DecimalField("应盘金额", **MONEY)
+    expected_unit_cost = models.DecimalField("发布时单位成本", **UNIT_COST)
+    counted_quantity = models.DecimalField(
+        "实盘数量", null=True, blank=True, **QUANTITY
+    )
+    difference_quantity = models.DecimalField(
+        "差异数量", null=True, blank=True, **QUANTITY
+    )
+    adjustment_unit_cost = models.DecimalField(
+        "盘盈调整单位成本", null=True, blank=True, **UNIT_COST
+    )
+    zero_cost_reason = models.TextField("零成本原因", blank=True)
+    resolution_type = models.CharField(
+        "解决方式",
+        max_length=16,
+        choices=SupplyCountResolutionType.choices,
+        null=True,
+        blank=True,
+    )
+    adjustment_document_line = models.OneToOneField(
+        SupplyDocumentLine,
+        verbose_name="盘点调整单明细",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="source_count_line",
+    )
+    resolution_custody_movement = models.OneToOneField(
+        SupplyCustodyMovement,
+        verbose_name="保管差异解决流水",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="source_count_line",
+    )
+    remark = models.TextField("差异原因/备注", blank=True)
+    counted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="盘点录入人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="recorded_supply_count_lines",
+    )
+    counted_at = models.DateTimeField("盘点录入时间", null=True, blank=True)
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="差异处理人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="resolved_supply_count_lines",
+    )
+    resolved_at = models.DateTimeField("差异处理时间", null=True, blank=True)
+
+    objects = SupplyCountLineQuerySet.as_manager()
+
+    class Meta:
+        verbose_name = "低值物品盘点行"
+        verbose_name_plural = "低值物品盘点行"
+        ordering = ("item_code_snapshot", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("count_task", "item"),
+                condition=Q(custody__isnull=True),
+                name="uq_supply_count_warehouse_item",
+            ),
+            models.UniqueConstraint(
+                fields=("count_task", "custody"),
+                condition=Q(custody__isnull=False),
+                name="uq_supply_count_custody",
+            ),
+            models.CheckConstraint(
+                condition=Q(stock_balance__isnull=True) | Q(custody__isnull=True),
+                name="ck_supply_count_line_one_source",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    expected_quantity__gte=0,
+                    expected_amount__gte=0,
+                    expected_unit_cost__gte=0,
+                ),
+                name="ck_supply_count_line_expected",
+            ),
+            models.CheckConstraint(
+                condition=Q(counted_quantity__isnull=True) | Q(counted_quantity__gte=0),
+                name="ck_supply_count_line_counted",
+            ),
+            models.CheckConstraint(
+                condition=Q(adjustment_unit_cost__isnull=True)
+                | Q(adjustment_unit_cost__gte=0),
+                name="ck_supply_count_line_adjust_cost",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(counted_quantity__isnull=True, difference_quantity__isnull=True)
+                    | Q(counted_quantity__isnull=False, difference_quantity__isnull=False)
+                ),
+                name="ck_supply_count_line_count_pair",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        adjustment_document_line__isnull=True,
+                        resolution_custody_movement__isnull=True,
+                        resolution_type__isnull=True,
+                        resolved_by__isnull=True,
+                        resolved_at__isnull=True,
+                    )
+                    | Q(
+                        adjustment_document_line__isnull=False,
+                        resolution_custody_movement__isnull=True,
+                        resolution_type__isnull=True,
+                        resolved_by__isnull=False,
+                        resolved_at__isnull=False,
+                    )
+                    | Q(
+                        adjustment_document_line__isnull=True,
+                        resolution_custody_movement__isnull=False,
+                        resolution_type__isnull=False,
+                        resolved_by__isnull=False,
+                        resolved_at__isnull=False,
+                    )
+                ),
+                name="ck_supply_count_line_evidence",
+            ),
+            models.CheckConstraint(
+                condition=~Q(item_code_snapshot="") & ~Q(item_name_snapshot=""),
+                name="ck_supply_count_line_snapshots",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        from .domain import (
+            quantize_money,
+            quantize_quantity,
+            quantize_unit_cost,
+        )
+
+        if self.count_task_id and self.count_task.company_id != self.company_id:
+            raise ValidationError({"count_task": "盘点任务必须属于同一公司。"})
+        if self.item_id and self.item.company_id != self.company_id:
+            raise ValidationError({"item": "盘点物品必须属于同一公司。"})
+        self.expected_quantity = quantize_quantity(self.expected_quantity)
+        self.expected_amount = quantize_money(self.expected_amount)
+        self.expected_unit_cost = quantize_unit_cost(self.expected_unit_cost)
+        if self.counted_quantity is not None:
+            self.counted_quantity = quantize_quantity(self.counted_quantity)
+            expected_difference = quantize_quantity(
+                self.counted_quantity - self.expected_quantity
+            )
+            if self.difference_quantity is None:
+                self.difference_quantity = expected_difference
+            else:
+                self.difference_quantity = quantize_quantity(self.difference_quantity)
+                if self.difference_quantity != expected_difference:
+                    raise ValidationError({"difference_quantity": "差异数量必须等于实盘数量减应盘数量。"})
+            if self.counted_quantity < ZERO_QUANTITY:
+                raise ValidationError({"counted_quantity": "实盘数量不得小于 0。"})
+            if self.difference_quantity != ZERO_QUANTITY and not str(self.remark or "").strip():
+                raise ValidationError({"remark": "存在盘点差异时必须填写原因。"})
+        elif self.difference_quantity is not None:
+            raise ValidationError({"difference_quantity": "尚未录入实盘数量时不得保存差异。"})
+        if self.adjustment_unit_cost is not None:
+            self.adjustment_unit_cost = quantize_unit_cost(self.adjustment_unit_cost)
+            if self.adjustment_unit_cost < ZERO_UNIT_COST:
+                raise ValidationError({"adjustment_unit_cost": "盘盈单位成本不得小于 0。"})
+        if self.count_task_id and self.count_task.count_domain == SupplyCountDomain.WAREHOUSE_STOCK:
+            if self.custody_id is not None:
+                raise ValidationError({"custody": "仓库盘点行不得关联保管记录。"})
+            if self.stock_balance_id and (
+                self.stock_balance.company_id != self.company_id
+                or self.stock_balance.item_id != self.item_id
+                or self.stock_balance.warehouse_id != self.count_task.warehouse_id
+            ):
+                raise ValidationError({"stock_balance": "库存余额不属于盘点仓库、公司或物品。"})
+        elif self.count_task_id:
+            if self.stock_balance_id is not None or self.custody_id is None:
+                raise ValidationError("保管盘点行必须且只能关联一条保管记录。")
+            if (
+                self.custody.company_id != self.company_id
+                or self.custody.item_id != self.item_id
+                or self.custody.department_id != self.count_task.department_id
+                or (
+                    self.count_task.employee_id is not None
+                    and self.custody.employee_id != self.count_task.employee_id
+                )
+            ):
+                raise ValidationError({"custody": "保管记录不属于盘点范围。"})
+        if self.adjustment_document_line_id and self.resolution_custody_movement_id:
+            raise ValidationError("一条盘点差异不能同时关联库存调整和保管流水。")
+        if self.adjustment_document_line_id:
+            line = self.adjustment_document_line
+            if (
+                line.company_id != self.company_id
+                or line.item_id != self.item_id
+                or line.document.source_count_task_id != self.count_task_id
+            ):
+                raise ValidationError({"adjustment_document_line": "调整单明细不属于本盘点任务和物品。"})
+        if self.resolution_custody_movement_id:
+            movement = self.resolution_custody_movement
+            if movement.company_id != self.company_id or movement.item_id != self.item_id:
+                raise ValidationError({"resolution_custody_movement": "解决流水不属于本盘点公司或物品。"})
+            if self.custody_id not in {movement.from_custody_id, movement.to_custody_id}:
+                raise ValidationError({"resolution_custody_movement": "解决流水未关联本盘点保管记录。"})
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding or not getattr(self, "_controlled_insert", False):
+            raise ValidationError("盘点行只能通过受控盘点 Service 创建。")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("盘点快照行不得物理删除。")
+
+    def __str__(self):
+        return f"{self.count_task.task_no} / {self.item_code_snapshot}"
+
+
+class EmployeeSupplyClearanceItemQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        return _only_actor_null_update(
+            self,
+            kwargs,
+            actor_fields={"resolved_by", "resolved_by_id"},
+            message="耐用品清退项目只能通过受控清退 Service 解决。",
+        )
+
+    def delete(self):
+        raise ValidationError("耐用品清退项目不得物理删除。")
+
+
+class EmployeeSupplyClearanceItem(models.Model):
+    Resolution = EmployeeSupplyClearanceResolution
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    clearance = models.ForeignKey(
+        "offboarding.EmployeeAssetClearance",
+        verbose_name="离职清退单",
+        on_delete=models.PROTECT,
+        related_name="supply_items",
+    )
+    company = models.ForeignKey(
+        "masterdata.Company",
+        verbose_name="公司",
+        on_delete=models.PROTECT,
+        related_name="employee_supply_clearance_items",
+    )
+    custody = models.ForeignKey(
+        SupplyCustody,
+        verbose_name="耐用品保管记录",
+        on_delete=models.PROTECT,
+        related_name="clearance_items",
+    )
+    item_code_snapshot = models.CharField("物品编码快照", max_length=100)
+    item_name_snapshot = models.CharField("物品名称快照", max_length=200)
+    quantity_snapshot = models.DecimalField("数量快照", **QUANTITY)
+    amount_snapshot = models.DecimalField("金额快照", **MONEY)
+    department_snapshot = models.CharField("责任部门快照", max_length=200)
+    employee_snapshot = models.CharField("责任员工快照", max_length=200)
+    resolution = models.CharField(
+        "解决方式",
+        max_length=16,
+        choices=EmployeeSupplyClearanceResolution.choices,
+        default=EmployeeSupplyClearanceResolution.PENDING,
+    )
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="处理人",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="resolved_employee_supply_clearance_items",
+    )
+    resolved_at = models.DateTimeField("处理时间", null=True, blank=True)
+    custody_movement = models.ForeignKey(
+        SupplyCustodyMovement,
+        verbose_name="解决保管流水",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="clearance_items",
+    )
+    remark = models.TextField("备注", blank=True)
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+
+    objects = EmployeeSupplyClearanceItemQuerySet.as_manager()
+
+    class Meta:
+        verbose_name = "员工离职耐用品清退项目"
+        verbose_name_plural = "员工离职耐用品清退项目"
+        ordering = ("clearance_id", "item_code_snapshot", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("clearance", "custody"),
+                name="uq_employee_supply_clearance_custody",
+            ),
+            models.CheckConstraint(
+                condition=Q(quantity_snapshot__gt=0, amount_snapshot__gte=0),
+                name="ck_employee_supply_clearance_amounts",
+            ),
+            models.CheckConstraint(
+                condition=Q(resolution__in=EmployeeSupplyClearanceResolution.values),
+                name="ck_employee_supply_clearance_resolution",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(
+                        resolution="pending",
+                        resolved_by__isnull=True,
+                        resolved_at__isnull=True,
+                        custody_movement__isnull=True,
+                    )
+                    | Q(
+                        resolution__in=("returned", "transferred", "lost", "scrapped"),
+                        resolved_by__isnull=False,
+                        resolved_at__isnull=False,
+                        custody_movement__isnull=False,
+                    )
+                ),
+                name="ck_employee_supply_clearance_evidence",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~Q(item_code_snapshot="")
+                    & ~Q(item_name_snapshot="")
+                    & ~Q(department_snapshot="")
+                    & ~Q(employee_snapshot="")
+                ),
+                name="ck_employee_supply_clearance_snapshots",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        from .domain import quantize_money, quantize_quantity
+
+        self.quantity_snapshot = quantize_quantity(self.quantity_snapshot)
+        self.amount_snapshot = quantize_money(self.amount_snapshot)
+        if self.clearance_id and self.clearance.company_id != self.company_id:
+            raise ValidationError({"clearance": "清退单必须属于同一公司。"})
+        if self.custody_id:
+            if self.custody.company_id != self.company_id:
+                raise ValidationError({"custody": "保管记录必须属于同一公司。"})
+            if self.custody.item.item_type != SupplyItemType.DURABLE_QUANTITY:
+                raise ValidationError({"custody": "清退项目只允许数量型低值耐用品保管。"})
+        if self.quantity_snapshot <= ZERO_QUANTITY or self.amount_snapshot < ZERO_MONEY:
+            raise ValidationError("耐用品清退数量必须大于 0，金额不得小于 0。")
+        if self.resolution == EmployeeSupplyClearanceResolution.PENDING:
+            if self.resolved_by_id or self.resolved_at or self.custody_movement_id:
+                raise ValidationError("待处理耐用品清退项不得伪造解决证据。")
+        else:
+            if not self.resolved_by_id or not self.resolved_at or not self.custody_movement_id:
+                raise ValidationError("已解决耐用品清退项必须关联处理人、时间和真实保管流水。")
+            movement = self.custody_movement
+            if movement.company_id != self.company_id or movement.from_custody_id != self.custody_id:
+                raise ValidationError({"custody_movement": "解决流水必须从本清退保管记录转出。"})
+            expected = {
+                SupplyCustodyAction.RETURN: EmployeeSupplyClearanceResolution.RETURNED,
+                SupplyCustodyAction.TRANSFER: EmployeeSupplyClearanceResolution.TRANSFERRED,
+                SupplyCustodyAction.LOSS: EmployeeSupplyClearanceResolution.LOST,
+                SupplyCustodyAction.SCRAP: EmployeeSupplyClearanceResolution.SCRAPPED,
+            }.get(movement.action)
+            if expected != self.resolution:
+                raise ValidationError({"custody_movement": "保管流水动作与清退解决方式不一致。"})
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding or not getattr(self, "_controlled_insert", False):
+            raise ValidationError("耐用品清退项目只能通过受控清退 Service 创建。")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("耐用品清退项目不得物理删除。")
+
+    def __str__(self):
+        return f"{self.clearance_id} / {self.item_code_snapshot}"

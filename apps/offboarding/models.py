@@ -70,6 +70,12 @@ class EmployeeAssetClearance(models.Model):
     )
     total_assets_snapshot = models.PositiveIntegerField("资产总数", default=0)
     unresolved_assets = models.PositiveIntegerField("未解决资产数", default=0)
+    total_supply_custodies_snapshot = models.PositiveIntegerField(
+        "数量型耐用品保管总数", default=0
+    )
+    unresolved_supply_custodies = models.PositiveIntegerField(
+        "未解决数量型耐用品保管数", default=0
+    )
     status = models.CharField(
         "状态", max_length=16, choices=Status.choices, default=Status.OPEN
     )
@@ -108,6 +114,14 @@ class EmployeeAssetClearance(models.Model):
             models.CheckConstraint(
                 condition=Q(unresolved_assets__lte=models.F("total_assets_snapshot")),
                 name="ck_clearance_counts",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    unresolved_supply_custodies__lte=models.F(
+                        "total_supply_custodies_snapshot"
+                    )
+                ),
+                name="ck_clearance_supply_counts",
             ),
             models.CheckConstraint(
                 condition=(
@@ -164,6 +178,8 @@ class EmployeeAssetClearance(models.Model):
             errors["supplement_reason"] = "首次清退不得填写补充原因。"
         if self.unresolved_assets > self.total_assets_snapshot:
             errors["unresolved_assets"] = "未解决数量不得大于资产总数。"
+        if self.unresolved_supply_custodies > self.total_supply_custodies_snapshot:
+            errors["unresolved_supply_custodies"] = "未解决耐用品数量不得大于耐用品总数。"
         if not str(self.idempotency_key or "").strip():
             errors["idempotency_key"] = "幂等键不能为空。"
         if self._state.adding and self.initiated_by_id is None:

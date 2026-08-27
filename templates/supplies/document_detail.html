@@ -8,7 +8,7 @@
       {% if can_edit %}<a class="btn btn-outline-primary" href="{% url 'supplies:document-edit' document.pk %}">编辑草稿</a>{% endif %}
       <a class="btn btn-outline-danger" href="{% url 'supplies:document-cancel' document.pk %}">取消</a>
       {% if can_post %}<a class="btn btn-primary" href="{% url 'supplies:document-post' document.pk %}">确认过账</a>{% endif %}
-    {% elif document.status == 'posted' and can_reverse and document.document_type != 'reversal' %}
+    {% elif document.status == 'posted' and can_reverse and document.document_type != 'reversal' and document.document_type != 'count_adjustment' %}
       <a class="btn btn-danger" href="{% url 'supplies:document-reverse' document.pk %}">完整冲销</a>
     {% endif %}
     <a class="btn btn-outline-secondary" href="{% url 'supplies:document-list' %}">返回</a>
@@ -19,6 +19,7 @@
 {% elif document.status == 'cancelled' %}<div class="alert alert-secondary">本单据已取消，不可恢复。原因：{{ document.cancellation_reason }}</div>
 {% elif document.status == 'reversed' %}<div class="alert alert-warning">本单据已经完整冲销，原流水永久保留。{% if reversal_document %}冲销单：<a href="{% url 'supplies:document-detail' reversal_document.pk %}">{{ reversal_document.document_no }}</a>{% endif %}</div>{% endif %}
 {% if document.document_type == 'reversal' and document.reversal_of %}<div class="alert alert-warning">本单为系统生成的冲销单；被冲销原单：<a href="{% url 'supplies:document-detail' document.reversal_of.pk %}">{{ document.reversal_of.document_no }}</a>。</div>{% endif %}
+{% if document.document_type == 'count_adjustment' and document.source_count_task %}<div class="alert alert-info">本单由盘点关闭服务自动生成并过账；来源任务：<a href="{% url 'supplies:count-task-detail' document.source_count_task.pk %}">{{ document.source_count_task.task_no }}</a>。调整仓库：{{ document.source_count_task.warehouse }}。</div>{% endif %}
 <section class="card shadow-sm mb-4"><div class="card-body"><h2 class="h5">基本信息</h2><dl class="row mb-0">
   <dt class="col-sm-2">业务日期</dt><dd class="col-sm-4">{{ document.business_date }}</dd><dt class="col-sm-2">来源仓库</dt><dd class="col-sm-4">{{ document.source_warehouse|default:'—' }}</dd>
   <dt class="col-sm-2">目标仓库</dt><dd class="col-sm-4">{{ document.target_warehouse|default:'—' }}</dd><dt class="col-sm-2">部门 / 员工</dt><dd class="col-sm-4">{{ document.department|default:'—' }}{% if document.employee %} / {{ document.employee }}{% endif %}</dd>

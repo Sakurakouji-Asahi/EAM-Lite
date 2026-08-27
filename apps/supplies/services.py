@@ -29,7 +29,14 @@ from .domain import (
     validate_zero_cost_reason,
 )
 from .models import (
+    EmployeeSupplyClearanceItem,
+    EmployeeSupplyClearanceResolution,
     SupplyCategory,
+    SupplyCountDomain,
+    SupplyCountLine,
+    SupplyCountResolutionType,
+    SupplyCountStatus,
+    SupplyCountTask,
     SupplyCustody,
     SupplyCustodyAction,
     SupplyCustodyMovement,
@@ -47,6 +54,8 @@ from .models import (
     SupplyWarehouse,
 )
 from .permissions import (
+    require_create_supply_count_task,
+    require_execute_supply_count_task,
     require_create_supply_document,
     require_manage_supply_category,
     require_manage_supply_item,
@@ -54,6 +63,7 @@ from .permissions import (
     require_import_opening_custody,
     require_manage_supply_warehouse,
     require_post_supply_document,
+    require_record_supply_count,
     require_reverse_supply_document,
 )
 
@@ -117,8 +127,13 @@ DOCUMENT_PREFIXES = {
     SupplyDocumentType.ISSUE: "LY",
     SupplyDocumentType.RETURN: "TH",
     SupplyDocumentType.TRANSFER: "DB",
+    SupplyDocumentType.COUNT_ADJUSTMENT: "PD",
     SupplyDocumentType.REVERSAL: "CX",
+    "count_task": "PDRW",
 }
+ACTIVE_SUPPLY_COUNT_STATUSES = frozenset(
+    {SupplyCountStatus.IN_PROGRESS, SupplyCountStatus.RECONCILIATION}
+)
 
 
 def _require_current_company(company):
@@ -614,6 +629,11 @@ def _document_snapshot(document):
         ),
         "department_id": str(document.department_id) if document.department_id else None,
         "employee_id": str(document.employee_id) if document.employee_id else None,
+        "source_count_task_id": (
+            str(document.source_count_task_id)
+            if document.source_count_task_id
+            else None
+        ),
         "external_reference": document.external_reference,
         "counterparty_name": document.counterparty_name,
         "remark": document.remark,
@@ -786,6 +806,8 @@ def _create_document_lines(*, document, prepared_lines):
             **values,
         )
         line.full_clean()
+        if document.document_type == SupplyDocumentType.COUNT_ADJUSTMENT:
+            _enable_capability("controlled_supply_count_adjustment_line_insert")
         try:
             line.save(force_insert=True)
         except IntegrityError as exc:
@@ -1361,11 +1383,16 @@ def return_custody_to_warehouse(
     reason,
     actor,
     idempotency_key,
+    count_line=None,
     request=None,
 ):
     """Create the one-custody return draft used by the normal post service."""
 
     _require_current_company(custody.company)
+    locked_count_line = None
+    if count_line is not None:
+        count_task, locked_count_line = _lock_supply_count_line(count_line)
+        require_execute_supply_count_task(actor, count_task)
     custody = (
         SupplyCustody.objects.select_for_update(of=("self",))
         .select_related(
@@ -1383,6 +1410,11 @@ def return_custody_to_warehouse(
         business_date=business_date,
         reason=reason,
         idempotency_key=idempotency_key,
+    )
+    _assert_custody_count_action_allowed(
+        custody=custody,
+        count_line=locked_count_line,
+        action_quantity=quantity,
     )
     warehouse = SupplyWarehouse.objects.filter(
         pk=getattr(target_warehouse, "pk", None),
@@ -1456,6 +1488,7 @@ def transfer_custody(
     reason,
     actor,
     idempotency_key,
+    count_line=None,
     request=None,
 ):
     quantity, business_date, reason, idempotency_key = _required_custody_action_values(
@@ -1465,6 +1498,10 @@ def transfer_custody(
         idempotency_key=idempotency_key,
     )
     _require_current_company(custody.company)
+    locked_count_line = None
+    if count_line is not None:
+        count_task, locked_count_line = _lock_supply_count_line(count_line)
+        require_execute_supply_count_task(actor, count_task)
     if target_department is None:
         raise ValidationError({"target_department": "目标部门必填。"})
     from apps.masterdata.models import Department, Employee
@@ -1532,6 +1569,11 @@ def transfer_custody(
     )
     if custody.status != SupplyCustodyStatus.OPEN:
         raise ValidationError("只有开放保管可以执行责任转交。")
+    _assert_custody_count_action_allowed(
+        custody=custody,
+        count_line=locked_count_line,
+        action_quantity=quantity,
+    )
     if custody.department_id == department.pk and custody.employee_id == getattr(employee, "pk", None):
         raise ValidationError("目标责任部门和员工不能与当前保管完全相同。")
 
@@ -1601,6 +1643,17 @@ def transfer_custody(
         },
         request=request,
     )
+    if locked_count_line is not None:
+        _resolve_supply_count_line_with_movement(
+            count_line=locked_count_line,
+            movement=movement,
+            actor=actor,
+            request=request,
+        )
+    resolve_supply_clearance_items_for_movement(
+        movement=movement,
+        request=request,
+    )
     return target
 
 
@@ -1614,6 +1667,7 @@ def write_off_custody(
     reason,
     actor,
     idempotency_key,
+    count_line=None,
     request=None,
 ):
     if action not in {SupplyCustodyAction.LOSS, SupplyCustodyAction.SCRAP}:
@@ -1625,6 +1679,10 @@ def write_off_custody(
         idempotency_key=idempotency_key,
     )
     _require_current_company(custody.company)
+    locked_count_line = None
+    if count_line is not None:
+        count_task, locked_count_line = _lock_supply_count_line(count_line)
+        require_execute_supply_count_task(actor, count_task)
     custody = (
         SupplyCustody.objects.select_for_update(of=("self",))
         .select_related("company", "item", "department", "employee")
@@ -1647,6 +1705,11 @@ def write_off_custody(
         raise ValidationError("同一保管动作幂等键已用于不同内容。")
     if custody.status != SupplyCustodyStatus.OPEN:
         raise ValidationError("只有开放保管可以执行报损或报废。")
+    _assert_custody_count_action_allowed(
+        custody=custody,
+        count_line=locked_count_line,
+        action_quantity=quantity,
+    )
     allocation = allocate_custody_amount(
         current_quantity=custody.current_quantity,
         current_amount=custody.current_amount,
@@ -1697,6 +1760,17 @@ def write_off_custody(
             "amount": str(allocation.action_amount),
             "reason": reason,
         },
+        request=request,
+    )
+    if locked_count_line is not None:
+        _resolve_supply_count_line_with_movement(
+            count_line=locked_count_line,
+            movement=movement,
+            actor=actor,
+            request=request,
+        )
+    resolve_supply_clearance_items_for_movement(
+        movement=movement,
         request=request,
     )
     return movement
@@ -1863,7 +1937,55 @@ def _posting_balance_requests(document, lines):
         elif document.document_type == SupplyDocumentType.TRANSFER:
             add(document.source_warehouse, line.item)
             add(document.target_warehouse, line.item)
+        elif document.document_type == SupplyDocumentType.COUNT_ADJUSTMENT:
+            add(document.source_count_task.warehouse, line.item)
     return requests
+
+
+def _lock_posting_warehouses(*, document, source_count_task=None):
+    warehouses = {
+        warehouse.pk: warehouse
+        for warehouse in (document.source_warehouse, document.target_warehouse)
+        if warehouse is not None
+    }
+    if document.document_type == SupplyDocumentType.COUNT_ADJUSTMENT:
+        if source_count_task is None:
+            raise ValidationError("盘点调整单只能由盘点关闭服务过账。")
+        warehouses[source_count_task.warehouse_id] = source_count_task.warehouse
+    locked = {
+        warehouse.pk: warehouse
+        for warehouse in SupplyWarehouse.objects.select_for_update()
+        .filter(company=document.company, pk__in=sorted(warehouses, key=str))
+        .order_by("pk")
+    }
+    if len(locked) != len(warehouses):
+        raise ValidationError("单据涉及的仓库不存在或不属于当前公司。")
+    for warehouse in locked.values():
+        active = (
+            SupplyCountTask.objects.filter(
+                company=document.company,
+                count_domain=SupplyCountDomain.WAREHOUSE_STOCK,
+                warehouse=warehouse,
+                status__in=ACTIVE_SUPPLY_COUNT_STATUSES,
+            )
+            .order_by("pk")
+            .first()
+        )
+        if active is None:
+            continue
+        if (
+            document.document_type == SupplyDocumentType.COUNT_ADJUSTMENT
+            and source_count_task is not None
+            and active.pk == source_count_task.pk
+            and active.status == SupplyCountStatus.RECONCILIATION
+            and document.source_count_task_id == active.pk
+        ):
+            continue
+        raise ValidationError(
+            "该仓库正在进行低值物品盘点，暂不能过账库存业务。"
+            "请在盘点关闭或取消后重试。"
+        )
+    return locked
 
 
 def _lock_posting_balances(*, document, lines):
@@ -2298,9 +2420,70 @@ def _post_transfer(*, document, lines, balances, actor, posted_at):
     return ledgers, []
 
 
+def _post_count_adjustment(*, document, lines, balances, actor, posted_at):
+    ledgers = []
+    warehouse = document.source_count_task.warehouse
+    for line in lines:
+        balance = balances[(warehouse.pk, line.item_id)]
+        if line.adjustment_direction == "increase":
+            calculation = calculate_receipt(
+                balance.quantity_on_hand,
+                balance.amount_on_hand,
+                line.quantity,
+                line.entered_unit_cost,
+            )
+            movement_type = SupplyStockMovementType.COUNT_GAIN
+            quantity_delta = calculation.receipt_quantity
+            amount_delta = calculation.receipt_amount
+            posted_unit_cost = calculation.receipt_unit_cost
+        elif line.adjustment_direction == "decrease":
+            calculation = calculate_issue(
+                balance.quantity_on_hand,
+                balance.amount_on_hand,
+                line.quantity,
+            )
+            movement_type = SupplyStockMovementType.COUNT_LOSS
+            quantity_delta = -calculation.issue_quantity
+            amount_delta = -calculation.issue_amount
+            posted_unit_cost = calculation.issue_unit_cost
+        else:
+            raise ValidationError(
+                f"第 {line.line_no} 行盘点调整方向无效。"
+            )
+        values = _ledger_values(
+            document=document,
+            line=line,
+            warehouse=warehouse,
+            movement_type=movement_type,
+            quantity_delta=quantity_delta,
+            amount_delta=amount_delta,
+            unit_cost=posted_unit_cost,
+            balance=balance,
+            quantity_after=calculation.quantity_after,
+            amount_after=calculation.amount_after,
+            average_after=calculation.average_unit_cost_after,
+            occurred_at=posted_at,
+            actor=actor,
+        )
+        _update_balance(balance=balance, calculation=calculation, updated_at=posted_at)
+        _set_line_posted(
+            line=line,
+            unit_cost=posted_unit_cost,
+            amount=abs(amount_delta),
+        )
+        ledgers.append(_create_stock_ledger(values=values))
+    return ledgers, []
+
+
 @transaction.atomic
-def post_supply_document(
-    *, document, actor, idempotency_key=None, request=None
+def _post_supply_document_internal(
+    *,
+    document,
+    actor,
+    idempotency_key=None,
+    request=None,
+    source_count_task=None,
+    source_count_line=None,
 ):
     _require_current_company(document.company)
     document = (
@@ -2312,15 +2495,35 @@ def post_supply_document(
             "department",
             "employee",
             "employee__department",
+            "source_count_task__warehouse",
         )
         .get(pk=document.pk, company=document.company)
     )
-    require_post_supply_document(actor, document=document)
+    if document.document_type == SupplyDocumentType.COUNT_ADJUSTMENT:
+        if source_count_line is not None:
+            raise ValidationError("库存盘点调整不得使用保管盘点解决上下文。")
+        if (
+            source_count_task is None
+            or document.source_count_task_id != source_count_task.pk
+            or source_count_task.status != SupplyCountStatus.RECONCILIATION
+            or source_count_task.count_domain
+            != SupplyCountDomain.WAREHOUSE_STOCK
+        ):
+            raise ValidationError("盘点调整单只能由对应差异处理中任务的关闭服务过账。")
+        require_execute_supply_count_task(actor, source_count_task)
+    else:
+        if source_count_task is not None:
+            raise ValidationError("普通库存单据不得使用盘点关闭上下文。")
+        require_post_supply_document(actor, document=document)
+        if source_count_line is not None and document.document_type != SupplyDocumentType.RETURN:
+            raise ValidationError("保管盘点解决上下文只能用于耐用品归还。")
     if document.status == SupplyDocumentStatus.POSTED:
         return document
     if document.status != SupplyDocumentStatus.DRAFT:
         raise ValidationError("只有草稿单据可以过账；已取消或已冲销单据不可恢复。")
-    if document.document_type not in SPRINT15_DOCUMENT_TYPES:
+    if document.document_type not in (
+        SPRINT15_DOCUMENT_TYPES | {SupplyDocumentType.COUNT_ADJUSTMENT}
+    ):
         raise ValidationError("当前 Sprint 不允许过账该单据类型。")
     if idempotency_key is not None and not str(idempotency_key).strip():
         raise ValidationError("过账幂等键不能为空。")
@@ -2344,6 +2547,10 @@ def post_supply_document(
     )
     if not lines:
         raise ValidationError("库存单据至少需要一条明细。")
+    _lock_posting_warehouses(
+        document=document,
+        source_count_task=source_count_task,
+    )
     locked_custodies = {}
     if document.document_type == SupplyDocumentType.RETURN:
         source_document_ids = sorted(
@@ -2408,6 +2615,21 @@ def post_supply_document(
             raise ValidationError("同一退回单不得混合易耗品退回和耐用品保管归还。")
         if "durable" in return_modes and len(lines) != 1:
             raise ValidationError("一张耐用品归还单只能对应一个来源保管。")
+        if "durable" in return_modes:
+            locked_count_line = None
+            if source_count_line is not None:
+                count_task, locked_count_line = _lock_supply_count_line(
+                    source_count_line
+                )
+                require_execute_supply_count_task(actor, count_task)
+            _assert_custody_count_action_allowed(
+                custody=locked_custodies[lines[0].source_custody_id],
+                count_line=locked_count_line,
+                action_quantity=lines[0].quantity,
+            )
+            source_count_line = locked_count_line
+        elif source_count_line is not None:
+            raise ValidationError("易耗品退回不能解决耐用品保管盘点差异。")
     for line in lines:
         if line.company_id != document.company_id or line.item.company_id != document.company_id:
             raise ValidationError(f"第 {line.line_no} 行公司边界不一致。")
@@ -2451,6 +2673,24 @@ def post_supply_document(
                 posted_at=posted_at,
                 request=request,
             )
+            movement = SupplyCustodyMovement.objects.select_related(
+                "from_custody", "to_custody"
+            ).get(
+                company=document.company,
+                source_document_line=lines[0],
+                action=SupplyCustodyAction.RETURN,
+            )
+            if source_count_line is not None:
+                _resolve_supply_count_line_with_movement(
+                    count_line=source_count_line,
+                    movement=movement,
+                    actor=actor,
+                    request=request,
+                )
+            resolve_supply_clearance_items_for_movement(
+                movement=movement,
+                request=request,
+            )
         else:
             ledgers, custodies = _post_consumable_return(
                 document=document,
@@ -2459,8 +2699,16 @@ def post_supply_document(
                 actor=actor,
                 posted_at=posted_at,
             )
-    else:
+    elif document.document_type == SupplyDocumentType.TRANSFER:
         ledgers, custodies = _post_transfer(
+            document=document,
+            lines=lines,
+            balances=balances,
+            actor=actor,
+            posted_at=posted_at,
+        )
+    else:
+        ledgers, custodies = _post_count_adjustment(
             document=document,
             lines=lines,
             balances=balances,
@@ -2489,6 +2737,18 @@ def post_supply_document(
         request=request,
     )
     return document
+
+
+@transaction.atomic
+def post_supply_document(
+    *, document, actor, idempotency_key=None, request=None
+):
+    return _post_supply_document_internal(
+        document=document,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        request=request,
+    )
 
 
 def _latest_ledger_for_balance(*, company, warehouse_id, item_id):
@@ -2545,6 +2805,8 @@ def reverse_supply_document(
         raise ValidationError("只允许冲销已过账单据；草稿、已取消或已冲销单据不可冲销。")
     if document.document_type == SupplyDocumentType.REVERSAL:
         raise ValidationError("冲销单不能再次冲销。")
+    if document.document_type == SupplyDocumentType.COUNT_ADJUSTMENT:
+        raise ValidationError("盘点调整单已与关闭任务勾稽，不能通过普通冲销改写。")
     existing_key = SupplyDocument.objects.select_for_update().filter(
         company=document.company,
         idempotency_key=cleaned_key,
@@ -2591,6 +2853,7 @@ def reverse_supply_document(
         raise ValidationError("原单没有库存流水，不能执行完整冲销。")
     if any(hasattr(ledger, "reversal_ledger") for ledger in original_ledgers):
         raise ValidationError("原单流水已经被冲销，不能重复执行。")
+    _lock_posting_warehouses(document=document)
 
     durable_return_entries = {}
     if document.document_type == SupplyDocumentType.RETURN:
@@ -2613,6 +2876,7 @@ def reverse_supply_document(
             raise ValidationError("耐用品归还来源保管已不存在，不能冲销。")
         for line in durable_lines:
             custody = locked_return_custodies[line.source_custody_id]
+            _assert_custody_count_action_allowed(custody=custody)
             related = list(
                 SupplyCustodyMovement.objects.select_for_update()
                 .filter(Q(from_custody=custody) | Q(to_custody=custody))
@@ -2629,6 +2893,10 @@ def reverse_supply_document(
             if len(returns) != 1:
                 raise ValidationError("未找到唯一的耐用品归还保管流水，不能冲销。")
             original_movement = returns[0]
+            if EmployeeSupplyClearanceItem.objects.filter(
+                custody_movement=original_movement
+            ).exists():
+                raise ValidationError("该归还流水已作为离职清退证据，不能冲销。")
             if hasattr(original_movement, "reversal_movement"):
                 raise ValidationError("耐用品归还保管流水已经被冲销。")
             if any(
@@ -2720,6 +2988,7 @@ def reverse_supply_document(
         for line_id in durable_line_ids:
             line = next(value for value in original_lines if value.pk == line_id)
             custody = locked_custodies[line_id]
+            _assert_custody_count_action_allowed(custody=custody)
             movements = list(
                 SupplyCustodyMovement.objects.select_for_update()
                 .filter(Q(from_custody=custody) | Q(to_custody=custody))
@@ -2953,3 +3222,1443 @@ def reverse_supply_document(
         request=request,
     )
     return reversal
+
+
+def _coerce_count_date(value, field_name, label):
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value or "").strip())
+    except (TypeError, ValueError) as exc:
+        raise ValidationError({field_name: f"{label}必须是有效日期。"}) from exc
+
+
+def _count_task_snapshot(task):
+    return {
+        "task_no": task.task_no,
+        "name": task.name,
+        "count_domain": task.count_domain,
+        "warehouse_id": str(task.warehouse_id) if task.warehouse_id else None,
+        "department_id": str(task.department_id) if task.department_id else None,
+        "employee_id": str(task.employee_id) if task.employee_id else None,
+        "planned_start": task.planned_start,
+        "planned_end": task.planned_end,
+        "snapshot_at": task.snapshot_at,
+        "status": task.status,
+    }
+
+
+def _count_line_snapshot(line, *, include_cost=True):
+    values = {
+        "line_id": str(line.pk),
+        "item_id": str(line.item_id),
+        "custody_id": str(line.custody_id) if line.custody_id else None,
+        "counted_quantity": (
+            str(line.counted_quantity)
+            if line.counted_quantity is not None
+            else None
+        ),
+        "difference_quantity": (
+            str(line.difference_quantity)
+            if line.difference_quantity is not None
+            else None
+        ),
+        "remark": line.remark,
+        "resolution_type": line.resolution_type,
+        "adjustment_document_line_id": (
+            str(line.adjustment_document_line_id)
+            if line.adjustment_document_line_id
+            else None
+        ),
+        "resolution_custody_movement_id": (
+            str(line.resolution_custody_movement_id)
+            if line.resolution_custody_movement_id
+            else None
+        ),
+    }
+    if include_cost:
+        values.update(
+            {
+                "expected_amount": str(line.expected_amount),
+                "expected_unit_cost": str(line.expected_unit_cost),
+                "adjustment_unit_cost": (
+                    str(line.adjustment_unit_cost)
+                    if line.adjustment_unit_cost is not None
+                    else None
+                ),
+                "zero_cost_reason": line.zero_cost_reason,
+            }
+        )
+    return values
+
+
+def _lock_supply_count_task(task):
+    task_id = getattr(task, "pk", task)
+    raw = SupplyCountTask.objects.select_related("company").get(pk=task_id)
+    _require_current_company(raw.company)
+    queryset = SupplyCountTask.objects.select_for_update()
+    if connection.vendor == "postgresql":
+        queryset = queryset.select_for_update(of=("self",))
+    return queryset.select_related(
+        "company",
+        "warehouse",
+        "department",
+        "employee__department",
+    ).get(pk=task_id, company=raw.company)
+
+
+def _lock_supply_count_line(line):
+    line_id = getattr(line, "pk", line)
+    raw = SupplyCountLine.objects.values("count_task_id").get(pk=line_id)
+    task = _lock_supply_count_task(raw["count_task_id"])
+    queryset = SupplyCountLine.objects.select_for_update()
+    if connection.vendor == "postgresql":
+        queryset = queryset.select_for_update(of=("self",))
+    line = queryset.select_related(
+        "company",
+        "count_task",
+        "item",
+        "stock_balance",
+        "custody__department",
+        "custody__employee",
+    ).get(pk=line_id, count_task=task)
+    line.count_task = task
+    return task, line
+
+
+def _create_supply_count_line(**values):
+    line = SupplyCountLine(**values)
+    line._controlled_insert = True
+    _enable_capability("controlled_supply_count_line_insert")
+    line.full_clean()
+    try:
+        line.save(force_insert=True)
+    except IntegrityError as exc:
+        raise ValidationError("盘点快照中已存在相同物品或保管记录。") from exc
+    return line
+
+
+@transaction.atomic
+def create_supply_count_task(*, actor, company, data, request=None):
+    from apps.masterdata.models import Company
+
+    _require_current_company(company)
+    values = dict(data)
+    allowed = {
+        "name",
+        "count_domain",
+        "warehouse",
+        "department",
+        "employee",
+        "planned_start",
+        "planned_end",
+        "idempotency_key",
+        "remark",
+    }
+    unknown = set(values).difference(allowed)
+    if unknown:
+        raise ValidationError(
+            {field: "不是盘点任务可编辑字段。" for field in unknown}
+        )
+    count_domain = str(values.get("count_domain") or "").strip()
+    name = str(values.get("name") or "").strip()
+    key = str(values.get("idempotency_key") or "").strip()
+    if count_domain not in SupplyCountDomain.values:
+        raise ValidationError({"count_domain": "盘点域无效。"})
+    if not name:
+        raise ValidationError({"name": "盘点任务名称不能为空。"})
+    if not key:
+        raise ValidationError({"idempotency_key": "盘点任务幂等键不能为空。"})
+    warehouse = values.get("warehouse")
+    department = values.get("department")
+    employee = values.get("employee")
+    require_create_supply_count_task(
+        actor,
+        company=company,
+        count_domain=count_domain,
+        department=department,
+    )
+    for field_name, value in (
+        ("warehouse", warehouse),
+        ("department", department),
+        ("employee", employee),
+    ):
+        if value is not None and value.company_id != company.pk:
+            raise ValidationError({field_name: "盘点范围对象不属于当前公司。"})
+    planned_start = _coerce_count_date(
+        values.get("planned_start"), "planned_start", "计划开始日期"
+    )
+    planned_end = _coerce_count_date(
+        values.get("planned_end"), "planned_end", "计划结束日期"
+    )
+    if planned_end < planned_start:
+        raise ValidationError({"planned_end": "计划结束日期不得早于计划开始日期。"})
+    Company.objects.select_for_update().get(pk=company.pk)
+    existing = SupplyCountTask.objects.select_for_update().filter(
+        company=company, idempotency_key=key
+    ).first()
+    expected = {
+        "name": name,
+        "count_domain": count_domain,
+        "warehouse_id": getattr(warehouse, "pk", None),
+        "department_id": getattr(department, "pk", None),
+        "employee_id": getattr(employee, "pk", None),
+        "planned_start": planned_start,
+        "planned_end": planned_end,
+        "remark": str(values.get("remark") or "").strip(),
+    }
+    if existing is not None:
+        actual = {field: getattr(existing, field) for field in expected}
+        if actual != expected:
+            raise ValidationError("同一盘点任务幂等键已用于不同内容。")
+        return existing
+    task = SupplyCountTask(
+        company=company,
+        task_no=_next_supply_document_no(
+            company=company,
+            document_type="count_task",
+            business_date=planned_start,
+        ),
+        name=name,
+        count_domain=count_domain,
+        warehouse=warehouse,
+        department=department,
+        employee=employee,
+        planned_start=planned_start,
+        planned_end=planned_end,
+        status=SupplyCountStatus.DRAFT,
+        idempotency_key=key,
+        created_by=actor,
+        remark=expected["remark"],
+    )
+    task._controlled_insert = True
+    _enable_capability("controlled_supply_count_task_insert")
+    task.full_clean()
+    try:
+        task.save(force_insert=True)
+    except IntegrityError as exc:
+        raise ValidationError("盘点任务编号或幂等键冲突。") from exc
+    _audit(
+        actor=actor,
+        action="supply_count_task_create",
+        instance=task,
+        new=_count_task_snapshot(task),
+        request=request,
+    )
+    return task
+
+
+@transaction.atomic
+def publish_supply_count_task(*, task, actor, request=None):
+    from apps.masterdata.models import Department, Employee
+
+    task = _lock_supply_count_task(task)
+    require_execute_supply_count_task(actor, task)
+    if task.status == SupplyCountStatus.IN_PROGRESS:
+        return task
+    if task.status != SupplyCountStatus.DRAFT:
+        raise ValidationError("只有草稿盘点任务可以发布。")
+    if task.lines.exists():
+        raise ValidationError("草稿盘点任务存在异常快照行，不能发布。")
+    now = timezone.now()
+    if task.count_domain == SupplyCountDomain.WAREHOUSE_STOCK:
+        warehouse = SupplyWarehouse.objects.select_for_update().get(
+            pk=task.warehouse_id,
+            company=task.company,
+            is_active=True,
+        )
+        active = SupplyCountTask.objects.filter(
+            company=task.company,
+            count_domain=SupplyCountDomain.WAREHOUSE_STOCK,
+            warehouse=warehouse,
+            status__in=ACTIVE_SUPPLY_COUNT_STATUSES,
+        ).exclude(pk=task.pk)
+        if active.exists():
+            raise ValidationError("该仓库已有进行中或差异处理中的低值物品盘点任务。")
+        balances = list(
+            SupplyStockBalance.objects.select_for_update()
+            .select_related("item")
+            .filter(company=task.company, warehouse=warehouse)
+            .order_by("item_id", "pk")
+        )
+        for balance in balances:
+            _create_supply_count_line(
+                company=task.company,
+                count_task=task,
+                item=balance.item,
+                stock_balance=balance,
+                custody=None,
+                item_code_snapshot=balance.item.item_code,
+                item_name_snapshot=balance.item.name,
+                department_snapshot="",
+                employee_snapshot="",
+                expected_quantity=balance.quantity_on_hand,
+                expected_amount=balance.amount_on_hand,
+                expected_unit_cost=balance.average_unit_cost,
+                adjustment_unit_cost=(
+                    balance.average_unit_cost
+                    if balance.quantity_on_hand > ZERO_QTY
+                    else None
+                ),
+            )
+    else:
+        Department.objects.select_for_update().get(
+            pk=task.department_id, company=task.company
+        )
+        if task.employee_id:
+            Employee.objects.select_for_update().get(
+                pk=task.employee_id,
+                company=task.company,
+                department_id=task.department_id,
+            )
+        overlap = SupplyCountTask.objects.filter(
+            company=task.company,
+            count_domain=SupplyCountDomain.CUSTODY,
+            department_id=task.department_id,
+            status__in=ACTIVE_SUPPLY_COUNT_STATUSES,
+        ).exclude(pk=task.pk)
+        if task.employee_id:
+            overlap = overlap.filter(
+                Q(employee__isnull=True) | Q(employee_id=task.employee_id)
+            )
+        if overlap.exists():
+            raise ValidationError("该部门或员工已被另一张活动耐用品保管盘点覆盖。")
+        custody_qs = (
+            SupplyCustody.objects.select_for_update(of=("self",))
+            if connection.vendor == "postgresql"
+            else SupplyCustody.objects.select_for_update()
+        )
+        custody_qs = custody_qs.select_related(
+            "item", "department", "employee"
+        ).filter(
+            company=task.company,
+            department_id=task.department_id,
+            status=SupplyCustodyStatus.OPEN,
+            current_quantity__gt=ZERO_QTY,
+        )
+        if task.employee_id:
+            custody_qs = custody_qs.filter(employee_id=task.employee_id)
+        custodies = list(custody_qs.order_by("pk"))
+        active_custody_ids = set(
+            SupplyCountLine.objects.filter(
+                company=task.company,
+                custody_id__in=[custody.pk for custody in custodies],
+                count_task__status__in=ACTIVE_SUPPLY_COUNT_STATUSES,
+            ).values_list("custody_id", flat=True)
+        )
+        if active_custody_ids:
+            raise ValidationError("盘点范围内存在已被另一张活动任务快照占用的保管记录。")
+        for custody in custodies:
+            _create_supply_count_line(
+                company=task.company,
+                count_task=task,
+                item=custody.item,
+                stock_balance=None,
+                custody=custody,
+                item_code_snapshot=custody.item.item_code,
+                item_name_snapshot=custody.item.name,
+                department_snapshot=custody.department.name,
+                employee_snapshot=(
+                    custody.employee.name if custody.employee_id else "部门保管"
+                ),
+                expected_quantity=custody.current_quantity,
+                expected_amount=custody.current_amount,
+                expected_unit_cost=custody.unit_cost_snapshot,
+                adjustment_unit_cost=None,
+            )
+    old = _count_task_snapshot(task)
+    _base_update(
+        SupplyCountTask,
+        task.pk,
+        {
+            "snapshot_at": now,
+            "status": SupplyCountStatus.IN_PROGRESS,
+            "published_by_id": actor.pk,
+            "published_at": now,
+        },
+        "controlled_supply_count_task_mutation",
+    )
+    task.refresh_from_db()
+    _audit(
+        actor=actor,
+        action="supply_count_task_publish",
+        instance=task,
+        old=old,
+        new={**_count_task_snapshot(task), "line_count": task.lines.count()},
+        request=request,
+    )
+    return task
+
+
+@transaction.atomic
+def add_supply_count_item(*, task, item, actor, request=None):
+    task = _lock_supply_count_task(task)
+    require_execute_supply_count_task(actor, task)
+    if (
+        task.count_domain != SupplyCountDomain.WAREHOUSE_STOCK
+        or task.status != SupplyCountStatus.IN_PROGRESS
+    ):
+        raise ValidationError("只有进行中的仓库盘点可以新增零库存盘盈物品。")
+    SupplyWarehouse.objects.select_for_update().get(
+        pk=task.warehouse_id, company=task.company
+    )
+    item = SupplyItem.objects.select_for_update().filter(
+        pk=getattr(item, "pk", None), company=task.company, is_active=True
+    ).first()
+    if item is None:
+        raise ValidationError({"item": "物品不属于当前公司或已经停用。"})
+    existing = SupplyCountLine.objects.filter(count_task=task, item=item).first()
+    if existing is not None:
+        return existing
+    line = _create_supply_count_line(
+        company=task.company,
+        count_task=task,
+        item=item,
+        stock_balance=None,
+        custody=None,
+        item_code_snapshot=item.item_code,
+        item_name_snapshot=item.name,
+        department_snapshot="",
+        employee_snapshot="",
+        expected_quantity=ZERO_QTY,
+        expected_amount=ZERO_MONEY,
+        expected_unit_cost=ZERO_COST,
+        adjustment_unit_cost=None,
+    )
+    _audit(
+        actor=actor,
+        action="supply_count_item_add",
+        instance=line,
+        new={"task_no": task.task_no, "item_id": str(item.pk)},
+        request=request,
+    )
+    return line
+
+
+@transaction.atomic
+def record_supply_count(
+    *,
+    line,
+    counted_quantity,
+    remark,
+    actor,
+    adjustment_unit_cost=None,
+    zero_cost_reason="",
+    request=None,
+):
+    task, line = _lock_supply_count_line(line)
+    require_record_supply_count(actor, line)
+    if task.status != SupplyCountStatus.IN_PROGRESS:
+        raise ValidationError("只有进行中的盘点任务可以录入实盘数量。")
+    counted = quantize_quantity(counted_quantity)
+    if counted < ZERO_QTY:
+        raise ValidationError({"counted_quantity": "实盘数量不得小于 0。"})
+    difference = quantize_quantity(counted - line.expected_quantity)
+    cleaned_remark = str(remark or "").strip()
+    if difference != ZERO_QTY and not cleaned_remark:
+        raise ValidationError({"remark": "存在盘点差异时必须填写原因。"})
+    cost = line.adjustment_unit_cost
+    zero_reason = str(zero_cost_reason or "").strip()
+    if task.count_domain == SupplyCountDomain.WAREHOUSE_STOCK:
+        if line.expected_quantity > ZERO_QTY:
+            if adjustment_unit_cost is not None and quantize_unit_cost(
+                adjustment_unit_cost
+            ) != line.expected_unit_cost:
+                raise ValidationError("非零库存盘点成本来自发布快照，不能手工修改。")
+            cost = line.expected_unit_cost
+            zero_reason = ""
+        elif difference > ZERO_QTY:
+            if adjustment_unit_cost is not None:
+                cost = quantize_unit_cost(adjustment_unit_cost)
+                if cost < ZERO_COST:
+                    raise ValidationError({"adjustment_unit_cost": "盘盈单位成本不得小于 0。"})
+            if cost == ZERO_COST and not zero_reason:
+                raise ValidationError({"zero_cost_reason": "零库存盘盈使用 0 成本时必须填写明确原因。"})
+        else:
+            cost = None
+            zero_reason = ""
+    else:
+        if adjustment_unit_cost is not None or zero_reason:
+            raise ValidationError("保管盘点不得录入仓库调整成本。")
+        cost = None
+    old = _count_line_snapshot(line, include_cost=False)
+    now = timezone.now()
+    _base_update(
+        SupplyCountLine,
+        line.pk,
+        {
+            "counted_quantity": counted,
+            "difference_quantity": difference,
+            "adjustment_unit_cost": cost,
+            "zero_cost_reason": zero_reason,
+            "remark": cleaned_remark,
+            "counted_by_id": actor.pk,
+            "counted_at": now,
+        },
+        "controlled_supply_count_line_mutation",
+    )
+    line.refresh_from_db()
+    _audit(
+        actor=actor,
+        action="supply_count_record",
+        instance=line,
+        old=old,
+        new={
+            **_count_line_snapshot(line, include_cost=False),
+            "task_no": task.task_no,
+        },
+        request=request,
+    )
+    return line
+
+
+@transaction.atomic
+def stop_supply_count_entry(*, task, actor, request=None):
+    task = _lock_supply_count_task(task)
+    require_execute_supply_count_task(actor, task)
+    if task.status == SupplyCountStatus.RECONCILIATION:
+        return task
+    if task.status != SupplyCountStatus.IN_PROGRESS:
+        raise ValidationError("只有进行中的盘点任务可以停止录入。")
+    lines = list(
+        SupplyCountLine.objects.select_for_update()
+        .filter(count_task=task)
+        .order_by("pk")
+    )
+    missing = [line.item_code_snapshot for line in lines if line.counted_quantity is None]
+    if missing:
+        raise ValidationError(
+            "所有盘点行必须明确录入实盘数量（包括 0）：" + "、".join(missing[:10])
+        )
+    for line in lines:
+        difference = quantize_quantity(
+            line.counted_quantity - line.expected_quantity
+        )
+        if difference != ZERO_QTY and not str(line.remark or "").strip():
+            raise ValidationError(
+                {"remark": f"物品 {line.item_code_snapshot} 存在差异，必须填写原因。"}
+            )
+        if line.difference_quantity != difference:
+            _base_update(
+                SupplyCountLine,
+                line.pk,
+                {"difference_quantity": difference},
+                "controlled_supply_count_line_mutation",
+            )
+    old = _count_task_snapshot(task)
+    now = timezone.now()
+    _base_update(
+        SupplyCountTask,
+        task.pk,
+        {
+            "status": SupplyCountStatus.RECONCILIATION,
+            "stopped_by_id": actor.pk,
+            "stopped_at": now,
+        },
+        "controlled_supply_count_task_mutation",
+    )
+    task.refresh_from_db()
+    _audit(
+        actor=actor,
+        action="supply_count_stop",
+        instance=task,
+        old=old,
+        new={
+            **_count_task_snapshot(task),
+            "difference_line_count": sum(
+                1 for line in lines if line.difference_quantity != ZERO_QTY
+            ),
+        },
+        request=request,
+    )
+    return task
+
+
+@transaction.atomic
+def set_supply_count_adjustment_cost(
+    *, line, unit_cost, zero_cost_reason="", actor, request=None
+):
+    task, line = _lock_supply_count_line(line)
+    require_execute_supply_count_task(actor, task)
+    if (
+        task.status != SupplyCountStatus.RECONCILIATION
+        or task.count_domain != SupplyCountDomain.WAREHOUSE_STOCK
+        or line.expected_quantity != ZERO_QTY
+        or line.difference_quantity is None
+        or line.difference_quantity <= ZERO_QTY
+    ):
+        raise ValidationError("只有差异处理中的零库存盘盈行可以维护调整成本。")
+    cost = quantize_unit_cost(unit_cost)
+    if cost < ZERO_COST:
+        raise ValidationError({"unit_cost": "盘盈单位成本不得小于 0。"})
+    reason = str(zero_cost_reason or "").strip()
+    if cost == ZERO_COST and not reason:
+        raise ValidationError({"zero_cost_reason": "0 成本盘盈必须填写明确的零成本原因。"})
+    _base_update(
+        SupplyCountLine,
+        line.pk,
+        {"adjustment_unit_cost": cost, "zero_cost_reason": reason},
+        "controlled_supply_count_line_mutation",
+    )
+    line.refresh_from_db()
+    _audit(
+        actor=actor,
+        action="supply_count_adjustment_cost",
+        instance=line,
+        new={
+            "task_no": task.task_no,
+            "item_id": str(line.item_id),
+            "unit_cost": str(cost),
+            "zero_cost_reason": reason,
+        },
+        request=request,
+    )
+    return line
+
+
+@transaction.atomic
+def cancel_supply_count_task(*, task, actor, reason, request=None):
+    task = _lock_supply_count_task(task)
+    require_execute_supply_count_task(actor, task)
+    cleaned_reason = str(reason or "").strip()
+    if not cleaned_reason:
+        raise ValidationError({"reason": "取消盘点必须填写原因。"})
+    if task.status == SupplyCountStatus.CANCELLED:
+        if task.cancellation_reason != cleaned_reason:
+            raise ValidationError("该盘点任务已按另一原因取消。")
+        return task
+    if task.status == SupplyCountStatus.CLOSED:
+        raise ValidationError("已关闭盘点任务不得取消。")
+    if task.status not in {
+        SupplyCountStatus.DRAFT,
+        SupplyCountStatus.IN_PROGRESS,
+        SupplyCountStatus.RECONCILIATION,
+    }:
+        raise ValidationError("当前盘点任务状态不能取消。")
+    if task.warehouse_id:
+        SupplyWarehouse.objects.select_for_update().get(
+            pk=task.warehouse_id, company=task.company
+        )
+    old = _count_task_snapshot(task)
+    now = timezone.now()
+    _base_update(
+        SupplyCountTask,
+        task.pk,
+        {
+            "status": SupplyCountStatus.CANCELLED,
+            "cancelled_by_id": actor.pk,
+            "cancelled_at": now,
+            "cancellation_reason": cleaned_reason,
+        },
+        "controlled_supply_count_task_mutation",
+    )
+    task.refresh_from_db()
+    _audit(
+        actor=actor,
+        action="supply_count_cancel",
+        instance=task,
+        old=old,
+        new={**_count_task_snapshot(task), "reason": cleaned_reason},
+        request=request,
+    )
+    return task
+
+
+def _validate_count_lines_ready(lines):
+    for line in lines:
+        if line.counted_quantity is None or line.difference_quantity is None:
+            raise ValidationError(
+                f"物品 {line.item_code_snapshot} 尚未录入实盘数量。"
+            )
+        expected_difference = quantize_quantity(
+            line.counted_quantity - line.expected_quantity
+        )
+        if line.difference_quantity != expected_difference:
+            raise ValidationError(
+                f"物品 {line.item_code_snapshot} 的固定差异与实盘数量不一致。"
+            )
+        if expected_difference != ZERO_QTY and not str(line.remark or "").strip():
+            raise ValidationError(
+                f"物品 {line.item_code_snapshot} 存在差异但未填写原因。"
+            )
+
+
+def _create_count_adjustment_document(*, task, lines, actor):
+    existing = SupplyDocument.objects.select_for_update().filter(
+        source_count_task=task
+    ).first()
+    if existing is not None:
+        return existing
+    document = SupplyDocument(
+        company=task.company,
+        document_no=_next_supply_document_no(
+            company=task.company,
+            document_type=SupplyDocumentType.COUNT_ADJUSTMENT,
+            business_date=timezone.localdate(),
+        ),
+        document_type=SupplyDocumentType.COUNT_ADJUSTMENT,
+        business_date=timezone.localdate(),
+        source_warehouse=None,
+        target_warehouse=None,
+        department=None,
+        employee=None,
+        status=SupplyDocumentStatus.DRAFT,
+        idempotency_key=f"supply-count-close:{task.pk}",
+        source_count_task=task,
+        created_by=actor,
+        remark=f"由盘点任务 {task.task_no} 自动生成",
+    )
+    document.full_clean()
+    _enable_capability("controlled_supply_count_adjustment_insert")
+    try:
+        document.save(force_insert=True)
+    except IntegrityError as exc:
+        raise ValidationError("该盘点任务的调整单已经存在。") from exc
+    prepared = []
+    mapped_lines = []
+    for count_line in lines:
+        difference = count_line.difference_quantity
+        if difference == ZERO_QTY:
+            continue
+        direction = (
+            "increase" if difference > ZERO_QTY else "decrease"
+        )
+        entered_cost = None
+        line_remark = str(count_line.remark or "").strip()
+        if direction == "increase":
+            if count_line.expected_quantity > ZERO_QTY:
+                entered_cost = count_line.expected_unit_cost
+            else:
+                if count_line.adjustment_unit_cost is None:
+                    raise ValidationError(
+                        f"零库存盘盈物品 {count_line.item_code_snapshot} 必须填写单位成本。"
+                    )
+                entered_cost = count_line.adjustment_unit_cost
+                if entered_cost == ZERO_COST:
+                    zero_reason = str(count_line.zero_cost_reason or "").strip()
+                    if not zero_reason:
+                        raise ValidationError(
+                            f"零库存盘盈物品 {count_line.item_code_snapshot} 使用 0 成本时必须填写原因。"
+                        )
+                    line_remark = f"{line_remark}；零成本原因：{zero_reason}"
+        prepared.append(
+            {
+                "line_no": len(prepared) + 1,
+                "item": count_line.item,
+                "quantity": abs(difference),
+                "entered_unit_cost": entered_cost,
+                "adjustment_direction": direction,
+                "source_issue_line": None,
+                "source_custody": None,
+                "line_remark": line_remark,
+            }
+        )
+        mapped_lines.append(count_line)
+    document_lines = _create_document_lines(
+        document=document, prepared_lines=prepared
+    )
+    document._count_line_map = list(zip(mapped_lines, document_lines, strict=True))
+    return document
+
+
+def _close_warehouse_supply_count(*, task, lines, actor, request=None):
+    current_balances = list(
+        SupplyStockBalance.objects.select_for_update()
+        .select_related("item")
+        .filter(company=task.company, warehouse_id=task.warehouse_id)
+        .order_by("item_id", "pk")
+    )
+    line_by_item = {line.item_id: line for line in lines}
+    unexpected = [
+        balance.item.item_code
+        for balance in current_balances
+        if balance.item_id not in line_by_item
+    ]
+    if unexpected:
+        raise ValidationError(
+            "当前仓库余额与盘点快照不一致，不能自动关闭。"
+            "请先执行库存余额核对并检查是否存在绕过冻结的业务。"
+        )
+    balance_by_item = {balance.item_id: balance for balance in current_balances}
+    for line in lines:
+        balance = balance_by_item.get(line.item_id)
+        current_quantity = balance.quantity_on_hand if balance else ZERO_QTY
+        current_amount = balance.amount_on_hand if balance else ZERO_MONEY
+        current_cost = balance.average_unit_cost if balance else ZERO_COST
+        if (
+            current_quantity != line.expected_quantity
+            or current_amount != line.expected_amount
+            or current_cost != line.expected_unit_cost
+        ):
+            raise ValidationError(
+                "当前仓库余额与盘点快照不一致，不能自动关闭。"
+                "请先执行库存余额核对并检查是否存在绕过冻结的业务。"
+            )
+        if balance is None:
+            balance = _lock_or_create_balance(
+                company=task.company,
+                warehouse=task.warehouse,
+                item=line.item,
+            )
+            balance_by_item[line.item_id] = balance
+    differences = [
+        line for line in lines if line.difference_quantity != ZERO_QTY
+    ]
+    if not differences:
+        return None
+    document = _create_count_adjustment_document(
+        task=task,
+        lines=lines,
+        actor=actor,
+    )
+    if document.status == SupplyDocumentStatus.DRAFT:
+        _post_supply_document_internal(
+            document=document,
+            actor=actor,
+            request=request,
+            source_count_task=task,
+        )
+    mapping = getattr(document, "_count_line_map", None)
+    if mapping is None:
+        document_lines = list(document.lines.order_by("line_no"))
+        mapping = list(zip(differences, document_lines, strict=True))
+    resolved_at = timezone.now()
+    for count_line, document_line in mapping:
+        _base_update(
+            SupplyCountLine,
+            count_line.pk,
+            {
+                "adjustment_document_line_id": document_line.pk,
+                "resolved_by_id": actor.pk,
+                "resolved_at": resolved_at,
+            },
+            "controlled_supply_count_line_mutation",
+        )
+    _audit(
+        actor=actor,
+        action="supply_count_adjustment_posted",
+        instance=document,
+        new={
+            "task_no": task.task_no,
+            "document_no": document.document_no,
+            "difference_line_count": len(differences),
+            "difference_quantity": str(
+                sum((line.difference_quantity for line in differences), ZERO_QTY)
+            ),
+        },
+        request=request,
+    )
+    return document
+
+
+def _resolution_type_for_movement(movement):
+    return {
+        SupplyCustodyAction.RETURN: SupplyCountResolutionType.RETURN,
+        SupplyCustodyAction.TRANSFER: SupplyCountResolutionType.TRANSFER,
+        SupplyCustodyAction.LOSS: SupplyCountResolutionType.LOSS,
+        SupplyCustodyAction.SCRAP: SupplyCountResolutionType.SCRAP,
+        SupplyCustodyAction.CORRECTION: SupplyCountResolutionType.CORRECTION,
+    }.get(movement.action)
+
+
+def _validate_custody_count_resolution(line):
+    movement = line.resolution_custody_movement
+    difference = line.difference_quantity
+    if difference == ZERO_QTY:
+        if movement is not None or line.resolution_type is not None:
+            raise ValidationError("无差异保管盘点行不得伪造解决证据。")
+        return
+    if movement is None:
+        raise ValidationError(
+            f"物品 {line.item_code_snapshot} 的保管差异尚未关联真实解决动作。"
+        )
+    if movement.created_at < line.count_task.stopped_at:
+        raise ValidationError("保管差异解决动作必须发生在停止录入之后。")
+    if movement.quantity != abs(difference):
+        raise ValidationError("保管差异解决动作数量必须精确等于差异绝对值。")
+    expected_type = _resolution_type_for_movement(movement)
+    if expected_type != line.resolution_type:
+        raise ValidationError("保管解决流水动作与盘点解决方式不一致。")
+    if difference < ZERO_QTY:
+        if movement.from_custody_id != line.custody_id:
+            raise ValidationError("盘亏解决动作必须从发布快照的来源保管减少。")
+        if movement.action == SupplyCustodyAction.CORRECTION:
+            if movement.to_custody_id is not None:
+                raise ValidationError("负向盘点更正流水方向错误。")
+        elif movement.action == SupplyCustodyAction.TRANSFER:
+            if movement.to_custody_id is None:
+                raise ValidationError("转交解决必须关联目标保管记录。")
+        elif movement.to_custody_id is not None:
+            raise ValidationError("归还、报损或报废解决流水方向错误。")
+    else:
+        if (
+            movement.action != SupplyCustodyAction.CORRECTION
+            or movement.from_custody_id is not None
+            or movement.to_custody_id != line.custody_id
+        ):
+            raise ValidationError("保管盘盈只能由指向原保管的正向盘点更正解决。")
+    custody = line.custody
+    if custody.current_quantity != line.counted_quantity:
+        raise ValidationError("当前保管数量与盘点解决后的实盘数量不一致。")
+    if line.counted_quantity == ZERO_QTY:
+        if custody.status != SupplyCustodyStatus.CLOSED or custody.current_amount != ZERO_MONEY:
+            raise ValidationError("实盘为 0 的保管记录必须已结清且金额归零。")
+    elif custody.status != SupplyCustodyStatus.OPEN:
+        raise ValidationError("实盘仍有数量的保管记录必须保持在管。")
+
+
+@transaction.atomic
+def close_supply_count_task(*, task, actor, request=None):
+    task = _lock_supply_count_task(task)
+    require_execute_supply_count_task(actor, task)
+    if task.status == SupplyCountStatus.CLOSED:
+        return task
+    if task.status != SupplyCountStatus.RECONCILIATION:
+        raise ValidationError("只有差异处理中的盘点任务可以关闭。")
+    if task.count_domain == SupplyCountDomain.WAREHOUSE_STOCK:
+        task.warehouse = SupplyWarehouse.objects.select_for_update().get(
+            pk=task.warehouse_id, company=task.company
+        )
+    line_queryset = SupplyCountLine.objects.select_for_update()
+    if connection.vendor == "postgresql":
+        line_queryset = line_queryset.select_for_update(of=("self",))
+    lines = list(
+        line_queryset.select_related(
+            "item",
+            "custody",
+            "resolution_custody_movement",
+            "adjustment_document_line",
+        )
+        .filter(count_task=task)
+        .order_by("item_id", "pk")
+    )
+    for line in lines:
+        line.count_task = task
+    _validate_count_lines_ready(lines)
+    adjustment_document = None
+    if task.count_domain == SupplyCountDomain.WAREHOUSE_STOCK:
+        active = SupplyCountTask.objects.filter(
+            pk=task.pk,
+            warehouse_id=task.warehouse_id,
+            status=SupplyCountStatus.RECONCILIATION,
+        ).exists()
+        if not active:
+            raise ValidationError("当前仓库不再由该盘点任务冻结，不能关闭。")
+        adjustment_document = _close_warehouse_supply_count(
+            task=task,
+            lines=lines,
+            actor=actor,
+            request=request,
+        )
+    else:
+        custody_ids = sorted(
+            [line.custody_id for line in lines if line.custody_id], key=str
+        )
+        locked_custodies = {
+            custody.pk: custody
+            for custody in SupplyCustody.objects.select_for_update()
+            .filter(company=task.company, pk__in=custody_ids)
+            .order_by("pk")
+        }
+        for line in lines:
+            line.custody = locked_custodies.get(line.custody_id)
+            if line.custody is None:
+                raise ValidationError("盘点快照中的保管记录不存在或公司不一致。")
+            _validate_custody_count_resolution(line)
+    old = _count_task_snapshot(task)
+    now = timezone.now()
+    _base_update(
+        SupplyCountTask,
+        task.pk,
+        {
+            "status": SupplyCountStatus.CLOSED,
+            "closed_by_id": actor.pk,
+            "closed_at": now,
+        },
+        "controlled_supply_count_task_mutation",
+    )
+    task.refresh_from_db()
+    _audit(
+        actor=actor,
+        action="supply_count_close",
+        instance=task,
+        old=old,
+        new={
+            **_count_task_snapshot(task),
+            "adjustment_document_id": (
+                str(adjustment_document.pk) if adjustment_document else None
+            ),
+            "adjustment_document_no": (
+                adjustment_document.document_no if adjustment_document else None
+            ),
+        },
+        request=request,
+    )
+    return task
+
+
+def _active_count_line_for_custody(custody):
+    return (
+        SupplyCountLine.objects.select_related("count_task")
+        .filter(
+            company=custody.company,
+            custody=custody,
+            count_task__status__in=ACTIVE_SUPPLY_COUNT_STATUSES,
+        )
+        .order_by("pk")
+        .first()
+    )
+
+
+def _assert_custody_count_action_allowed(
+    *, custody, count_line=None, action_quantity=None
+):
+    active_line = _active_count_line_for_custody(custody)
+    if active_line is None:
+        if count_line is not None:
+            raise ValidationError("指定盘点行当前未冻结该保管记录。")
+        return None
+    if active_line.count_task.status == SupplyCountStatus.IN_PROGRESS:
+        raise ValidationError("该保管记录正在进行耐用品盘点，停止录入前不能执行保管动作。")
+    if count_line is None or active_line.pk != count_line.pk:
+        raise ValidationError(
+            "该保管记录正在处理盘点差异，普通保管动作已冻结；"
+            "请从对应盘点差异行发起解决。"
+        )
+    if active_line.count_task.status != SupplyCountStatus.RECONCILIATION:
+        raise ValidationError("当前盘点任务不在差异处理状态。")
+    if active_line.difference_quantity is None or active_line.difference_quantity >= ZERO_QTY:
+        raise ValidationError("普通归还、转交、报损或报废只能解决保管盘亏差异。")
+    if active_line.resolution_custody_movement_id:
+        raise ValidationError("该盘点差异已经关联解决动作。")
+    if action_quantity is not None and quantize_quantity(action_quantity) != abs(
+        active_line.difference_quantity
+    ):
+        raise ValidationError("保管差异解决数量必须精确等于差异绝对值。")
+    return active_line
+
+
+def _resolve_supply_count_line_with_movement(
+    *, count_line, movement, actor, request=None
+):
+    task, line = _lock_supply_count_line(count_line)
+    require_execute_supply_count_task(actor, task)
+    if task.status != SupplyCountStatus.RECONCILIATION:
+        raise ValidationError("只有差异处理中的保管盘点行可以关联解决流水。")
+    if task.count_domain != SupplyCountDomain.CUSTODY or not line.custody_id:
+        raise ValidationError("目标不是耐用品保管盘点行。")
+    if line.resolution_custody_movement_id:
+        if line.resolution_custody_movement_id == movement.pk:
+            return line
+        raise ValidationError("该盘点差异已经由另一保管流水解决。")
+    if movement.company_id != line.company_id or movement.item_id != line.item_id:
+        raise ValidationError("保管解决流水不属于盘点公司或物品。")
+    if movement.quantity != abs(line.difference_quantity or ZERO_QTY):
+        raise ValidationError("保管解决流水数量必须精确等于差异绝对值。")
+    resolution_type = _resolution_type_for_movement(movement)
+    if resolution_type is None:
+        raise ValidationError("该保管流水动作不能作为盘点差异解决证据。")
+    if line.difference_quantity < ZERO_QTY:
+        if movement.from_custody_id != line.custody_id:
+            raise ValidationError("盘亏解决流水必须从盘点来源保管转出。")
+    elif line.difference_quantity > ZERO_QTY:
+        if (
+            movement.action != SupplyCustodyAction.CORRECTION
+            or movement.from_custody_id is not None
+            or movement.to_custody_id != line.custody_id
+        ):
+            raise ValidationError("保管盘盈只能使用正向盘点更正解决。")
+    else:
+        raise ValidationError("无差异盘点行不得关联解决流水。")
+    resolved_at = timezone.now()
+    _base_update(
+        SupplyCountLine,
+        line.pk,
+        {
+            "resolution_type": resolution_type,
+            "resolution_custody_movement_id": movement.pk,
+            "resolved_by_id": actor.pk,
+            "resolved_at": resolved_at,
+        },
+        "controlled_supply_count_line_mutation",
+    )
+    line.refresh_from_db()
+    _audit(
+        actor=actor,
+        action="supply_count_custody_resolve",
+        instance=line,
+        new={
+            "task_no": task.task_no,
+            "resolution_type": resolution_type,
+            "movement_id": str(movement.pk),
+            "quantity": str(movement.quantity),
+        },
+        request=request,
+    )
+    return line
+
+
+@transaction.atomic
+def correct_custody_for_count(
+    *, count_line, actor, reason, idempotency_key, request=None
+):
+    task, line = _lock_supply_count_line(count_line)
+    require_execute_supply_count_task(actor, task)
+    if (
+        task.count_domain != SupplyCountDomain.CUSTODY
+        or task.status != SupplyCountStatus.RECONCILIATION
+        or line.custody_id is None
+    ):
+        raise ValidationError("盘点专用更正只能处理差异处理中的耐用品保管行。")
+    if line.resolution_custody_movement_id:
+        existing = line.resolution_custody_movement
+        if (
+            existing.action == SupplyCustodyAction.CORRECTION
+            and existing.idempotency_key == str(idempotency_key or "").strip()
+        ):
+            return existing
+        raise ValidationError("该盘点差异已经解决。")
+    difference = line.difference_quantity
+    if difference is None or difference == ZERO_QTY:
+        raise ValidationError("只有有差异的保管盘点行可以执行更正。")
+    cleaned_reason = str(reason or "").strip()
+    key = str(idempotency_key or "").strip()
+    if not cleaned_reason:
+        raise ValidationError({"reason": "盘点更正原因不能为空。"})
+    if not key:
+        raise ValidationError({"idempotency_key": "盘点更正幂等键不能为空。"})
+    custody = (
+        SupplyCustody.objects.select_for_update(of=("self",))
+        if connection.vendor == "postgresql"
+        else SupplyCustody.objects.select_for_update()
+    ).select_related("item", "department", "employee").get(
+        pk=line.custody_id, company=task.company
+    )
+    existing = SupplyCustodyMovement.objects.select_for_update().filter(
+        company=task.company, idempotency_key=key
+    ).first()
+    if existing is not None:
+        if (
+            existing.action == SupplyCustodyAction.CORRECTION
+            and existing.quantity == abs(difference)
+            and line.custody_id
+            in {existing.from_custody_id, existing.to_custody_id}
+            and existing.reason == cleaned_reason
+        ):
+            _resolve_supply_count_line_with_movement(
+                count_line=line,
+                movement=existing,
+                actor=actor,
+                request=request,
+            )
+            return existing
+        raise ValidationError("同一保管动作幂等键已用于不同内容。")
+    _assert_custody_count_action_allowed(
+        custody=custody,
+        count_line=line,
+        action_quantity=abs(difference),
+    ) if difference < ZERO_QTY else None
+    old = _custody_snapshot(custody)
+    now = timezone.now()
+    if difference > ZERO_QTY:
+        quantity = quantize_quantity(difference)
+        amount = quantize_money(quantity * custody.unit_cost_snapshot)
+        quantity_after = quantize_quantity(custody.current_quantity + quantity)
+        amount_after = quantize_money(custody.current_amount + amount)
+        from_custody = None
+        to_custody = custody
+        status = SupplyCustodyStatus.OPEN
+    else:
+        allocation = allocate_custody_amount(
+            current_quantity=custody.current_quantity,
+            current_amount=custody.current_amount,
+            unit_cost_snapshot=custody.unit_cost_snapshot,
+            action_quantity=abs(difference),
+        )
+        quantity = allocation.action_quantity
+        amount = allocation.action_amount
+        quantity_after = allocation.quantity_after
+        amount_after = allocation.amount_after
+        from_custody = custody
+        to_custody = None
+        status = (
+            SupplyCustodyStatus.CLOSED
+            if quantity_after == ZERO_QTY
+            else SupplyCustodyStatus.OPEN
+        )
+    _update_custody_values(
+        custody=custody,
+        quantity=quantity_after,
+        amount=amount_after,
+        status=status,
+        updated_at=now,
+    )
+    movement = _create_custody_movement(
+        values={
+            "company": task.company,
+            "item": custody.item,
+            "from_custody": from_custody,
+            "to_custody": to_custody,
+            "action": SupplyCustodyAction.CORRECTION,
+            "quantity": quantity,
+            "amount": amount,
+            "unit_cost": custody.unit_cost_snapshot,
+            "business_date": timezone.localdate(),
+            "reason": cleaned_reason,
+            "created_by": actor,
+            "idempotency_key": key,
+        }
+    )
+    _resolve_supply_count_line_with_movement(
+        count_line=line,
+        movement=movement,
+        actor=actor,
+        request=request,
+    )
+    _audit(
+        actor=actor,
+        action="supply_count_custody_correction",
+        instance=movement,
+        old=old,
+        new={
+            **_custody_snapshot(custody),
+            "task_no": task.task_no,
+            "direction": "increase" if difference > ZERO_QTY else "decrease",
+            "quantity": str(quantity),
+            "amount": str(amount),
+            "reason": cleaned_reason,
+        },
+        request=request,
+    )
+    return movement
+
+
+@transaction.atomic
+def return_custody_for_count(
+    *,
+    count_line,
+    target_warehouse,
+    business_date,
+    reason,
+    actor,
+    idempotency_key,
+    request=None,
+):
+    task, line = _lock_supply_count_line(count_line)
+    require_execute_supply_count_task(actor, task)
+    if (
+        task.status != SupplyCountStatus.RECONCILIATION
+        or task.count_domain != SupplyCountDomain.CUSTODY
+        or line.custody_id is None
+        or line.difference_quantity is None
+        or line.difference_quantity >= ZERO_QTY
+    ):
+        raise ValidationError("归还只能解决差异处理中的保管盘亏行。")
+    document = return_custody_to_warehouse(
+        custody=line.custody,
+        target_warehouse=target_warehouse,
+        quantity=abs(line.difference_quantity),
+        business_date=business_date,
+        reason=reason,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        count_line=line,
+        request=request,
+    )
+    _post_supply_document_internal(
+        document=document,
+        actor=actor,
+        request=request,
+        source_count_line=line,
+    )
+    return SupplyCustodyMovement.objects.get(
+        company=task.company,
+        source_document_line__document=document,
+        source_document_line__source_custody_id=line.custody_id,
+        action=SupplyCustodyAction.RETURN,
+    )
+
+
+def _create_employee_supply_clearance_item(*, clearance, custody, actor, request=None):
+    item = EmployeeSupplyClearanceItem(
+        clearance=clearance,
+        company=clearance.company,
+        custody=custody,
+        item_code_snapshot=custody.item.item_code,
+        item_name_snapshot=custody.item.name,
+        quantity_snapshot=custody.current_quantity,
+        amount_snapshot=custody.current_amount,
+        department_snapshot=custody.department.name,
+        employee_snapshot=custody.employee.name,
+        resolution=EmployeeSupplyClearanceResolution.PENDING,
+    )
+    item._controlled_insert = True
+    _enable_capability("controlled_employee_supply_clearance_item_insert")
+    item.full_clean()
+    try:
+        item.save(force_insert=True)
+    except IntegrityError as exc:
+        raise ValidationError("该保管记录已经纳入本离职清退单。") from exc
+    _audit(
+        actor=actor,
+        action="employee_supply_clearance_item_create",
+        instance=item,
+        new={
+            "clearance_id": str(clearance.pk),
+            "custody_id": str(custody.pk),
+            "item_code": item.item_code_snapshot,
+            "quantity": str(item.quantity_snapshot),
+            "amount": str(item.amount_snapshot),
+        },
+        request=request,
+    )
+    return item
+
+
+@transaction.atomic
+def create_supply_clearance_items(
+    *, clearance, actor, historical_only=False, request=None
+):
+    """Add authoritative open personal durable custodies to one locked clearance."""
+
+    custody_qs = (
+        SupplyCustody.objects.select_for_update(of=("self",))
+        if connection.vendor == "postgresql"
+        else SupplyCustody.objects.select_for_update()
+    )
+    custodies = list(
+        custody_qs.select_related("item", "department", "employee")
+        .filter(
+            company=clearance.company,
+            employee=clearance.employee,
+            status=SupplyCustodyStatus.OPEN,
+            current_quantity__gt=ZERO_QTY,
+            item__item_type=SupplyItemType.DURABLE_QUANTITY,
+        )
+        .order_by("pk")
+    )
+    existing_ids = set(
+        EmployeeSupplyClearanceItem.objects.select_for_update()
+        .filter(clearance=clearance)
+        .values_list("custody_id", flat=True)
+    )
+    if clearance.supplements_clearance_id:
+        existing_ids.update(
+            EmployeeSupplyClearanceItem.objects.filter(
+                clearance=clearance.supplements_clearance
+            ).values_list("custody_id", flat=True)
+        )
+    created = []
+    post_initiation = []
+    for custody in custodies:
+        if custody.pk in existing_ids:
+            continue
+        association_cutoff = clearance.initiated_at
+        if clearance.supplements_clearance_id:
+            association_cutoff = clearance.supplements_clearance.initiated_at
+        association_date = timezone.localtime(association_cutoff).date()
+        is_post_initiation = (
+            custody.created_at > association_cutoff
+            and custody.started_on > association_date
+        )
+        if historical_only and is_post_initiation:
+            post_initiation.append(str(custody.pk))
+            continue
+        created.append(
+            _create_employee_supply_clearance_item(
+                clearance=clearance,
+                custody=custody,
+                actor=actor,
+                request=request,
+            )
+        )
+    if post_initiation:
+        raise ValidationError(
+            "存在清退发起后新增给离职员工的数量型低值耐用品保管关系，"
+            "必须先纠正后才能继续：" + "、".join(post_initiation)
+        )
+    return created
+
+
+@transaction.atomic
+def resolve_supply_clearance_items_for_movement(*, movement, request=None):
+    if movement.action not in {
+        SupplyCustodyAction.RETURN,
+        SupplyCustodyAction.TRANSFER,
+        SupplyCustodyAction.LOSS,
+        SupplyCustodyAction.SCRAP,
+    } or movement.from_custody_id is None:
+        return []
+    actor = movement.created_by
+    if actor is None:
+        raise ValidationError("保管动作缺少操作人，不能作为离职清退证据。")
+    custody_qs = (
+        SupplyCustody.objects.select_for_update(of=("self",))
+        if connection.vendor == "postgresql"
+        else SupplyCustody.objects.select_for_update()
+    )
+    source = custody_qs.select_related("employee", "item").get(
+        pk=movement.from_custody_id,
+        company=movement.company,
+    )
+    if source.status != SupplyCustodyStatus.CLOSED or source.current_quantity != ZERO_QTY:
+        return []
+    if movement.action == SupplyCustodyAction.TRANSFER:
+        target = movement.to_custody
+        if target is None or target.employee_id == source.employee_id:
+            return []
+    resolution = {
+        SupplyCustodyAction.RETURN: EmployeeSupplyClearanceResolution.RETURNED,
+        SupplyCustodyAction.TRANSFER: EmployeeSupplyClearanceResolution.TRANSFERRED,
+        SupplyCustodyAction.LOSS: EmployeeSupplyClearanceResolution.LOST,
+        SupplyCustodyAction.SCRAP: EmployeeSupplyClearanceResolution.SCRAPPED,
+    }[movement.action]
+    items = list(
+        EmployeeSupplyClearanceItem.objects.select_for_update()
+        .select_related("clearance")
+        .filter(
+            company=movement.company,
+            custody=source,
+            resolution=EmployeeSupplyClearanceResolution.PENDING,
+            clearance__status__in=("open", "blocked"),
+        )
+        .order_by("pk")
+    )
+    clearances = {}
+    for item in items:
+        if movement.action == SupplyCustodyAction.TRANSFER:
+            target = movement.to_custody
+            if target.employee_id == item.clearance.employee_id:
+                continue
+        _enable_capability("controlled_employee_supply_clearance_item_resolution")
+        _base_update(
+            EmployeeSupplyClearanceItem,
+            item.pk,
+            {
+                "resolution": resolution,
+                "resolved_by_id": actor.pk,
+                "resolved_at": movement.created_at,
+                "custody_movement_id": movement.pk,
+            },
+            "controlled_employee_supply_clearance_item_resolution",
+        )
+        item.refresh_from_db()
+        clearances[item.clearance_id] = item.clearance
+        _audit(
+            actor=actor,
+            action="employee_supply_clearance_item_resolve",
+            instance=item,
+            old={"resolution": "pending"},
+            new={
+                "resolution": resolution,
+                "movement_id": str(movement.pk),
+                "custody_id": str(source.pk),
+            },
+            request=request,
+        )
+    if clearances:
+        from apps.offboarding.services import _recount
+
+        for clearance in clearances.values():
+            _recount(clearance)
+    return items

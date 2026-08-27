@@ -32,7 +32,7 @@
   <div class="card shadow-sm">
     <div class="table-responsive">
       <table class="table table-hover align-middle mb-0">
-        <thead><tr><th>员工</th><th>部门</th><th>类型</th><th>发起时间</th><th class="text-end">资产总数</th><th class="text-end">已处理</th><th class="text-end">未处理</th><th>状态</th><th></th></tr></thead>
+        <thead><tr><th>员工</th><th>部门</th><th>类型</th><th>发起时间</th><th class="text-end">逐件资产 总/未清</th><th class="text-end">数量耐用品 总/未清</th><th>状态</th><th></th></tr></thead>
         <tbody>
           {% for clearance in clearances %}
             <tr>
@@ -40,14 +40,13 @@
               <td>{{ clearance.employee.department.name|default:"—" }}</td>
               <td>{% if clearance.is_supplement %}<span class="badge text-bg-info">补充清退</span>{% else %}首次清退{% endif %}</td>
               <td>{{ clearance.initiated_at|date:"Y-m-d H:i" }}</td>
-              <td class="text-end">{{ clearance.total_assets_snapshot }}</td>
-              <td class="text-end">{{ clearance.processed_assets }}</td>
-              <td class="text-end"><span class="badge text-bg-{% if clearance.unresolved_assets %}danger{% else %}success{% endif %}">{{ clearance.unresolved_assets }}</span></td>
+              <td class="text-end">{{ clearance.total_assets_snapshot }} / <span class="badge text-bg-{% if clearance.unresolved_assets %}danger{% else %}success{% endif %}">{{ clearance.unresolved_assets }}</span></td>
+              <td class="text-end">{{ clearance.total_supply_custodies_snapshot }} / <span class="badge text-bg-{% if clearance.unresolved_supply_custodies %}danger{% else %}success{% endif %}">{{ clearance.unresolved_supply_custodies }}</span></td>
               <td><span class="badge text-bg-{% if clearance.status == 'completed' %}success{% elif clearance.status == 'blocked' %}danger{% elif clearance.status == 'cancelled' %}secondary{% else %}primary{% endif %}">{{ clearance.get_status_display }}</span></td>
               <td><a class="btn btn-sm btn-outline-primary" href="{% url 'offboarding:clearance-detail' clearance.pk %}">查看</a></td>
             </tr>
           {% empty %}
-            <tr><td colspan="9" class="text-center text-secondary py-4">当前范围没有清退记录。</td></tr>
+            <tr><td colspan="8" class="text-center text-secondary py-4">当前范围没有清退记录。</td></tr>
           {% endfor %}
         </tbody>
       </table>

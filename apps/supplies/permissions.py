@@ -9,6 +9,9 @@ from apps.masterdata.permissions import resolve_department_ids, role_names_for
 
 from .models import (
     SupplyCategory,
+    SupplyCountDomain,
+    SupplyCountLine,
+    SupplyCountTask,
     SupplyCustody,
     SupplyDocument,
     SupplyItem,
@@ -34,6 +37,12 @@ SUPPLY_CUSTODY_ACTION_ROLES = frozenset(
 )
 SUPPLY_COST_VIEW_ROLES = frozenset(
     {"system_admin", "finance", "warehouse", "equipment", "management"}
+)
+WAREHOUSE_COUNT_EXECUTE_ROLES = frozenset(
+    {"system_admin", "finance", "warehouse"}
+)
+CUSTODY_COUNT_EXECUTE_ROLES = frozenset(
+    {"system_admin", "finance", "equipment"}
 )
 
 
@@ -258,6 +267,121 @@ def can_view_supply_cost(user) -> bool:
 def require_view_supply_cost(user) -> None:
     if not can_view_supply_cost(user):
         raise PermissionDenied("您没有查看低值物品库存成本的权限。")
+
+
+def _employee_for(user, company):
+    from apps.masterdata.models import Employee
+
+    if not getattr(user, "pk", None):
+        return None
+    return Employee.objects.filter(company=company, user=user).first()
+
+
+def scoped_supply_count_tasks(user, company, queryset=None):
+    queryset = queryset if queryset is not None else SupplyCountTask.objects.all()
+    queryset = queryset.filter(company=company)
+    roles = role_names_for(user)
+    if roles.intersection(
+        {"system_admin", "finance", "warehouse", "equipment", "management"}
+    ):
+        return queryset
+    filters = Q(pk__in=[])
+    if "department_manager" in roles:
+        filters |= Q(
+            count_domain=SupplyCountDomain.CUSTODY,
+            department_id__in=resolve_department_ids(user, company),
+        )
+    employee = _employee_for(user, company)
+    if "employee" in roles and employee is not None:
+        filters |= Q(
+            count_domain=SupplyCountDomain.CUSTODY,
+            lines__custody__employee=employee,
+        )
+    return queryset.filter(filters).distinct()
+
+
+def can_view_supply_count_task(user, task) -> bool:
+    return bool(
+        task is not None
+        and getattr(task, "pk", None)
+        and scoped_supply_count_tasks(user, task.company).filter(pk=task.pk).exists()
+    )
+
+
+def require_view_supply_count_task(user, task) -> None:
+    if not can_view_supply_count_task(user, task):
+        raise PermissionDenied("您没有查看此低值物品盘点任务的权限。")
+
+
+def can_create_supply_count_task(
+    user, *, company, count_domain, department=None
+) -> bool:
+    roles = role_names_for(user)
+    if count_domain == SupplyCountDomain.WAREHOUSE_STOCK:
+        return bool(roles.intersection(WAREHOUSE_COUNT_EXECUTE_ROLES))
+    if count_domain != SupplyCountDomain.CUSTODY:
+        return False
+    if roles.intersection(CUSTODY_COUNT_EXECUTE_ROLES):
+        return True
+    return bool(
+        "department_manager" in roles
+        and department is not None
+        and department.company_id == company.pk
+        and department.pk in resolve_department_ids(user, company)
+    )
+
+
+def require_create_supply_count_task(
+    user, *, company, count_domain, department=None
+) -> None:
+    if not can_create_supply_count_task(
+        user,
+        company=company,
+        count_domain=count_domain,
+        department=department,
+    ):
+        raise PermissionDenied("您没有在当前盘点域和范围内创建盘点任务的权限。")
+
+
+def can_execute_supply_count_task(user, task) -> bool:
+    roles = role_names_for(user)
+    if task.count_domain == SupplyCountDomain.WAREHOUSE_STOCK:
+        return bool(roles.intersection(WAREHOUSE_COUNT_EXECUTE_ROLES))
+    if task.count_domain != SupplyCountDomain.CUSTODY:
+        return False
+    if roles.intersection(CUSTODY_COUNT_EXECUTE_ROLES):
+        return True
+    return bool(
+        "department_manager" in roles
+        and task.department_id
+        in resolve_department_ids(user, task.company)
+    )
+
+
+def require_execute_supply_count_task(user, task) -> None:
+    if not can_execute_supply_count_task(user, task):
+        raise PermissionDenied("您没有发布、停止、处理、关闭或取消此盘点任务的权限。")
+
+
+def can_record_supply_count(user, line) -> bool:
+    task = line.count_task
+    if can_execute_supply_count_task(user, task):
+        return True
+    if task.count_domain != SupplyCountDomain.CUSTODY:
+        return False
+    roles = role_names_for(user)
+    employee = _employee_for(user, task.company)
+    return bool(
+        "employee" in roles
+        and employee is not None
+        and line.custody_id
+        and line.custody.employee_id == employee.pk
+    )
+
+
+def require_record_supply_count(user, line) -> None:
+    if not can_record_supply_count(user, line):
+        raise PermissionDenied("您只能录入获准范围或本人保管的盘点行。")
 
 
 def scoped_supply_categories(user, company, queryset=None):
