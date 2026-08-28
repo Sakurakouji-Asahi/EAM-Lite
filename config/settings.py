@@ -90,6 +90,7 @@ TEMPLATES = [
                 "apps.supplies.context_processors.supplies_navigation",
                 "apps.reports.context_processors.report_navigation",
                 "apps.operations.context_processors.operations_navigation",
+                "apps.core.context_processors.application_navigation",
             ],
         },
     },

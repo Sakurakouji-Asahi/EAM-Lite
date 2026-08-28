@@ -7,6 +7,7 @@ from django.core.exceptions import PermissionDenied
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
+from django.utils import timezone
 from openpyxl import load_workbook
 
 from apps.reports.excel import write_report_workbook
@@ -180,10 +181,11 @@ def test_cross_period_reversal_is_negative_original_business_bucket():
         reason="报表跨期间冲销测试",
         idempotency_key="s18-paper-reversal",
     )
+    reversal_day = timezone.localdate()
     _, movement = rows(
         context,
         "supply_stock_movement",
-        {"date_from": date(2026, 8, 27), "date_to": date(2026, 8, 27)},
+        {"date_from": reversal_day, "date_to": reversal_day},
     )
     paper = next(row for row in movement if row["item_code"] == "S18PAPER")
     assert paper["opening_quantity"] == Decimal("7.0000")

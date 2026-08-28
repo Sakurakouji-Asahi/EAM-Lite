@@ -6,79 +6,93 @@
 <header class="dashboard-header">
   <div>
     <h1 class="h3 mb-1">EAM-Lite 企业资产管理系统</h1>
-    {% if initialized and dashboard %}<p class="text-secondary mb-0">数据截止时间 {{ dashboard.data_snapshot_at|date:'Y-m-d H:i:s' }}，所有指标按当前用户数据范围统计。</p>{% else %}<p class="text-secondary mb-0">系统初始化尚未完成。</p>{% endif %}
+    {% if initialized and dashboard %}<p class="text-secondary mb-0">工作台数据截止 {{ dashboard.data_snapshot_at|date:'Y-m-d H:i:s' }}，只显示当前账号范围内的信息。</p>{% else %}<p class="text-secondary mb-0">系统初始化尚未完成，请由对应角色继续初始化设置。</p>{% endif %}
   </div>
-  {% if reports_nav.can_view %}<a class="btn btn-outline-primary" href="{% url 'reports:report-center' %}?report_type={{ reports_nav.default_report_type }}">{% if dashboard.physical %}进入报表中心{% else %}查看离职未清报表{% endif %}</a>{% endif %}
+  {% if app_navigation.show_tasks %}<a class="btn btn-primary" href="{% url 'task-center' %}">查看我的待办</a>{% elif app_navigation.show_finance_reports %}<a class="btn btn-primary" href="{% url 'reports:report-center' %}">进入报表中心</a>{% elif app_navigation.show_settings %}<a class="btn btn-primary" href="{% url 'settings-center' %}">进入系统设置</a>{% endif %}
 </header>
 
 {% if initialized and dashboard %}
 <nav class="dashboard-shortcuts" aria-label="常用操作">
-  {% if asset_nav.can_view %}<a href="{% url 'assets:asset-list' %}"><strong>资产总账</strong><span>查询资产和当前状态</span></a>{% endif %}
-  {% if asset_nav.can_create %}<a href="{% url 'assets:asset-create' %}"><strong>新增资产</strong><span>建立一条资产草稿</span></a>{% endif %}
-  {% if asset_nav.can_manage_labels %}<a href="{% url 'assets:label-queue' %}"><strong>标签与贴标</strong><span>打印和确认二维码</span></a>{% endif %}
-  {% if supplies_nav.can_view %}<a href="{% url 'supplies:dashboard' %}"><strong>低值物品</strong><span>库存、保管、盘点和正式报表</span></a>{% endif %}
-  {% if inventory_nav.can_view %}<a href="{% url 'inventory:task-list' %}"><strong>盘点任务</strong><span>查看执行进度和差异</span></a>{% endif %}
-  {% if maintenance_nav.can_view %}<a href="{% url 'maintenance:due-list' %}"><strong>待保养</strong><span>处理到期保养事项</span></a>{% endif %}
-  {% if reports_nav.can_view %}<a href="{% url 'reports:report-center' %}"><strong>报表中心</strong><span>筛选、预览和导出</span></a>{% endif %}
+  {% if app_navigation.show_tasks %}<a href="{% url 'task-center' %}"><strong>我的待办</strong><span>盘点、保养、清退和异常处理</span></a>{% endif %}
+  {% if app_navigation.tasks.can_view_my_assets %}<a href="{% url 'assets:asset-list' %}"><strong>我的资产</strong><span>查看本人负责的逐件资产</span></a>{% elif app_navigation.show_assets %}<a href="{% url 'assets:asset-list' %}"><strong>资产台账</strong><span>查询逐件资产和当前状态</span></a>{% endif %}
+  {% if app_navigation.tasks.can_view_my_custodies %}<a href="{% url 'supplies:my-custodies' %}"><strong>我的领用与保管</strong><span>查看本人或授权部门数量耐用品</span></a>{% elif app_navigation.show_supplies %}<a href="{% url 'supplies:dashboard' %}"><strong>办公用品与低值品</strong><span>库存、领用、保管和预警</span></a>{% endif %}
+  {% if app_navigation.asset.can_create %}<a href="{% url 'assets:asset-create' %}"><strong>新增资产</strong><span>建立一件逐件资产草稿</span></a>{% endif %}
+  {% if app_navigation.tasks.can_manage_labels %}<a href="{% url 'assets:label-queue' %}"><strong>标签与二维码</strong><span>打印并逐项确认贴标</span></a>{% endif %}
+  {% if app_navigation.show_finance_reports %}<a href="{% url 'reports:report-center' %}"><strong>报表中心</strong><span>按权限查询和导出</span></a>{% endif %}
+  {% if app_navigation.show_settings %}<a href="{% url 'settings-center' %}"><strong>系统设置</strong><span>基础资料、导入和系统管理</span></a>{% endif %}
 </nav>
+
+{% if app_navigation.home.show_admin_focus %}
+<section class="focus-panel mt-3" aria-labelledby="admin-focus-heading">
+  <div><h2 class="h5 mb-1" id="admin-focus-heading">系统管理重点</h2><p class="text-secondary mb-0">当前角色负责初始化、用户权限、审计和备份，不自动获得财务数据或财务操作权限。</p></div>
+  <a class="btn btn-outline-primary" href="{% url 'settings-center' %}">查看设置项目</a>
+</section>
 {% endif %}
 
-{% if initialized and dashboard %}
-  {% if dashboard.physical %}
-  {% if dashboard.financial %}
-  <section class="mt-3" aria-labelledby="financial-heading">
-    <div class="d-flex justify-content-between align-items-center mb-2"><h2 class="h5 mb-0" id="financial-heading">财务概览</h2><span class="small text-secondary">截至 {{ dashboard.data_snapshot_at|date:'Y-m-d' }}</span></div>
-    <div class="dashboard-card-grid">
-      <a class="card shadow-sm text-decoration-none text-body" href="{% url 'reports:report-center' %}?report_type=fixed_asset_detail&amp;as_of_date={{ dashboard_filters.as_of_date }}&amp;include_disposed=false"><div class="card-body"><div class="text-secondary">固定资产原值</div><div class="h4 text-end mb-0">{{ dashboard.financial.original_cost|floatformat:2 }} CNY</div></div></a>
-      <a class="card shadow-sm text-decoration-none text-body" href="{% url 'reports:report-center' %}?report_type=fixed_asset_detail&amp;as_of_date={{ dashboard_filters.as_of_date }}&amp;include_disposed=false"><div class="card-body"><div class="text-secondary">累计折旧</div><div class="h4 text-end mb-0">{{ dashboard.financial.accumulated_depreciation|floatformat:2 }} CNY</div></div></a>
-      <a class="card shadow-sm text-decoration-none text-body" href="{% url 'reports:report-center' %}?report_type=fixed_asset_detail&amp;as_of_date={{ dashboard_filters.as_of_date }}&amp;include_disposed=false"><div class="card-body"><div class="text-secondary">净值</div><div class="h4 text-end mb-0">{{ dashboard.financial.book_value|floatformat:2 }} CNY</div></div></a>
-      <a class="card shadow-sm text-decoration-none text-body" href="{% url 'reports:report-center' %}?report_type=monthly_depreciation&amp;period_start={{ dashboard_filters.month_start }}&amp;period_end={{ dashboard_filters.month_end }}&amp;include_disposed=false"><div class="card-body"><div class="text-secondary">本月折旧</div><div class="h4 text-end mb-0">{{ dashboard.financial.current_month_depreciation|floatformat:2 }} CNY</div></div></a>
-    </div>
-  </section>
-  {% endif %}
-
-  <section class="mt-3" aria-labelledby="physical-heading">
-    <h2 class="h5 mb-2" id="physical-heading">实物概览</h2>
-    <div class="dashboard-card-grid">
-      <a class="card shadow-sm text-decoration-none text-body" href="{% url 'reports:report-center' %}?report_type=asset_ledger&amp;asset_scope=managed&amp;as_of_date={{ dashboard_filters.as_of_date }}&amp;include_disposed=false"><div class="card-body"><div class="text-secondary">在管资产总数</div><div class="display-6">{{ dashboard.physical.asset_total }}</div></div></a>
-      <a class="card shadow-sm text-decoration-none text-body" href="{% url 'assets:asset-list' %}?asset_status=in_use"><div class="card-body"><div class="text-secondary">在用</div><div class="display-6">{{ dashboard.physical.in_use }}</div></div></a>
-      <a class="card shadow-sm text-decoration-none text-body" href="{% url 'assets:asset-list' %}?asset_status=idle"><div class="card-body"><div class="text-secondary">闲置</div><div class="display-6">{{ dashboard.physical.idle }}</div></div></a>
-      <a class="card shadow-sm text-decoration-none text-body" href="{% url 'reports:report-center' %}?report_type=asset_ledger&amp;asset_status=disposed&amp;as_of_date={{ dashboard_filters.as_of_date }}&amp;include_disposed=true"><div class="card-body"><div class="text-secondary">报废</div><div class="display-6">{{ dashboard.physical.disposed }}</div></div></a>
-    </div>
-  </section>
-
-  <section class="card shadow-sm mt-3" aria-labelledby="pending-heading">
-    <div class="card-header"><h2 class="h5 mb-0" id="pending-heading">待办</h2></div>
-    <div class="card-body"><div class="dashboard-pending-grid">
-      <a class="border rounded p-3 text-decoration-none text-body" href="{% url 'assets:asset-list' %}?asset_status=pending_finance"><span>待财务确认</span><strong>{{ dashboard.pending.pending_finance }}</strong></a>
-      <a class="border rounded p-3 text-decoration-none text-body" href="{% url 'reports:report-center' %}?report_type=asset_ledger&amp;asset_scope=managed&amp;label_scope=not_attached&amp;as_of_date={{ dashboard_filters.as_of_date }}&amp;include_disposed=false"><span>待贴二维码</span><strong>{{ dashboard.pending.pending_label }}</strong></a>
-      <a class="border rounded p-3 text-decoration-none text-body" href="{% url 'inventory:task-list' %}"><span>待盘点</span><strong>{{ dashboard.pending.inventory_pending }}</strong></a>
-      <a class="border rounded p-3 text-decoration-none text-body" href="{% url 'inventory:task-list' %}"><span>盘点异常</span><strong>{{ dashboard.pending.inventory_exceptions }}</strong></a>
-      <a class="border rounded p-3 text-decoration-none text-body" href="{% url 'reports:report-center' %}?report_type=maintenance_due&amp;maintenance_due_scope=upcoming&amp;as_of_date={{ dashboard_filters.as_of_date }}"><span>即将保养</span><strong>{{ dashboard.pending.maintenance_upcoming }}</strong></a>
-      <a class="border rounded p-3 text-decoration-none text-body" href="{% url 'reports:report-center' %}?report_type=maintenance_due&amp;maintenance_due_scope=overdue&amp;as_of_date={{ dashboard_filters.as_of_date }}"><span>逾期保养</span><strong>{{ dashboard.pending.maintenance_overdue }}</strong></a>
-      <a class="border rounded p-3 text-decoration-none text-body" href="{% url 'offboarding:clearance-list' %}"><span>离职资产未清</span><strong>{{ dashboard.pending.offboarding_unresolved }}</strong></a>
-    </div></div>
-  </section>
-
-  <div class="row g-3 mt-0">
-    <section class="col-12 col-xl-6" aria-labelledby="department-heading"><div class="card shadow-sm h-100"><div class="card-header"><h2 class="h5 mb-0" id="department-heading">在管资产按部门</h2></div><div class="list-group list-group-flush">{% for item in dashboard.by_department %}<a class="list-group-item list-group-item-action d-flex justify-content-between" href="{% url 'reports:report-center' %}?report_type=department_assets&amp;asset_scope=managed&amp;department={{ item.id }}&amp;as_of_date={{ dashboard_filters.as_of_date }}&amp;include_disposed=false"><span>{{ item.label }}</span><strong>{{ item.count }}</strong></a>{% empty %}<div class="list-group-item text-secondary">暂无数据</div>{% endfor %}</div></div></section>
-    <section class="col-12 col-xl-6" aria-labelledby="category-heading"><div class="card shadow-sm h-100"><div class="card-header"><h2 class="h5 mb-0" id="category-heading">在管资产按实物分类</h2></div><div class="list-group list-group-flush">{% for item in dashboard.by_category %}<a class="list-group-item list-group-item-action d-flex justify-content-between" href="{% url 'reports:report-center' %}?report_type=asset_ledger&amp;asset_scope=managed&amp;category={{ item.id }}&amp;as_of_date={{ dashboard_filters.as_of_date }}&amp;include_disposed=false"><span>{{ item.label }}</span><strong>{{ item.count }}</strong></a>{% empty %}<div class="list-group-item text-secondary">暂无数据</div>{% endfor %}</div></div></section>
+{% if dashboard.financial and app_navigation.finance_reports.can_view_finance %}
+<section class="mt-3" aria-labelledby="financial-heading">
+  <div class="section-heading-row"><div><h2 class="h5 mb-1" id="financial-heading">财务概览</h2><p class="text-secondary small mb-0">截至 {{ dashboard.data_snapshot_at|date:'Y-m-d' }}</p></div></div>
+  <div class="dashboard-card-grid">
+    <a class="metric-card" href="{% url 'reports:report-center' %}?report_type=fixed_asset_detail&amp;as_of_date={{ dashboard_filters.as_of_date }}&amp;include_disposed=false"><span>固定资产原值</span><strong>{{ dashboard.financial.original_cost|floatformat:2 }} CNY</strong></a>
+    <a class="metric-card" href="{% url 'reports:report-center' %}?report_type=fixed_asset_detail&amp;as_of_date={{ dashboard_filters.as_of_date }}&amp;include_disposed=false"><span>累计折旧</span><strong>{{ dashboard.financial.accumulated_depreciation|floatformat:2 }} CNY</strong></a>
+    <a class="metric-card" href="{% url 'reports:report-center' %}?report_type=fixed_asset_detail&amp;as_of_date={{ dashboard_filters.as_of_date }}&amp;include_disposed=false"><span>净值</span><strong>{{ dashboard.financial.book_value|floatformat:2 }} CNY</strong></a>
+    <a class="metric-card" href="{% url 'reports:report-center' %}?report_type=monthly_depreciation&amp;period_start={{ dashboard_filters.month_start }}&amp;period_end={{ dashboard_filters.month_end }}&amp;include_disposed=false"><span>本月折旧</span><strong>{{ dashboard.financial.current_month_depreciation|floatformat:2 }} CNY</strong></a>
   </div>
+</section>
+{% endif %}
 
-  {% if maintenance_nav.can_view %}
-  <section class="card shadow-sm mt-3">
-    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2"><h2 class="h5 mb-0">近期保养事项</h2><span class="small text-secondary">即将到期：{{ maintenance_counts.upcoming }} · 今日到期：{{ maintenance_counts.due_today }} · 逾期：{{ maintenance_counts.overdue }}</span><a href="{% url 'maintenance:due-list' %}">查看全部</a></div>
-    <div class="list-group list-group-flush">{% for item in dashboard.maintenance_items %}<a class="list-group-item list-group-item-action d-flex flex-wrap justify-content-between gap-2" href="{% url 'maintenance:plan-detail' item.id %}"><span><span class="badge text-bg-{% if item.due_status == 'overdue' %}danger{% elif item.due_status == 'due_today' %}warning{% else %}info{% endif %}">{% if item.due_status == 'overdue' %}逾期{% elif item.due_status == 'due_today' %}今日到期{% else %}即将到期{% endif %}</span> {{ item.asset_code }} · {{ item.name }}</span><span class="text-secondary">{{ item.next_due_date|date:'Y-m-d' }} · {{ item.responsible_employee }}</span></a>{% empty %}<div class="list-group-item text-secondary">当前没有即将或已经到期的保养事项。</div>{% endfor %}</div>
-  </section>
-  {% endif %}
-  {% else %}
-  <section class="card shadow-sm mt-3">
-    <div class="card-header"><h2 class="h5 mb-0">离职资产清退摘要</h2></div>
-    <div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-3">
-      <div><div class="display-6">{{ dashboard.pending.offboarding_unresolved }}</div><div class="text-secondary">当前未完成清退项目数</div></div>
-      <a class="btn btn-outline-primary" href="{% url 'offboarding:clearance-list' %}">查看清退单</a>
-    </div>
-  </section>
-  {% endif %}
+{% if app_navigation.home.show_asset_overview and dashboard.physical %}
+<section class="mt-3" aria-labelledby="physical-heading">
+  <div class="section-heading-row"><div><h2 class="h5 mb-1" id="physical-heading">资产概览</h2><p class="text-secondary small mb-0">逐件资产按当前账号数据范围统计。</p></div></div>
+  <div class="dashboard-card-grid">
+    <a class="metric-card" href="{% url 'reports:report-center' %}?report_type=asset_ledger&amp;asset_scope=managed&amp;as_of_date={{ dashboard_filters.as_of_date }}&amp;include_disposed=false"><span>在管资产</span><strong>{{ dashboard.physical.asset_total }}</strong></a>
+    <a class="metric-card" href="{% url 'assets:asset-list' %}?asset_status=in_use"><span>在用</span><strong>{{ dashboard.physical.in_use }}</strong></a>
+    <a class="metric-card" href="{% url 'assets:asset-list' %}?asset_status=idle"><span>闲置</span><strong>{{ dashboard.physical.idle }}</strong></a>
+    <a class="metric-card" href="{% url 'reports:report-center' %}?report_type=asset_ledger&amp;asset_status=disposed&amp;as_of_date={{ dashboard_filters.as_of_date }}&amp;include_disposed=true"><span>已报废</span><strong>{{ dashboard.physical.disposed }}</strong></a>
+  </div>
+</section>
+{% endif %}
+
+{% if app_navigation.home.show_supply_overview and supply_dashboard %}
+<section class="mt-3" aria-labelledby="supply-heading">
+  <div class="section-heading-row"><div><h2 class="h5 mb-1" id="supply-heading">办公用品与低值品</h2><p class="text-secondary small mb-0">数量型物品与逐件资产分别统计，不混合为同一库存。</p></div></div>
+  <div class="dashboard-card-grid">
+    {% if app_navigation.supplies.can_view_stock %}<a class="metric-card" href="{% url 'supplies:stock-balance-list' %}"><span>当前库存组合</span><strong>{{ supply_dashboard.stock_combination_count|default:0 }}</strong></a>
+    <a class="metric-card" href="{% url 'reports:supply-report-detail' 'supply_low_stock' %}"><span>低库存预警</span><strong>{{ supply_dashboard.low_stock_count|default:0 }}</strong></a>{% endif %}
+    {% if app_navigation.supplies.can_view_custodies %}<a class="metric-card" href="{% url 'supplies:my-custodies' %}"><span>在管数量耐用品</span><strong>{{ supply_dashboard.custody_count|default:0 }}</strong></a>{% endif %}
+    <a class="metric-card" href="{% url 'supplies:individual-durable-list' %}"><span>逐件低值资产</span><strong>{{ supply_dashboard.controlled_non_fixed_count|default:0 }}</strong></a>
+  </div>
+</section>
+{% endif %}
+
+{% if app_navigation.show_tasks %}
+<section class="card shadow-sm mt-3" aria-labelledby="pending-heading">
+  <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2"><h2 class="h5 mb-0" id="pending-heading">我的待办</h2><a href="{% url 'task-center' %}">查看全部</a></div>
+  <div class="card-body"><div class="dashboard-pending-grid">
+    {% if app_navigation.finance_reports.can_manage_finance %}<a class="border rounded p-3 text-decoration-none text-body" href="{% url 'finance:pending-list' %}"><span>待财务确认</span><strong>{{ dashboard.pending.pending_finance|default:0 }}</strong></a>{% endif %}
+    {% if app_navigation.tasks.can_manage_labels %}<a class="border rounded p-3 text-decoration-none text-body" href="{% url 'reports:report-center' %}?report_type=asset_ledger&amp;asset_scope=managed&amp;label_scope=not_attached&amp;as_of_date={{ dashboard_filters.as_of_date }}&amp;include_disposed=false"><span>待贴标签</span><strong>{{ dashboard.pending.pending_label|default:0 }}</strong></a>{% endif %}
+    {% if app_navigation.tasks.can_view_asset_inventory %}<a class="border rounded p-3 text-decoration-none text-body" href="{% url 'inventory:task-list' %}"><span>待资产盘点</span><strong>{{ dashboard.pending.inventory_pending|default:0 }}</strong></a>
+    <a class="border rounded p-3 text-decoration-none text-body" href="{% url 'inventory:task-list' %}"><span>盘点异常</span><strong>{{ dashboard.pending.inventory_exceptions|default:0 }}</strong></a>{% endif %}
+    {% if app_navigation.tasks.can_view_maintenance %}<a class="border rounded p-3 text-decoration-none text-body" href="{% url 'reports:report-center' %}?report_type=maintenance_due&amp;maintenance_due_scope=upcoming&amp;as_of_date={{ dashboard_filters.as_of_date }}"><span>待保养</span><strong>{{ dashboard.pending.maintenance_upcoming|default:0 }}</strong></a>
+    <a class="border rounded p-3 text-decoration-none text-body" href="{% url 'reports:report-center' %}?report_type=maintenance_due&amp;maintenance_due_scope=overdue&amp;as_of_date={{ dashboard_filters.as_of_date }}"><span>逾期保养</span><strong>{{ dashboard.pending.maintenance_overdue|default:0 }}</strong></a>{% endif %}
+    {% if app_navigation.tasks.can_view_offboarding %}<a class="border rounded p-3 text-decoration-none text-body" href="{% url 'offboarding:clearance-list' %}"><span>离职未清事项</span><strong>{{ dashboard.pending.offboarding_unresolved|default:0 }}</strong></a>{% endif %}
+    {% if supply_dashboard and app_navigation.tasks.can_view_supply_inventory %}<a class="border rounded p-3 text-decoration-none text-body" href="{% url 'supplies:count-task-list' %}"><span>未关闭物品盘点</span><strong>{{ supply_dashboard.open_count_task_count|default:0 }}</strong></a>{% endif %}
+  </div></div>
+</section>
+{% endif %}
+
+{% if app_navigation.tasks.can_view_maintenance and dashboard.maintenance_items %}
+<section class="card shadow-sm mt-3" aria-labelledby="maintenance-items-heading">
+  <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2"><h2 class="h5 mb-0" id="maintenance-items-heading">近期保养事项</h2><span class="small text-secondary">即将到期：{{ maintenance_counts.upcoming }} · 今日到期：{{ maintenance_counts.due_today }} · 逾期：{{ maintenance_counts.overdue }}</span><a href="{% url 'maintenance:due-list' %}">查看全部</a></div>
+  <div class="list-group list-group-flush">{% for item in dashboard.maintenance_items %}<a class="list-group-item list-group-item-action d-flex flex-wrap justify-content-between gap-2" href="{% url 'maintenance:plan-detail' item.id %}"><span><span class="badge text-bg-{% if item.due_status == 'overdue' %}danger{% elif item.due_status == 'due_today' %}warning{% else %}info{% endif %}">{% if item.due_status == 'overdue' %}逾期{% elif item.due_status == 'due_today' %}今日到期{% else %}即将到期{% endif %}</span> {{ item.asset_code }} · {{ item.name }}</span><span class="text-secondary">{{ item.next_due_date|date:'Y-m-d' }} · {{ item.responsible_employee }}</span></a>{% endfor %}</div>
+</section>
+{% endif %}
+
+{% if app_navigation.home.show_asset_overview and dashboard.by_department %}
+<div class="row g-3 mt-0">
+  <section class="col-12 col-xl-6" aria-labelledby="department-heading"><div class="card shadow-sm h-100"><div class="card-header"><h2 class="h5 mb-0" id="department-heading">在管资产按部门</h2></div><div class="list-group list-group-flush">{% for item in dashboard.by_department %}<a class="list-group-item list-group-item-action d-flex justify-content-between" href="{% url 'reports:report-center' %}?report_type=department_assets&amp;asset_scope=managed&amp;department={{ item.id }}&amp;as_of_date={{ dashboard_filters.as_of_date }}&amp;include_disposed=false"><span>{{ item.label }}</span><strong>{{ item.count }}</strong></a>{% endfor %}</div></div></section>
+  <section class="col-12 col-xl-6" aria-labelledby="category-heading"><div class="card shadow-sm h-100"><div class="card-header"><h2 class="h5 mb-0" id="category-heading">在管资产按分类</h2></div><div class="list-group list-group-flush">{% for item in dashboard.by_category %}<a class="list-group-item list-group-item-action d-flex justify-content-between" href="{% url 'reports:report-center' %}?report_type=asset_ledger&amp;asset_scope=managed&amp;category={{ item.id }}&amp;as_of_date={{ dashboard_filters.as_of_date }}&amp;include_disposed=false"><span>{{ item.label }}</span><strong>{{ item.count }}</strong></a>{% endfor %}</div></div></section>
+</div>
+{% endif %}
 {% endif %}
 {% endblock %}

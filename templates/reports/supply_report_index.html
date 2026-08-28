@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}低值物品报表 | EAM-Lite{% endblock %}
+{% block title %}办公用品与低值品报表 | EAM-Lite{% endblock %}
 {% block content %}
 <header class="app-page-header">
-  <div><h1 class="h3 mb-1">低值物品正式报表</h1><p class="text-secondary mb-0">页面、Dashboard 钻取与 Excel 使用相同的公司、角色、日期和成本口径。</p></div>
-  <a class="btn btn-outline-secondary" href="{% url 'supplies:dashboard' %}">返回低值物品 Dashboard</a>
+  <div><h1 class="h3 mb-1">办公用品与低值品报表</h1><p class="text-secondary mb-0">页面预览与 Excel 使用相同的公司、角色、日期和成本口径。</p></div>
+  <a class="btn btn-outline-secondary" href="{% url 'reports:report-center' %}">返回报表中心</a>
 </header>
 <div class="row g-3">
   {% for definition in definitions %}

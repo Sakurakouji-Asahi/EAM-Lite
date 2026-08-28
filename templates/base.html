@@ -8,7 +8,7 @@
   <meta name="theme-color" content="#16324f">
   <title>{% block title %}EAM-Lite{% endblock %}</title>
   <link rel="stylesheet" href="{% static 'vendor/bootstrap/5.3.8/css/bootstrap.min.css' %}">
-  <link rel="stylesheet" href="{% static 'css/app.css' %}?v=20260825-qr-web1">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}?v=20260828-navigation1">
   <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
   <script src="{% static 'vendor/htmx/2.0.10/htmx.min.js' %}" defer></script>
   <script src="{% static 'vendor/bootstrap/5.3.8/js/bootstrap.bundle.min.js' %}" defer></script>
@@ -68,7 +68,7 @@
       <aside class="app-sidebar d-none d-xl-flex" aria-label="桌面功能菜单">
         <div class="app-sidebar-heading">
           <span>功能导航</span>
-          <small>按业务模块展开</small>
+          <small>按工作任务展开</small>
         </div>
         {% include "_app_navigation.html" %}
       </aside>
@@ -89,6 +89,15 @@
       <main class="app-main" id="main-content" tabindex="-1">
         <div class="app-content">
           {% include "masterdata/_messages.html" %}
+          {% if app_navigation.active_section and app_navigation.active_section != 'home' %}
+            <nav class="app-breadcrumb" aria-label="面包屑">
+              <ol class="breadcrumb mb-0">
+                <li class="breadcrumb-item"><a href="{% url 'home' %}">首页</a></li>
+                {% if app_navigation.section_label and app_navigation.section_url %}<li class="breadcrumb-item"><a href="{{ app_navigation.section_url }}">{{ app_navigation.section_label }}</a></li>{% endif %}
+                <li class="breadcrumb-item active" aria-current="page">{{ app_navigation.page_label }}</li>
+              </ol>
+            </nav>
+          {% endif %}
           {% block content %}{% endblock %}
         </div>
       </main>

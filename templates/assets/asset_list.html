@@ -1,21 +1,17 @@
 {% extends "base.html" %}
-{% block title %}资产总账 - EAM-Lite{% endblock %}
+{% block title %}资产台账 - EAM-Lite{% endblock %}
 {% block content %}
   <header class="app-page-header">
     <div>
-      <h1 class="h3 mb-1">资产总账</h1>
+      <h1 class="h3 mb-1">资产台账</h1>
       <p class="text-secondary mb-0">仅显示当前公司及当前账号数据范围内的资产。</p>
     </div>
     {% if can_create %}
-      <div class="d-flex flex-wrap gap-2">
-        <a class="btn btn-outline-primary" href="{% url 'imports:template' 'asset_initialization' %}">下载初始化模板</a>
-        <a class="btn btn-outline-primary" href="{% url 'imports:upload' 'asset_initialization' %}">批量初始化建账</a>
-        <a class="btn btn-primary" href="{% url 'assets:asset-create' %}">新增资产</a>
-      </div>
+      <a class="btn btn-primary" href="{% url 'assets:asset-create' %}">新增资产</a>
     {% endif %}
   </header>
 
-  {% if individual_durable_hint %}<div class="alert alert-info">逐件低值耐用品仍按现有资产流程建档：每件单独建档、数量固定为 1；财务确认时选择“受控非固定资产”，不计提折旧。</div>{% endif %}
+  {% if individual_durable_hint %}<div class="alert alert-info">逐件低值资产按现有资产流程建档：每件单独建档、数量固定为 1；财务确认时选择“受控非固定资产”，不计提折旧。</div>{% endif %}
 
   <form method="get" class="card shadow-sm mb-3 app-filter-card" aria-label="资产搜索和筛选">
     <div class="card-body">
@@ -119,7 +115,7 @@
               <td>{{ asset.location.name|default:"—" }}</td>
               {% if list_has_p1 %}<td>1</td>{% endif %}
               <td><span class="badge text-bg-{% if asset.record_status == 'archived' %}dark{% elif asset.asset_status == 'draft' %}secondary{% elif asset.asset_status == 'pending_finance' %}warning{% else %}info{% endif %}">{% if asset.record_status == 'archived' %}已归档 · {% endif %}{{ asset.get_asset_status_display }}</span></td>
-              <td>{% if asset.finance.finance_confirmed_at %}{% if asset.finance.accounting_treatment == 'controlled_non_fixed' %}逐件低值耐用品 / 受控非固定资产{% else %}{{ asset.finance.get_accounting_treatment_display }}{% endif %}{% else %}未确认{% endif %}</td>
+              <td>{% if asset.finance.finance_confirmed_at %}{% if asset.finance.accounting_treatment == 'controlled_non_fixed' %}逐件低值资产{% else %}{{ asset.finance.get_accounting_treatment_display }}{% endif %}{% else %}未确认{% endif %}</td>
               <td><a class="btn btn-sm btn-outline-primary" href="{% url 'assets:asset-detail' asset.pk %}">查看</a></td>
             </tr>
           {% empty %}

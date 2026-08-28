@@ -2,7 +2,7 @@
 {% block title %}低值物品盘点 - EAM-Lite{% endblock %}
 {% block content %}
 <header class="app-page-header">
-  <div><h1 class="h3 mb-1">低值物品盘点</h1><p class="text-secondary mb-0">仓库库存盘点与数量型耐用品保管盘点分域管理。</p></div>
+  <div><h1 class="h3 mb-1">物品盘点</h1><p class="text-secondary mb-0">仓库库存盘点与数量型耐用品保管盘点分开管理。</p></div>
   {% if can_create_warehouse or can_create_custody %}<a class="btn btn-primary" href="{% url 'supplies:count-task-create' %}">新建盘点任务</a>{% endif %}
 </header>
 <form method="get" class="card card-body shadow-sm mb-3">

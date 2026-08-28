@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}系统设置 | EAM-Lite{% endblock %}
+
+{% block content %}
+<header class="app-page-header">
+  <div>
+    <h1 class="h3 mb-1">系统设置</h1>
+    <p class="text-secondary mb-0">基础资料、财务政策和技术设置继续按原角色分别授权，出现在这里不代表获得额外权限。</p>
+  </div>
+</header>
+
+{% if app_navigation.settings.can_view_company or app_navigation.settings.can_view_department or app_navigation.settings.can_show_employee_settings or app_navigation.settings.can_view_location %}
+<section class="settings-section" aria-labelledby="organization-settings-heading">
+  <div class="section-heading-row"><div><h2 class="h5 mb-1" id="organization-settings-heading">组织与位置</h2><p class="text-secondary small mb-0">维护公司内部责任范围和位置树。</p></div></div>
+  <div class="settings-link-grid">
+    {% if app_navigation.settings.can_view_company %}<a href="{% url 'masterdata:company-list' %}" data-setting-link="company"><strong>公司</strong><span>查看公司边界和基础信息</span></a>{% endif %}
+    {% if app_navigation.settings.can_view_department %}<a href="{% url 'masterdata:department-list' %}" data-setting-link="department"><strong>部门</strong><span>查看部门结构和责任范围</span></a>{% endif %}
+    {% if app_navigation.settings.can_show_employee_settings %}<a href="{% url 'masterdata:employee-list' %}" data-setting-link="employee"><strong>人员</strong><span>查看或维护人员资料</span></a>{% endif %}
+    {% if app_navigation.settings.can_view_location %}<a href="{% url 'masterdata:location-list' %}" data-setting-link="location"><strong>位置</strong><span>维护厂区、区域和具体位置</span></a>{% endif %}
+  </div>
+</section>
+{% endif %}
+
+{% if app_navigation.settings.can_view_asset_category or app_navigation.settings.can_manage_supply_categories or app_navigation.settings.can_manage_supply_warehouses or app_navigation.settings.can_manage_supply_items %}
+<section class="settings-section" aria-labelledby="master-settings-heading">
+  <div class="section-heading-row"><div><h2 class="h5 mb-1" id="master-settings-heading">资产与物品资料</h2><p class="text-secondary small mb-0">逐件资产和数量型物品使用相互独立的分类与档案。</p></div></div>
+  <div class="settings-link-grid">
+    {% if app_navigation.settings.can_view_asset_category %}<a href="{% url 'masterdata:category-list' %}" data-setting-link="asset_category"><strong>资产分类</strong><span>逐件资产的实物分类</span></a>{% endif %}
+    {% if app_navigation.settings.can_manage_supply_categories %}<a href="{% url 'supplies:category-list' %}" data-setting-link="supply_category"><strong>物品分类</strong><span>办公用品与数量型低值品分类</span></a>{% endif %}
+    {% if app_navigation.settings.can_manage_supply_warehouses %}<a href="{% url 'supplies:warehouse-list' %}" data-setting-link="supply_warehouse"><strong>仓库档案</strong><span>维护仓库、位置和负责人</span></a>{% endif %}
+    {% if app_navigation.settings.can_manage_supply_items %}<a href="{% url 'supplies:item-list' %}" data-setting-link="supply_item"><strong>物品档案</strong><span>维护易耗品和数量型耐用品</span></a>{% endif %}
+  </div>
+</section>
+{% endif %}
+
+{% if app_navigation.settings.can_manage_finance %}
+<section class="settings-section" aria-labelledby="finance-settings-heading">
+  <div class="section-heading-row"><div><h2 class="h5 mb-1" id="finance-settings-heading">财务政策</h2><p class="text-secondary small mb-0">仅 finance 可修改，会计认定与实物分类保持分离。</p></div></div>
+  <div class="settings-link-grid">
+    <a href="{% url 'finance:policy-list' %}" data-setting-link="depreciation_policy"><strong>折旧政策</strong><span>维护版本化方法、期间和残值默认</span></a>
+    <a href="{% url 'finance:fixed-category-list' %}" data-setting-link="fixed_asset_category"><strong>固定资产类别</strong><span>维护会计分类和默认使用年限</span></a>
+    <a href="{% url 'finance:settings' %}" data-setting-link="finance_parameters"><strong>财务参数</strong><span>维护固定资产金额提示标准</span></a>
+  </div>
+</section>
+{% endif %}
+
+<section class="settings-section" aria-labelledby="system-settings-heading">
+  <div class="section-heading-row"><div><h2 class="h5 mb-1" id="system-settings-heading">初始化与系统管理</h2><p class="text-secondary small mb-0">日常业务用户不会看到这些入口。</p></div></div>
+  <div class="settings-link-grid">
+    {% if app_navigation.settings.can_access_setup %}<a href="{% url 'masterdata:setup' %}" data-setting-link="setup"><strong>初始化检查</strong><span>核对九项初始化状态</span></a>{% endif %}
+    {% if app_navigation.settings.can_view_coding_scheme %}<a href="{% url 'masterdata:coding-scheme-list' %}" data-setting-link="coding"><strong>编码规则</strong><span>维护可版本化的资产编号方案</span></a>{% endif %}
+    {% if app_navigation.settings.can_view_user_permissions %}<a href="{% url 'masterdata:user-permissions-list' %}" data-setting-link="permissions"><strong>用户与权限</strong><span>分配固定角色和部门范围</span></a>{% endif %}
+    {% if app_navigation.settings.can_access_imports %}<a href="{% url 'imports:home' %}" data-setting-link="imports"><strong>初始化与 Excel 导入</strong><span>按权限显示可用模板和批次</span></a>{% endif %}
+    {% if app_navigation.settings.can_manage_supply_documents %}<a href="{% url 'supplies:document-create' 'opening' %}" data-setting-link="opening_stock"><strong>期初库存</strong><span>手工建立期初入库草稿</span></a>{% endif %}
+    {% if app_navigation.settings.can_view_system_setting %}<a href="{% url 'masterdata:system-settings' %}" data-setting-link="parameters"><strong>系统参数</strong><span>附件格式和大小等技术设置</span></a>{% endif %}
+    {% if app_navigation.settings.can_view_audit %}<a href="{% url 'audit:log-list' %}" data-setting-link="audit"><strong>操作审计</strong><span>按角色范围查询关键业务记录</span></a>{% endif %}
+    {% if app_navigation.settings.can_manage_backups %}<a href="{% url 'operations:backup-list' %}" data-setting-link="backup"><strong>数据备份</strong><span>创建、检查和下载受控备份</span></a>{% endif %}
+  </div>
+</section>
+{% endblock %}

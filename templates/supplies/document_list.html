@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}库存单据 - EAM-Lite{% endblock %}
+{% block title %}入库、领用与调拨 - EAM-Lite{% endblock %}
 {% block content %}
-<header class="app-page-header"><div><h1 class="h3 mb-1">库存单据</h1><p class="text-secondary mb-0">已开放入库、领用、易耗品退回、仓库调拨和完整冲销。</p></div>{% if can_manage %}<div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-primary" href="{% url 'supplies:opening-stock-import' %}">期初 Excel 导入</a><a class="btn btn-outline-primary" href="{% url 'supplies:document-create' 'opening' %}">新建期初</a><a class="btn btn-outline-primary" href="{% url 'supplies:document-create' 'receipt' %}">新建入库</a><a class="btn btn-primary" href="{% url 'supplies:document-create' 'issue' %}">新建领用</a><a class="btn btn-outline-primary" href="{% url 'supplies:document-create' 'transfer' %}">新建调拨</a></div>{% endif %}</header>
+<header class="app-page-header"><div><h1 class="h3 mb-1">入库、领用与调拨</h1><p class="text-secondary mb-0">集中办理入库、领用、退回、仓库调拨和冲销。</p></div>{% if can_manage %}<div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-primary" href="{% url 'supplies:document-create' 'opening' %}">新建期初</a><a class="btn btn-outline-primary" href="{% url 'supplies:document-create' 'receipt' %}">新建入库</a><a class="btn btn-primary" href="{% url 'supplies:document-create' 'issue' %}">新建领用</a><a class="btn btn-outline-primary" href="{% url 'supplies:document-create' 'transfer' %}">新建调拨</a></div>{% endif %}</header>
 <form method="get" class="card shadow-sm mb-3"><div class="card-body row g-2">
   <div class="col-md-3"><label class="form-label">单据号/外部参考</label><input class="form-control" name="q" value="{{ query }}"></div>
   <div class="col-md-2"><label class="form-label">类型</label><select class="form-select" name="document_type"><option value="">全部</option>{% for value,label in document_types %}<option value="{{ value }}"{% if selected_document_type == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>

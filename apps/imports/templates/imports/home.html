@@ -16,7 +16,7 @@
         <p class="small text-secondary">模板中的公司、实物分类、部门、责任员工和位置必须分别使用 code / employee_no 精确匹配；当前公司启用的资产自定义字段会随模板生成。</p>
       {% elif definition.import_type == "item_master" %}
         <div class="alert alert-info py-2">
-          确认后只创建数量型物品档案，不创建库存余额、库存流水或保管记录。逐件低值耐用品仍使用资产模块。
+          确认后只创建数量型物品档案，不创建库存或保管记录。逐件低值资产仍使用资产模块。
         </div>
       {% elif definition.import_type == "opening_stock" %}
         <div class="alert alert-info py-2">
