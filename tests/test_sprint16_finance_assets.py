@@ -129,7 +129,7 @@ def test_asset_list_four_way_accounting_filter_and_individual_durable_shortcuts(
         {"accounting_treatment": "controlled_non_fixed"},
     )
     assert controlled.asset_name.encode() in controlled_response.content
-    assert "逐件低值耐用品 / 受控非固定资产".encode() in controlled_response.content
+    assert "逐件低值资产".encode() in controlled_response.content
     assert fixed.asset_name.encode() not in controlled_response.content
 
     unconfirmed_response = client.get(

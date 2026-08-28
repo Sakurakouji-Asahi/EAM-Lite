@@ -27,7 +27,7 @@
         {% endif %}
       {% endif %}
       {% if can_financial and asset.asset_status == "pending_finance" %}<a class="btn btn-primary" href="{% url 'finance:finance-confirm' asset.pk %}">财务确认</a>{% endif %}
-      {% if can_financial and asset.asset_status != "draft" and asset.asset_status != "pending_finance" %}<a class="btn btn-outline-primary" href="{% url 'finance:asset-finance-detail' asset.pk %}">财务与折旧</a>{% endif %}
+      {% if can_financial and asset.asset_status != "draft" and asset.asset_status != "pending_finance" %}<a class="btn btn-outline-primary" href="{% url 'finance:asset-finance-detail' asset.pk %}">资产财务</a>{% endif %}
       {% if can_delete %}<a class="btn btn-outline-danger" href="{% url 'assets:asset-delete' asset.pk %}">删除草稿</a>{% endif %}
       {% if lifecycle_actions.archive %}<a class="btn btn-outline-dark" href="{% url 'assets:lifecycle-archive' asset.pk %}">归档</a>{% endif %}
       {% if lifecycle_actions.restore %}<a class="btn btn-outline-primary" href="{% url 'assets:lifecycle-restore' asset.pk %}">恢复显示</a>{% endif %}
@@ -122,7 +122,7 @@
       {% if can_financial %}
         <section class="card shadow-sm mb-3" aria-labelledby="finance-title">
           <div class="card-header"><h2 class="h5 mb-0" id="finance-title">财务信息</h2></div>
-          <div class="card-body">{% if asset.asset_status == 'pending_finance' %}<p class="mb-2">财务资料尚未确认。</p><a class="btn btn-sm btn-primary" href="{% url 'finance:finance-confirm' asset.pk %}">进入财务确认</a>{% elif asset.asset_status != 'draft' %}<p class="mb-2">财务真源和实际折旧来自独立受控记录。</p><a class="btn btn-sm btn-outline-primary" href="{% url 'finance:asset-finance-detail' asset.pk %}">查看财务与折旧</a>{% endif %}</div>
+          <div class="card-body">{% if asset.asset_status == 'pending_finance' %}<p class="mb-2">财务资料尚未确认。</p><a class="btn btn-sm btn-primary" href="{% url 'finance:finance-confirm' asset.pk %}">进入财务确认</a>{% elif asset.asset_status != 'draft' %}<p class="mb-2">财务真源和实际折旧来自独立受控记录。</p><a class="btn btn-sm btn-outline-primary" href="{% url 'finance:asset-finance-detail' asset.pk %}">查看资产财务</a>{% endif %}</div>
         </section>
       {% endif %}
 

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}耐用品保管 - EAM-Lite{% endblock %}
+{% block title %}员工／部门保管 - EAM-Lite{% endblock %}
 {% block content %}
-<header class="app-page-header"><div><h1 class="h3 mb-1">数量型低值耐用品保管</h1><p class="text-secondary mb-0">查看当前责任、根来源、转交来源链及完整不可变流水。</p></div><div class="d-flex gap-2"><a class="btn btn-outline-primary" href="{% url 'supplies:my-custodies' %}">我的耐用品</a>{% if supplies_nav.can_import_opening_custody %}<a class="btn btn-primary" href="{% url 'supplies:opening-custody-import' %}">期初保管导入</a>{% endif %}</div></header>
+<header class="app-page-header"><div><h1 class="h3 mb-1">员工／部门保管</h1><p class="text-secondary mb-0">查看数量型耐用品的当前责任、来源和转交记录。</p></div><a class="btn btn-outline-primary" href="{% url 'supplies:my-custodies' %}">我的领用与保管</a></header>
 <form method="get" class="card shadow-sm mb-3"><div class="card-body row g-2">
   <div class="col-md-3"><label class="form-label">关键字</label><input class="form-control" name="q" value="{{ query }}" placeholder="物品、部门、员工或单据号"></div>
   <div class="col-md-2"><label class="form-label">物品编码</label><input class="form-control" name="item" value="{{ selected_item }}"></div>

@@ -32,6 +32,7 @@ html {
 body.app-body {
   min-width: 320px;
   margin: 0;
+  overflow-x: clip;
   color: var(--eam-ink);
   background: var(--eam-bg);
   font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
@@ -466,6 +467,7 @@ a:hover {
 
 .app-main {
   min-width: 0;
+  max-width: 100%;
   flex: 1 1 auto;
 }
 
@@ -474,6 +476,27 @@ a:hover {
   max-width: 1580px;
   margin: 0 auto;
   padding: 1.65rem 1.75rem 3rem;
+}
+
+.app-breadcrumb {
+  margin-bottom: 1rem;
+  padding: 0.15rem 0;
+}
+
+.app-breadcrumb .breadcrumb-item + .breadcrumb-item::before {
+  color: var(--eam-line-strong);
+}
+
+.app-breadcrumb a {
+  color: var(--eam-muted);
+  text-decoration: none;
+}
+
+.app-breadcrumb a:hover,
+.app-breadcrumb a:focus-visible {
+  color: var(--eam-accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 0.2rem;
 }
 
 .app-mobile-nav {
@@ -1175,6 +1198,25 @@ form[data-eam-submitting="true"] button[type="submit"]::after {
   max-width: 52rem;
 }
 
+.section-heading-row {
+  display: flex;
+  margin-bottom: 0.75rem;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.focus-panel {
+  display: flex;
+  padding: 1.1rem 1.2rem;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid #b7cbdc;
+  border-radius: var(--eam-radius);
+  background: #eef5fa;
+  gap: 1rem;
+}
+
 .dashboard-shortcuts {
   display: grid;
   margin-top: 1rem;
@@ -1235,6 +1277,118 @@ form[data-eam-submitting="true"] button[type="submit"]::after {
   min-width: 0;
   overflow: hidden;
   transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.metric-card {
+  display: flex;
+  min-height: 108px;
+  padding: 1rem 1.05rem;
+  flex-direction: column;
+  justify-content: space-between;
+  border: 1px solid var(--eam-line);
+  border-radius: var(--eam-radius);
+  color: var(--eam-ink-soft);
+  background: var(--eam-surface);
+  box-shadow: var(--eam-shadow-sm);
+  text-decoration: none;
+}
+
+.metric-card > span {
+  color: var(--eam-muted);
+  font-size: 0.82rem;
+}
+
+.metric-card > strong {
+  align-self: flex-end;
+  color: var(--eam-ink);
+  font-size: clamp(1.45rem, 2.2vw, 2rem);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.025em;
+}
+
+.task-card-grid,
+.settings-link-grid,
+.action-link-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.task-card,
+.settings-link-grid > a,
+.action-link-grid > a {
+  display: grid;
+  min-width: 0;
+  min-height: 92px;
+  padding: 0.95rem 1rem;
+  border: 1px solid var(--eam-line);
+  border-radius: var(--eam-radius);
+  color: var(--eam-ink-soft);
+  background: var(--eam-surface);
+  box-shadow: var(--eam-shadow-sm);
+  text-decoration: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.task-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 1rem;
+}
+
+.task-card span,
+.settings-link-grid strong,
+.action-link-grid strong {
+  font-weight: 700;
+}
+
+.task-card strong {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  color: var(--eam-accent-hover);
+  font-size: 1.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-card small,
+.settings-link-grid span,
+.action-link-grid span {
+  color: var(--eam-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.settings-link-grid > a,
+.action-link-grid > a {
+  align-content: center;
+  gap: 0.2rem;
+}
+
+.task-card:hover,
+.task-card:focus-visible,
+.settings-link-grid > a:hover,
+.settings-link-grid > a:focus-visible,
+.action-link-grid > a:hover,
+.action-link-grid > a:focus-visible,
+.metric-card:hover,
+.metric-card:focus-visible {
+  border-color: #98bdd9;
+  color: var(--eam-accent-hover);
+  box-shadow: 0 8px 24px rgb(22 50 79 / 10%);
+  transform: translateY(-1px);
+}
+
+.task-card:active,
+.settings-link-grid > a:active,
+.action-link-grid > a:active,
+.metric-card:active {
+  transform: translateY(0);
+}
+
+.settings-section + .settings-section {
+  margin-top: 1.5rem;
+  padding-top: 1.35rem;
+  border-top: 1px solid var(--eam-line);
 }
 
 .dashboard-card-grid > a:hover,
@@ -1342,7 +1496,10 @@ form[data-eam-submitting="true"] button[type="submit"]::after {
 
 @media (max-width: 1199.98px) {
   .dashboard-card-grid,
-  .dashboard-pending-grid {
+  .dashboard-pending-grid,
+  .task-card-grid,
+  .settings-link-grid,
+  .action-link-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -1397,6 +1554,12 @@ form[data-eam-submitting="true"] button[type="submit"]::after {
   }
 
   .dashboard-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .section-heading-row,
+  .focus-panel {
     align-items: stretch;
     flex-direction: column;
   }
@@ -1486,7 +1649,10 @@ form[data-eam-submitting="true"] button[type="submit"]::after {
   .inventory-summary-grid,
   .dashboard-card-grid,
   .dashboard-pending-grid,
-  .maintenance-card-grid {
+  .maintenance-card-grid,
+  .task-card-grid,
+  .settings-link-grid,
+  .action-link-grid {
     grid-template-columns: 1fr;
   }
 

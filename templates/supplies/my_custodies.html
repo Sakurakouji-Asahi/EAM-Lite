@@ -1,6 +1,6 @@
 {% extends "base.html" %}
-{% block title %}我的耐用品 - EAM-Lite{% endblock %}
+{% block title %}我的领用与保管 - EAM-Lite{% endblock %}
 {% block content %}
-<header class="app-page-header"><div><h1 class="h3 mb-1">我的耐用品</h1><p class="text-secondary mb-0">仅显示当前登录员工本人名下的开放保管；本页只读，不提供员工自助归还申请。</p></div><a class="btn btn-outline-secondary" href="{% url 'supplies:custody-list' %}">全部可见保管</a></header>
+<header class="app-page-header"><div><h1 class="h3 mb-1">我的领用与保管</h1><p class="text-secondary mb-0">显示本人名下的开放保管；本页只读，不提供员工自助归还。</p></div>{% if 'employee' not in app_navigation.roles or app_navigation.show_supplies %}<a class="btn btn-outline-secondary" href="{% url 'supplies:custody-list' %}">员工／部门保管</a>{% endif %}</header>
 <div class="table-responsive card shadow-sm"><table class="table table-hover align-middle mb-0"><thead><tr><th>开始日期</th><th>物品</th><th>部门</th><th class="text-end">数量</th>{% if show_cost %}<th class="text-end">金额</th>{% endif %}</tr></thead><tbody>{% for object in page_obj %}<tr><td>{{ object.started_on }}</td><td><a href="{% url 'supplies:custody-detail' object.pk %}">{{ object.item }}</a></td><td>{{ object.department }}</td><td class="text-end">{{ object.current_quantity }} {{ object.item.unit }}</td>{% if show_cost %}<td class="text-end">{{ object.current_amount }}</td>{% endif %}</tr>{% empty %}<tr><td colspan="5" class="text-center text-secondary py-4">当前登录员工名下没有开放保管</td></tr>{% endfor %}</tbody></table></div>{% include "supplies/_pagination.html" %}
 {% endblock %}

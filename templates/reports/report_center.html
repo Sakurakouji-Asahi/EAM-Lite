@@ -10,6 +10,17 @@
   </div>
 </header>
 
+<section class="mb-3" aria-labelledby="report-category-heading">
+  <div class="section-heading-row"><div><h2 class="h5 mb-1" id="report-category-heading">报表分类</h2><p class="text-secondary small mb-0">每类只有一个主要入口，具体报表仍按角色和数据范围显示。</p></div></div>
+  <div class="action-link-grid">
+    {% if can_view_asset_reports %}<a href="{% url 'reports:report-center' %}?report_type=asset_ledger"><strong>资产报表</strong><span>资产台账、部门、人员、设备和处置</span></a>{% endif %}
+    {% if can_view_financial_reports %}<a href="{% url 'reports:report-center' %}?report_type=fixed_asset_detail"><strong>财务与折旧</strong><span>固定资产、折旧计划和月度计提</span></a>{% endif %}
+    {% if can_view_inventory_reports %}<a href="{% url 'reports:report-center' %}?report_type=inventory_results"><strong>盘点、保养与清退</strong><span>盘点结果、保养记录和离职未清</span></a>{% elif can_view_offboarding_reports %}<a href="{% url 'reports:report-center' %}?report_type=offboarding_unresolved"><strong>盘点、保养与清退</strong><span>查看授权范围内的离职未清事项</span></a>{% endif %}
+    {% if supply_report_definitions %}<a href="{% url 'reports:supply-report-index' %}" data-report-entry="supplies"><strong>办公用品与低值品</strong><span>{{ supply_report_count }} 张可用报表</span></a>{% endif %}
+    {% if can_view_tplus_report %}<a href="{% url 'reports:tplus-export' %}"><strong>T+ 对账</strong><span>生成固定资产月末人工对账文件</span></a>{% endif %}
+  </div>
+</section>
+
 <section class="card shadow-sm mb-3 app-filter-card">
   <div class="card-body">
     <form method="get" class="row g-3" novalidate>
@@ -60,7 +71,7 @@
           <tr>
             {% for column, value in row %}
               <td class="{% if column.kind == 'money' or column.kind == 'decimal' or column.kind == 'integer' or column.kind == 'rate' %}text-end{% endif %}">
-                {% if value is None or value == '' %}<span class="text-secondary">—</span>{% elif column.kind == 'money' %}{{ value|floatformat:2 }}{% elif column.kind == 'date' %}{{ value|date:'Y-m-d' }}{% elif column.kind == 'datetime' %}{{ value|date:'Y-m-d H:i:s' }}{% else %}{{ value }}{% endif %}
+                {% if value is None or value == '' %}<span class="text-secondary">-</span>{% elif column.kind == 'money' %}{{ value|floatformat:2 }}{% elif column.kind == 'date' %}{{ value|date:'Y-m-d' }}{% elif column.kind == 'datetime' %}{{ value|date:'Y-m-d H:i:s' }}{% else %}{{ value }}{% endif %}
               </td>
             {% endfor %}
           </tr>

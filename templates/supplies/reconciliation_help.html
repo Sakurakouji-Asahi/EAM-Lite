@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}低值物品余额核对 | EAM-Lite{% endblock %}
+{% block title %}库存核对帮助 | EAM-Lite{% endblock %}
 {% block content %}
-<header class="app-page-header"><div><h1 class="h3 mb-1">余额核对与受控重建</h1><p class="text-secondary mb-0">日常业务不依赖重建；重建仅用于不可变流水与缓存发生异常差异后的维护窗口处理。</p></div><a class="btn btn-outline-secondary" href="{% url 'supplies:dashboard' %}">返回 Dashboard</a></header>
+<header class="app-page-header"><div><h1 class="h3 mb-1">库存核对帮助</h1><p class="text-secondary mb-0">日常业务不依赖重建；只有库存明细与当前库存发生异常差异时才在维护窗口处理。</p></div><a class="btn btn-outline-secondary" href="{% url 'supplies:stock-balance-list' %}">返回当前库存</a></header>
 <div class="row g-3">
   <section class="col-12 col-xl-6"><div class="card shadow-sm h-100"><div class="card-header"><h2 class="h5 mb-0">1. 只读核对</h2></div><div class="card-body"><p>由管理员在应用服务器执行，命令不会写入数据：</p><pre class="mb-0"><code>python manage.py reconcile_supply_balances --company {{ company.code }}
 python manage.py reconcile_supply_custodies --company {{ company.code }}</code></pre></div></div></section>

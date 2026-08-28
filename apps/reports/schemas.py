@@ -464,17 +464,17 @@ REPORT_REGISTRY = {
 }
 
 SUPPLY_REPORT_REGISTRY = {
-    "supply_stock_balance": _supply_report("supply_stock_balance", "当前库存余额表", "当前库存余额", SUPPLY_STOCK_BALANCE_COLUMNS),
+    "supply_stock_balance": _supply_report("supply_stock_balance", "当前库存表", "当前库存", SUPPLY_STOCK_BALANCE_COLUMNS),
     "supply_low_stock": _supply_report("supply_low_stock", "低库存预警表", "低库存预警", SUPPLY_LOW_STOCK_COLUMNS),
     "supply_stock_movement": _supply_report("supply_stock_movement", "库存收发存表", "库存收发存", _movement_columns()),
-    "supply_stock_ledger": _supply_report("supply_stock_ledger", "库存流水明细表", "库存流水明细", SUPPLY_STOCK_LEDGER_COLUMNS),
+    "supply_stock_ledger": _supply_report("supply_stock_ledger", "出入库明细表", "出入库明细", SUPPLY_STOCK_LEDGER_COLUMNS),
     "supply_issue_detail": _supply_report("supply_issue_detail", "领用明细表", "领用明细", SUPPLY_ISSUE_DETAIL_COLUMNS),
     "supply_department_issue": _supply_report("supply_department_issue", "部门领用汇总表", "部门领用汇总", _issue_summary_columns()),
     "supply_employee_issue": _supply_report("supply_employee_issue", "员工领用汇总表", "员工领用汇总", _issue_summary_columns(employee=True)),
     "supply_custody_balance": _supply_report("supply_custody_balance", "数量型耐用品保管余额表", "耐用品保管余额", SUPPLY_CUSTODY_BALANCE_COLUMNS),
     "supply_custody_movement": _supply_report("supply_custody_movement", "保管动作明细表", "保管动作明细", SUPPLY_CUSTODY_MOVEMENT_COLUMNS),
     "supply_count_difference": _supply_report("supply_count_difference", "盘点差异及处理结果表", "盘点差异处理", SUPPLY_COUNT_DIFFERENCE_COLUMNS),
-    "controlled_non_fixed_assets": _supply_report("controlled_non_fixed_assets", "逐件受控非固定资产清单", "逐件受控非固定资产", CONTROLLED_NON_FIXED_COLUMNS),
+    "controlled_non_fixed_assets": _supply_report("controlled_non_fixed_assets", "逐件低值资产清单", "逐件低值资产", CONTROLLED_NON_FIXED_COLUMNS),
     "supply_management_amount": _supply_report("supply_management_amount", "低值物品综合管理金额表", "综合管理金额", SUPPLY_MANAGEMENT_AMOUNT_COLUMNS),
 }
 
