@@ -29,23 +29,47 @@ def _decimal(value, *, label: str) -> Decimal:
     return result
 
 
+def _quantize(value, quantum: Decimal, *, label: str) -> Decimal:
+    decimal_value = _decimal(value, label=label)
+    try:
+        return decimal_value.quantize(quantum, rounding=ROUND_HALF_UP)
+    except InvalidOperation as exc:
+        raise ValidationError(f"{label}超出系统支持的十进制精度范围。") from exc
+
+
+def _nonnegative_decimal(value, *, label: str) -> Decimal:
+    result = _decimal(value, label=label)
+    if result < 0:
+        raise ValidationError(f"{label}不得小于 0。")
+    return result
+
+
+def _positive_decimal(value, *, label: str) -> Decimal:
+    result = _decimal(value, label=label)
+    if result <= 0:
+        raise ValidationError(f"{label}必须大于 0。")
+    return result
+
+
 def quantize_quantity(value) -> Decimal:
-    return _decimal(value, label="数量").quantize(QTY_QUANT, rounding=ROUND_HALF_UP)
+    return _quantize(value, QTY_QUANT, label="数量")
 
 
 def quantize_unit_cost(value) -> Decimal:
-    return _decimal(value, label="单位成本").quantize(
-        COST_QUANT, rounding=ROUND_HALF_UP
-    )
+    return _quantize(value, COST_QUANT, label="单位成本")
 
 
 def quantize_money(value) -> Decimal:
-    return _decimal(value, label="金额").quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+    return _quantize(value, MONEY_QUANT, label="金额")
 
 
 def calculate_receipt_amount(quantity, unit_cost) -> Decimal:
-    receipt_quantity = quantize_quantity(quantity)
-    receipt_unit_cost = quantize_unit_cost(unit_cost)
+    receipt_quantity = quantize_quantity(
+        _positive_decimal(quantity, label="入库数量")
+    )
+    receipt_unit_cost = quantize_unit_cost(
+        _nonnegative_decimal(unit_cost, label="入库单位成本")
+    )
     if receipt_quantity <= ZERO_QTY:
         raise ValidationError("入库数量必须大于 0。")
     if receipt_unit_cost < ZERO_COST:
@@ -54,8 +78,12 @@ def calculate_receipt_amount(quantity, unit_cost) -> Decimal:
 
 
 def calculate_average_unit_cost(quantity, amount) -> Decimal:
-    balance_quantity = quantize_quantity(quantity)
-    balance_amount = quantize_money(amount)
+    balance_quantity = quantize_quantity(
+        _nonnegative_decimal(quantity, label="库存数量")
+    )
+    balance_amount = quantize_money(
+        _nonnegative_decimal(amount, label="库存金额")
+    )
     if balance_quantity < ZERO_QTY or balance_amount < ZERO_MONEY:
         raise ValidationError("库存数量和金额不得小于 0。")
     if balance_quantity == ZERO_QTY:
@@ -99,15 +127,23 @@ def calculate_receipt(
     receipt_quantity,
     receipt_unit_cost,
 ) -> ReceiptCalculation:
-    quantity_before = quantize_quantity(balance_quantity)
-    amount_before = quantize_money(balance_amount)
+    quantity_before = quantize_quantity(
+        _nonnegative_decimal(balance_quantity, label="过账前库存数量")
+    )
+    amount_before = quantize_money(
+        _nonnegative_decimal(balance_amount, label="过账前库存金额")
+    )
     if quantity_before < ZERO_QTY or amount_before < ZERO_MONEY:
         raise ValidationError("过账前库存数量和金额不得小于 0。")
     if quantity_before == ZERO_QTY and amount_before != ZERO_MONEY:
         raise ValidationError("过账前库存数量为 0 时库存金额必须为 0。")
 
-    in_quantity = quantize_quantity(receipt_quantity)
-    in_unit_cost = quantize_unit_cost(receipt_unit_cost)
+    in_quantity = quantize_quantity(
+        _positive_decimal(receipt_quantity, label="入库数量")
+    )
+    in_unit_cost = quantize_unit_cost(
+        _nonnegative_decimal(receipt_unit_cost, label="入库单位成本")
+    )
     in_amount = calculate_receipt_amount(in_quantity, in_unit_cost)
     quantity_after = quantize_quantity(quantity_before + in_quantity)
     amount_after = quantize_money(amount_before + in_amount)
@@ -135,15 +171,23 @@ def calculate_receipt_from_amount(
     that can create an otherwise unexplained one-cent difference.
     """
 
-    quantity_before = quantize_quantity(balance_quantity)
-    amount_before = quantize_money(balance_amount)
+    quantity_before = quantize_quantity(
+        _nonnegative_decimal(balance_quantity, label="过账前库存数量")
+    )
+    amount_before = quantize_money(
+        _nonnegative_decimal(balance_amount, label="过账前库存金额")
+    )
     if quantity_before < ZERO_QTY or amount_before < ZERO_MONEY:
         raise ValidationError("过账前库存数量和金额不得小于 0。")
     if quantity_before == ZERO_QTY and amount_before != ZERO_MONEY:
         raise ValidationError("过账前库存数量为 0 时库存金额必须为 0。")
 
-    in_quantity = quantize_quantity(receipt_quantity)
-    in_amount = quantize_money(receipt_amount)
+    in_quantity = quantize_quantity(
+        _positive_decimal(receipt_quantity, label="入库数量")
+    )
+    in_amount = quantize_money(
+        _nonnegative_decimal(receipt_amount, label="入库金额")
+    )
     if in_quantity <= ZERO_QTY:
         raise ValidationError("入库数量必须大于 0。")
     if in_amount < ZERO_MONEY:
@@ -169,9 +213,15 @@ def calculate_issue(
 ) -> IssueCalculation:
     """Remove stock at the current moving average without leaving a tail."""
 
-    quantity_before = quantize_quantity(balance_quantity)
-    amount_before = quantize_money(balance_amount)
-    out_quantity = quantize_quantity(issue_quantity)
+    quantity_before = quantize_quantity(
+        _nonnegative_decimal(balance_quantity, label="过账前库存数量")
+    )
+    amount_before = quantize_money(
+        _nonnegative_decimal(balance_amount, label="过账前库存金额")
+    )
+    out_quantity = quantize_quantity(
+        _positive_decimal(issue_quantity, label="出库数量")
+    )
     if quantity_before < ZERO_QTY or amount_before < ZERO_MONEY:
         raise ValidationError("过账前库存数量和金额不得小于 0。")
     if quantity_before == ZERO_QTY and amount_before != ZERO_MONEY:
@@ -222,10 +272,18 @@ def allocate_custody_amount(
     all follow one rule and can never leave quantity zero with CNY 0.01 behind.
     """
 
-    quantity_before = quantize_quantity(current_quantity)
-    amount_before = quantize_money(current_amount)
-    cost_snapshot = quantize_unit_cost(unit_cost_snapshot)
-    quantity = quantize_quantity(action_quantity)
+    quantity_before = quantize_quantity(
+        _nonnegative_decimal(current_quantity, label="当前保管数量")
+    )
+    amount_before = quantize_money(
+        _nonnegative_decimal(current_amount, label="当前保管金额")
+    )
+    cost_snapshot = quantize_unit_cost(
+        _nonnegative_decimal(unit_cost_snapshot, label="保管单位成本")
+    )
+    quantity = quantize_quantity(
+        _positive_decimal(action_quantity, label="处理数量")
+    )
     if quantity_before <= ZERO_QTY:
         raise ValidationError("当前保管数量必须大于 0。")
     if amount_before < ZERO_MONEY or cost_snapshot < ZERO_COST:
@@ -242,9 +300,14 @@ def allocate_custody_amount(
         quantity_after = ZERO_QTY
         amount_after = ZERO_MONEY
     else:
-        action_amount = quantize_money(quantity * cost_snapshot)
-        if action_amount > amount_before:
-            raise ValidationError("本次处理金额超过当前保管金额，请先执行保管核对。")
+        # Repeated small partial actions can each round up to one cent even
+        # though the original custody amount was rounded only once.  Cap the
+        # partial allocation at the authoritative remaining amount so a
+        # positive quantity can always be settled without creating money.
+        action_amount = min(
+            quantize_money(quantity * cost_snapshot),
+            amount_before,
+        )
         quantity_after = quantize_quantity(quantity_before - quantity)
         amount_after = quantize_money(amount_before - action_amount)
         if quantity_after <= ZERO_QTY:
@@ -282,7 +345,9 @@ def calculate_moving_average(
 
 
 def validate_zero_cost_reason(unit_cost, reason) -> str:
-    cost = quantize_unit_cost(unit_cost)
+    cost = quantize_unit_cost(
+        _nonnegative_decimal(unit_cost, label="入库单位成本")
+    )
     if cost < ZERO_COST:
         raise ValidationError("入库单位成本不得小于 0。")
     cleaned = str(reason or "").strip()

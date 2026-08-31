@@ -436,11 +436,18 @@ def test_reverse_receipt_restores_snapshot_and_is_idempotent():
     again = reverse_supply_document(
         document=opening,
         actor=actor,
-        idempotency_key="another-key",
-        reason="重复点击",
+        idempotency_key="reverse-opening-key",
+        reason="期初录入错误",
     )
     assert again.pk == reversal.pk
     assert SupplyDocument.objects.filter(document_type="reversal").count() == 1
+    with pytest.raises(ValidationError, match="另一请求内容"):
+        reverse_supply_document(
+            document=opening,
+            actor=actor,
+            idempotency_key="another-key",
+            reason="重复点击但内容不同",
+        )
 
 
 def test_reverse_issue_rejects_active_return_and_reversed_return_no_longer_counts():

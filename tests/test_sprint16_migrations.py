@@ -23,6 +23,8 @@ def test_sprint16_migrates_from_sprint15_and_preserves_custody_history():
         Item = old_apps.get_model("supplies", "SupplyItem")
         Document = old_apps.get_model("supplies", "SupplyDocument")
         Line = old_apps.get_model("supplies", "SupplyDocumentLine")
+        Balance = old_apps.get_model("supplies", "SupplyStockBalance")
+        Ledger = old_apps.get_model("supplies", "SupplyStockLedger")
         Custody = old_apps.get_model("supplies", "SupplyCustody")
         Movement = old_apps.get_model("supplies", "SupplyCustodyMovement")
         company = Company.objects.create(
@@ -58,6 +60,26 @@ def test_sprint16_migrates_from_sprint15_and_preserves_custody_history():
             item_type="durable_quantity",
             unit="把",
         )
+        opening_document = Document.objects.create(
+            company=company,
+            document_no="QC-2026-000001",
+            document_type="opening",
+            business_date="2026-08-25",
+            target_warehouse=warehouse,
+            status="posted",
+            idempotency_key="migration-opening",
+            posted_at="2026-08-25T00:00:00Z",
+        )
+        opening_line = Line.objects.create(
+            company=company,
+            document=opening_document,
+            line_no=1,
+            item=item,
+            quantity=Decimal("2.0000"),
+            entered_unit_cost=Decimal("80.000000"),
+            posted_unit_cost=Decimal("80.000000"),
+            posted_amount=Decimal("160.00"),
+        )
         document = Document.objects.create(
             company=company,
             document_no="LY-2026-000001",
@@ -79,6 +101,65 @@ def test_sprint16_migrates_from_sprint15_and_preserves_custody_history():
             posted_amount=Decimal("160.00"),
         )
         with transaction.atomic():
+            if connection.vendor == "postgresql":
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT set_config('eam_lite.controlled_supply_balance_mutation','on',true)"
+                    )
+            Balance.objects.create(
+                company=company,
+                warehouse=warehouse,
+                item=item,
+                quantity_on_hand=Decimal("0.0000"),
+                amount_on_hand=Decimal("0.00"),
+                average_unit_cost=Decimal("0.000000"),
+            )
+            if connection.vendor == "postgresql":
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT set_config('eam_lite.controlled_supply_ledger_insert','on',true)"
+                    )
+            Ledger.objects.create(
+                company=company,
+                warehouse=warehouse,
+                item=item,
+                document=opening_document,
+                document_line=opening_line,
+                movement_type="opening_in",
+                quantity_delta=Decimal("2.0000"),
+                amount_delta=Decimal("160.00"),
+                unit_cost=Decimal("80.000000"),
+                quantity_before=Decimal("0.0000"),
+                quantity_after=Decimal("2.0000"),
+                amount_before=Decimal("0.00"),
+                amount_after=Decimal("160.00"),
+                average_unit_cost_before=Decimal("0.000000"),
+                average_unit_cost_after=Decimal("80.000000"),
+                occurred_at="2026-08-25T00:00:00Z",
+            )
+            if connection.vendor == "postgresql":
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT set_config('eam_lite.controlled_supply_ledger_insert','on',true)"
+                    )
+            Ledger.objects.create(
+                company=company,
+                warehouse=warehouse,
+                item=item,
+                document=document,
+                document_line=line,
+                movement_type="issue_out",
+                quantity_delta=Decimal("-2.0000"),
+                amount_delta=Decimal("-160.00"),
+                unit_cost=Decimal("80.000000"),
+                quantity_before=Decimal("2.0000"),
+                quantity_after=Decimal("0.0000"),
+                amount_before=Decimal("160.00"),
+                amount_after=Decimal("0.00"),
+                average_unit_cost_before=Decimal("80.000000"),
+                average_unit_cost_after=Decimal("0.000000"),
+                occurred_at="2026-08-26T00:00:00Z",
+            )
             if connection.vendor == "postgresql":
                 with connection.cursor() as cursor:
                     cursor.execute(
