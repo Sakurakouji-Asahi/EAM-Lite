@@ -20,7 +20,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 def require_postgresql():
     if connection.vendor != "postgresql":
-        pytest.skip("Sprint 15 database guards require PostgreSQL 18.4")
+        pytest.skip("Sprint 15 database guards require PostgreSQL 18.6")
 
 
 def test_postgresql_sprint15_triggers_are_installed():

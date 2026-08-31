@@ -1324,7 +1324,7 @@ def custody_detail(request, pk):
         ),
         pk=pk,
     )
-    movements = (
+    movement_queryset = (
         custody.incoming_movements.filter(company=company)
         | custody.outgoing_movements.filter(company=company)
     ).select_related(
@@ -1333,7 +1333,19 @@ def custody_detail(request, pk):
         "source_document_line__document",
         "created_by",
         "reverses_movement",
-    ).order_by("created_at")
+    )
+    movements = list(movement_queryset.order_by("created_at"))
+    visible_custodies = scoped_supply_custodies(
+        request.user,
+        company,
+        SupplyCustody.objects.all(),
+    )
+    related_custody_ids = {
+        custody_id
+        for movement in movements
+        for custody_id in (movement.from_custody_id, movement.to_custody_id)
+        if custody_id is not None
+    }
     ancestor_chain = []
     current = custody.parent_custody
     seen = set()
@@ -1350,7 +1362,31 @@ def custody_detail(request, pk):
             else None
         )
     ancestor_chain.reverse()
-    child_custodies = custody.child_custodies.select_related(
+    related_custody_ids.update(ancestor.pk for ancestor in ancestor_chain)
+    if custody.parent_custody_id:
+        related_custody_ids.add(custody.parent_custody_id)
+    visible_related_ids = set(
+        visible_custodies.filter(pk__in=related_custody_ids).values_list(
+            "pk", flat=True
+        )
+    )
+    ancestor_chain = [
+        ancestor
+        for ancestor in ancestor_chain
+        if ancestor.pk in visible_related_ids
+    ]
+    for movement in movements:
+        movement.from_custody_visible = (
+            movement.from_custody_id is None
+            or movement.from_custody_id in visible_related_ids
+        )
+        movement.to_custody_visible = (
+            movement.to_custody_id is None
+            or movement.to_custody_id in visible_related_ids
+        )
+    child_custodies = visible_custodies.filter(
+        parent_custody=custody
+    ).select_related(
         "department", "employee", "item"
     ).order_by("started_on", "created_at")
     return render(
@@ -1362,6 +1398,10 @@ def custody_detail(request, pk):
             "show_cost": can_view_supply_cost(request.user),
             "ancestor_chain": ancestor_chain,
             "child_custodies": child_custodies,
+            "direct_parent_visible": (
+                custody.parent_custody_id is None
+                or custody.parent_custody_id in visible_related_ids
+            ),
             "can_return": custody.status == "open"
             and custody.item.is_active
             and can_manage_supply_custody(
@@ -1781,7 +1821,9 @@ def count_task_list(request):
             "date_to": date_to_value,
             "domains": SupplyCountDomain.choices,
             "statuses": (("open", "未关闭"), *SupplyCountStatus.choices),
-            "warehouses": SupplyWarehouse.objects.filter(company=company).order_by("normalized_code"),
+            "warehouses": scoped_supply_warehouses(
+                request.user, company
+            ).order_by("normalized_code"),
             "departments": scoped_departments(request.user, company).order_by("normalized_code"),
             "employees": scoped_employees(request.user, company).order_by("normalized_employee_no"),
             "can_create_warehouse": can_create_supply_count_task(

@@ -4,10 +4,14 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.storage import default_storage
+from django.core.paginator import EmptyPage, PageNotAnInteger, Paginator
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.encoding import escape_uri_path
+from django.views.decorators.cache import never_cache
+from django.views.decorators.http import require_GET, require_http_methods
 
+from apps.audit.services import request_audit_context, write_business_audit_log
 from apps.imports.forms import ImportUploadForm
 from apps.imports.services import (
     TEMPLATE_REGISTRY,
@@ -43,6 +47,15 @@ def _require_batch(actor, batch):
     """Apply the import gate and the asset-initialization object boundary."""
 
     _require(actor, batch.import_type, company=batch.company)
+    if batch.import_type == "item_master":
+        roles = role_names_for(actor)
+        if roles.intersection({"system_admin", "finance", "warehouse"}):
+            return
+        if batch.uploaded_by_id != actor.pk:
+            raise PermissionDenied(
+                "equipment 只能查看本人上传的低值物品档案导入批次。"
+            )
+        return
     if batch.import_type != "asset_initialization":
         return
     # Asset workbooks can contain F1 fields.  Finance may inspect company-wide
@@ -54,7 +67,9 @@ def _require_batch(actor, batch):
         raise PermissionDenied("您没有查看此资产初始化导入批次的权限。")
 
 
+@never_cache
 @login_required
+@require_GET
 def import_home(request):
     company = _company_or_404()
     allowed = []
@@ -69,7 +84,9 @@ def import_home(request):
     return render(request, "imports/home.html", {"company": company, "definitions": allowed})
 
 
+@never_cache
 @login_required
+@require_GET
 def download_template(request, import_type):
     company = _company_or_404()
     definition = _definition_or_404(import_type, company=company)
@@ -85,7 +102,9 @@ def download_template(request, import_type):
     return response
 
 
+@never_cache
 @login_required
+@require_http_methods(["GET", "POST"])
 def upload_import(request, import_type):
     company = _company_or_404()
     definition = _definition_or_404(import_type, company=company)
@@ -112,7 +131,9 @@ def upload_import(request, import_type):
     )
 
 
+@never_cache
 @login_required
+@require_GET
 def batch_detail(request, pk):
     from apps.masterdata.models import ImportBatch
 
@@ -123,12 +144,20 @@ def batch_detail(request, pk):
         company=company,
     )
     _require_batch(request.user, batch)
+    if set(request.GET) - {"page"}:
+        return HttpResponse("包含不支持的导入预览参数。", status=400)
+    paginator = Paginator(batch.rows.order_by("row_number"), 50)
+    try:
+        page_obj = paginator.page(request.GET.get("page", "1"))
+    except (PageNotAnInteger, EmptyPage):
+        return HttpResponse("页码无效。", status=400)
     return render(
         request,
         "imports/batch_detail.html",
         {
             "batch": batch,
-            "rows": batch.rows.order_by("row_number"),
+            "rows": page_obj.object_list,
+            "page_obj": page_obj,
             "definition": _definition_or_404(batch.import_type, company=company),
             "is_asset_initialization": batch.import_type == "asset_initialization",
             "is_item_master": batch.import_type == "item_master",
@@ -138,6 +167,7 @@ def batch_detail(request, pk):
     )
 
 
+@never_cache
 @login_required
 def confirm_batch(request, pk):
     if request.method != "POST":
@@ -159,6 +189,7 @@ def confirm_batch(request, pk):
     return redirect("imports:batch_detail", pk=batch.pk)
 
 
+@never_cache
 @login_required
 def cancel_batch(request, pk):
     if request.method != "POST":
@@ -182,7 +213,9 @@ def cancel_batch(request, pk):
     return redirect("imports:batch_detail", pk=batch.pk)
 
 
+@never_cache
 @login_required
+@require_GET
 def download_source(request, pk):
     from apps.masterdata.models import ImportBatch
 
@@ -194,8 +227,26 @@ def download_source(request, pk):
     attachment = batch.file_attachment
     if not attachment.is_available or not default_storage.exists(attachment.storage_key):
         raise Http404("原文件不可用。")
+    source = default_storage.open(attachment.storage_key, "rb")
+    try:
+        write_business_audit_log(
+            company=batch.company,
+            user=request.user,
+            action="import_source_download",
+            object_type="ImportBatch",
+            object_id=batch.pk,
+            old_data={},
+            new_data={
+                "import_type": batch.import_type,
+                "file_sha256": batch.file_sha256,
+            },
+            **request_audit_context(request),
+        )
+    except Exception:
+        source.close()
+        raise
     response = FileResponse(
-        default_storage.open(attachment.storage_key, "rb"),
+        source,
         as_attachment=True,
         filename=Path(attachment.safe_filename).name,
         content_type=attachment.mime_type,

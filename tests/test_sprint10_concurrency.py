@@ -34,7 +34,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 def _postgresql_only():
     if connection.vendor != "postgresql":
-        pytest.skip("Sprint 10 row-lock concurrency requires PostgreSQL 18.4")
+        pytest.skip("Sprint 10 row-lock concurrency requires PostgreSQL 18.6")
 
 
 def test_concurrent_initiation_creates_one_clearance_and_one_snapshot_set():

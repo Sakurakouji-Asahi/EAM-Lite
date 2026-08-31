@@ -6,7 +6,7 @@ from threading import Event
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.db import close_old_connections, transaction
+from django.db import close_old_connections, connection, transaction
 
 from apps.masterdata.models import Company
 from apps.supplies import reconciliation
@@ -28,6 +28,12 @@ from tests.test_sprint18_rebuild import rebuild_context
 
 
 pytestmark = pytest.mark.django_db(transaction=True)
+
+
+@pytest.fixture(autouse=True)
+def require_postgresql():
+    if connection.vendor != "postgresql":
+        pytest.skip("Sprint 18 余额重建并发锁验收需要 PostgreSQL。")
 
 
 def _thread(callable_):

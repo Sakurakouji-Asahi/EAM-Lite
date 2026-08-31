@@ -26,7 +26,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 def require_postgresql():
     if connection.vendor != "postgresql":
-        pytest.skip("Sprint 16 custody concurrency acceptance requires PostgreSQL 18.4")
+        pytest.skip("Sprint 16 custody concurrency acceptance requires PostgreSQL 18.6")
 
 
 def run_parallel(callables):

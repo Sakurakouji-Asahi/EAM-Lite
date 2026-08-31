@@ -29,18 +29,24 @@ def _decimal(value, *, label: str) -> Decimal:
     return result
 
 
+def _quantize(value, *, label: str, quantum: Decimal) -> Decimal:
+    result = _decimal(value, label=label)
+    try:
+        return result.quantize(quantum, rounding=ROUND_HALF_UP)
+    except InvalidOperation as exc:
+        raise ValidationError(f"{label}超出系统支持的十进制范围。") from exc
+
+
 def quantize_quantity(value) -> Decimal:
-    return _decimal(value, label="数量").quantize(QTY_QUANT, rounding=ROUND_HALF_UP)
+    return _quantize(value, label="数量", quantum=QTY_QUANT)
 
 
 def quantize_unit_cost(value) -> Decimal:
-    return _decimal(value, label="单位成本").quantize(
-        COST_QUANT, rounding=ROUND_HALF_UP
-    )
+    return _quantize(value, label="单位成本", quantum=COST_QUANT)
 
 
 def quantize_money(value) -> Decimal:
-    return _decimal(value, label="金额").quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+    return _quantize(value, label="金额", quantum=MONEY_QUANT)
 
 
 def calculate_receipt_amount(quantity, unit_cost) -> Decimal:

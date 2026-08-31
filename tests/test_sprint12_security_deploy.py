@@ -130,6 +130,39 @@ def test_production_settings_fail_closed_and_valid_secure_configuration_loads(tm
 
 
 @pytest.mark.parametrize(
+    ("setting", "value", "expected_error"),
+    [
+        ("TRUST_PROXY_SSL_HEADER", "false", "TRUST_PROXY_SSL_HEADER"),
+        ("ALLOWED_HOSTS", ".company.lan,eam.company.lan", "ALLOWED_HOSTS"),
+        (
+            "CSRF_TRUSTED_ORIGINS",
+            "https://eam.company.lan,https://*.company.lan",
+            "CSRF_TRUSTED_ORIGINS",
+        ),
+        (
+            "CSRF_TRUSTED_ORIGINS",
+            "https://eam.company.lan/unsafe/path",
+            "CSRF_TRUSTED_ORIGINS",
+        ),
+    ],
+)
+def test_production_settings_reject_insecure_proxy_and_wildcard_origins(
+    tmp_path, setting, value, expected_error
+):
+    env = _production_settings_env(tmp_path)
+    env[setting] = value
+    result = subprocess.run(
+        [str(Path(".venv/Scripts/python.exe")), "-c", "import config.settings"],
+        cwd=Path.cwd(),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+
+
+@pytest.mark.parametrize(
     ("qr_base_url", "allowed_hosts", "csrf_origin", "expected_error"),
     [
         (
@@ -181,8 +214,14 @@ def test_production_compose_is_version_pinned_and_does_not_publish_app_or_databa
     dockerfile = Path("deploy/Dockerfile").read_text(encoding="utf-8")
     caddy = Path("deploy/Caddyfile").read_text(encoding="utf-8")
     lock = Path("requirements/production.lock").read_text(encoding="utf-8")
-    assert "postgres:18.4-alpine@sha256:" in compose
-    assert "caddy:2.10.2-alpine@sha256:" in compose
+    assert (
+        "postgres:18.6-alpine@sha256:"
+        "d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2"
+    ) in compose
+    assert (
+        "caddy:2.11.4-alpine@sha256:"
+        "5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648"
+    ) in compose
     assert "python:3.14.7-slim@sha256:" in dockerfile
     assert '"80:80"' in compose and '"443:443"' in compose
     assert "5432:5432" not in compose and "8000:8000" not in compose

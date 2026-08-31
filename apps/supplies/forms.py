@@ -669,21 +669,29 @@ class SupplyCustodyTransferForm(_CustodyActionBaseForm):
         departments = Department.objects.filter(
             company=self.company, is_active=True
         )
-        if "department_manager" in role_names_for(self.actor) and not role_names_for(
-            self.actor
-        ).intersection({"system_admin", "finance", "warehouse", "equipment"}):
+        roles = role_names_for(self.actor)
+        department_ids = None
+        if "department_manager" in roles and not roles.intersection(
+            {"system_admin", "finance", "warehouse", "equipment"}
+        ):
+            department_ids = resolve_department_ids(self.actor, self.company)
             departments = departments.filter(
-                pk__in=resolve_department_ids(self.actor, self.company)
+                pk__in=department_ids
             )
         self.fields["target_department"].queryset = departments.order_by(
             "normalized_code"
         )
-        self.fields["target_employee"].queryset = Employee.objects.filter(
+        employees = Employee.objects.filter(
             company=self.company,
             employment_status="active",
             is_active=True,
             department__is_active=True,
-        ).select_related("department").order_by("normalized_employee_no")
+        )
+        if department_ids is not None:
+            employees = employees.filter(department_id__in=department_ids)
+        self.fields["target_employee"].queryset = employees.select_related(
+            "department"
+        ).order_by("normalized_employee_no")
 
     def clean(self):
         cleaned = super().clean()
@@ -1009,21 +1017,28 @@ class SupplyCountCustodyResolutionForm(forms.Form):
         ).order_by("normalized_code")
         departments = Department.objects.filter(company=line.company, is_active=True)
         roles = role_names_for(actor)
+        department_ids = None
         if "department_manager" in roles and not roles.intersection(
             {"system_admin", "finance", "equipment"}
         ):
+            department_ids = resolve_department_ids(actor, line.company)
             departments = departments.filter(
-                pk__in=resolve_department_ids(actor, line.company)
+                pk__in=department_ids
             )
         self.fields["target_department"].queryset = departments.order_by(
             "normalized_code"
         )
-        self.fields["target_employee"].queryset = Employee.objects.filter(
+        employees = Employee.objects.filter(
             company=line.company,
             employment_status="active",
             is_active=True,
             department__is_active=True,
-        ).select_related("department").order_by("normalized_employee_no")
+        )
+        if department_ids is not None:
+            employees = employees.filter(department_id__in=department_ids)
+        self.fields["target_employee"].queryset = employees.select_related(
+            "department"
+        ).order_by("normalized_employee_no")
         _bootstrap_widgets(self)
 
     def clean_idempotency_key(self):

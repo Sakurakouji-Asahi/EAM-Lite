@@ -94,7 +94,14 @@ def add_department_manager(context: dict, prefix: str, *departments):
     return user
 
 
-def active_fixed_asset_context(prefix: str, *, stop_rule="event_date"):
+def active_fixed_asset_context(
+    prefix: str,
+    *,
+    stop_rule="event_date",
+    method="straight_line",
+    posting_period="monthly",
+    annual_posting_month=None,
+):
     """Formalize and attach a fixed asset with a current-month profile."""
 
     context = _base_context(prefix, include_policy=False)
@@ -107,15 +114,15 @@ def active_fixed_asset_context(prefix: str, *, stop_rule="event_date"):
         data={
             "policy_key": f"{prefix}-POLICY",
             "name": f"{prefix} 当月计提政策",
-            "method": "straight_line",
-            "posting_period": "monthly",
+            "method": method,
+            "posting_period": posting_period,
             "start_rule": "current_month",
             "stop_rule": stop_rule,
             "default_useful_life_months": 60,
             "default_salvage_mode": "rate",
             "default_salvage_rate": Decimal("0.05"),
             "default_salvage_amount": None,
-            "annual_posting_month": None,
+            "annual_posting_month": annual_posting_month,
             "work_unit": "",
             "effective_from": date(2020, 1, 1),
             "effective_to": None,

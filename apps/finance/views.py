@@ -285,7 +285,11 @@ def asset_finance_detail(request, pk):
         scoped_finance_assets(request.user, company).select_related("category"), pk=pk
     )
     finance = get_object_or_404(
-        AssetFinance.objects.select_related("fixed_asset_category"), asset=asset
+        AssetFinance.objects.select_related("fixed_asset_category"),
+        asset=asset,
+        finance_confirmed_at__isnull=False,
+        accounting_treatment__isnull=False,
+        original_cost__isnull=False,
     )
     profiles = asset.depreciation_profiles.select_related(
         "depreciation_policy"

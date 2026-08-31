@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -26,6 +27,9 @@ from apps.operations.permissions import (
     require_manage_backups,
     require_recent_backup_authentication,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 _SAFE_DB_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
@@ -211,29 +215,136 @@ def _publish_package(temp_package: Path, storage_key: str):
     final_path = _storage_path(storage_key)
     final_path.parent.mkdir(parents=True, exist_ok=True)
     staging = final_path.with_suffix(final_path.suffix + ".tmp")
-    shutil.copyfile(temp_package, staging)
-    os.replace(staging, final_path)
+    mirror_staging = None
     try:
-        os.chmod(final_path.parent, 0o700)
-        os.chmod(final_path, 0o600)
-    except OSError:
-        pass
-    mirror_root = settings.BACKUP_MIRROR_ROOT
-    if mirror_root:
-        mirror_path = _storage_path(storage_key, root=mirror_root)
-        mirror_path.parent.mkdir(parents=True, exist_ok=True)
-        mirror_staging = mirror_path.with_suffix(mirror_path.suffix + ".tmp")
-        shutil.copyfile(final_path, mirror_staging)
-        if sha256_file(mirror_staging) != sha256_file(final_path):
-            mirror_staging.unlink(missing_ok=True)
-            raise ValidationError("备份镜像副本摘要校验失败。")
-        os.replace(mirror_staging, mirror_path)
+        shutil.copyfile(temp_package, staging)
+        os.replace(staging, final_path)
         try:
-            os.chmod(mirror_path.parent, 0o700)
-            os.chmod(mirror_path, 0o600)
+            os.chmod(final_path.parent, 0o700)
+            os.chmod(final_path, 0o600)
         except OSError:
             pass
-    return final_path
+        mirror_root = settings.BACKUP_MIRROR_ROOT
+        if mirror_root:
+            mirror_path = _storage_path(storage_key, root=mirror_root)
+            mirror_path.parent.mkdir(parents=True, exist_ok=True)
+            mirror_staging = mirror_path.with_suffix(mirror_path.suffix + ".tmp")
+            shutil.copyfile(final_path, mirror_staging)
+            if sha256_file(mirror_staging) != sha256_file(final_path):
+                raise ValidationError("备份镜像副本摘要校验失败。")
+            os.replace(mirror_staging, mirror_path)
+            try:
+                os.chmod(mirror_path.parent, 0o700)
+                os.chmod(mirror_path, 0o600)
+            except OSError:
+                pass
+        return final_path
+    except Exception:
+        _discard_published_package(storage_key)
+        raise
+    finally:
+        staging.unlink(missing_ok=True)
+        if mirror_staging is not None:
+            mirror_staging.unlink(missing_ok=True)
+
+
+def _published_package_paths(storage_key: str):
+    paths = [_storage_path(storage_key)]
+    if settings.BACKUP_MIRROR_ROOT:
+        paths.append(_storage_path(storage_key, root=settings.BACKUP_MIRROR_ROOT))
+    return tuple(paths)
+
+
+def _discard_published_package(storage_key: str):
+    """Best-effort removal for files that have no committed BackupSet owner."""
+
+    for path in _published_package_paths(storage_key):
+        for candidate in (path, path.with_suffix(path.suffix + ".tmp")):
+            try:
+                candidate.unlink(missing_ok=True)
+            except OSError:
+                logger.exception(
+                    "无法清理未发布备份文件 storage_key_hash=%s",
+                    hashlib.sha256(storage_key.encode("utf-8")).hexdigest(),
+                )
+
+
+def _quarantine_package_files(storage_key: str):
+    """Atomically move existing copies aside, restoring all on partial failure."""
+
+    token = uuid.uuid4().hex
+    moved = []
+    try:
+        for original in _published_package_paths(storage_key):
+            if not original.exists():
+                continue
+            quarantined = original.with_name(f"{original.name}.expiring-{token}")
+            os.replace(original, quarantined)
+            moved.append((original, quarantined))
+    except Exception:
+        _restore_quarantined_package_files(moved)
+        raise
+    return moved
+
+
+def _restore_quarantined_package_files(moved):
+    for original, quarantined in reversed(tuple(moved)):
+        if quarantined.exists():
+            original.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(quarantined, original)
+
+
+def _delete_quarantined_package_files(moved):
+    for _original, quarantined in moved:
+        try:
+            quarantined.unlink(missing_ok=True)
+        except OSError:
+            logger.exception("已过期备份隔离文件删除失败：%s", quarantined.name)
+
+
+def _recover_backup_after_exception(*, backup, actor, exc, context, finished_at):
+    """Resolve durable state before deciding whether published files are orphaned.
+
+    A database commit can succeed even when the client receives an exception.
+    Therefore an unknown state is deliberately different from ``pending``:
+    only a PENDING -> FAILED transition committed by this function authorizes
+    deletion of the primary and mirror files.
+    """
+
+    try:
+        with transaction.atomic():
+            locked = BackupSet._base_manager.select_for_update().get(pk=backup.pk)
+            if locked.status == BackupSet.Status.COMPLETED:
+                return locked, False
+            if locked.status != BackupSet.Status.PENDING:
+                return locked, False
+            summary = _safe_error(exc)
+            BackupSet._base_manager.filter(pk=locked.pk).update(
+                status=BackupSet.Status.FAILED,
+                finished_at=finished_at,
+                error_summary=summary,
+            )
+            write_business_audit_log(
+                company=locked.company,
+                user=actor,
+                action="backup.failed",
+                object_type="BackupSet",
+                object_id=locked.pk,
+                old_data={"status": BackupSet.Status.PENDING},
+                new_data={"status": BackupSet.Status.FAILED, "error": summary},
+                **context,
+            )
+            locked.status = BackupSet.Status.FAILED
+            locked.finished_at = finished_at
+            locked.error_summary = summary
+        # Reaching this line proves both the transition and its audit committed.
+        return locked, True
+    except Exception:
+        logger.exception(
+            "备份异常后的数据库状态无法确认 backup_id=%s；保留所有已发布文件",
+            backup.pk,
+        )
+        return None, False
 
 
 def create_backup_set(
@@ -392,30 +503,20 @@ def create_backup_set(
         return BackupSet.objects.get(pk=backup.pk)
     except Exception as exc:
         final_key = f"backups/{backup.pk}/{backup.pk}.eambak"
-        try:
-            _storage_path(final_key).unlink(missing_ok=True)
-        except OSError:
-            pass
         finished_at = timezone.now()
-        with transaction.atomic():
-            locked = BackupSet._base_manager.select_for_update().get(pk=backup.pk)
-            if locked.status == BackupSet.Status.PENDING:
-                summary = _safe_error(exc)
-                BackupSet._base_manager.filter(pk=locked.pk).update(
-                    status=BackupSet.Status.FAILED,
-                    finished_at=finished_at,
-                    error_summary=summary,
-                )
-                write_business_audit_log(
-                    company=company,
-                    user=actor,
-                    action="backup.failed",
-                    object_type="BackupSet",
-                    object_id=backup.pk,
-                    old_data={"status": BackupSet.Status.PENDING},
-                    new_data={"status": BackupSet.Status.FAILED, "error": summary},
-                    **context,
-                )
+        recovered, failed_committed = _recover_backup_after_exception(
+            backup=backup,
+            actor=actor,
+            exc=exc,
+            context=context,
+            finished_at=finished_at,
+        )
+        if failed_committed:
+            _discard_published_package(final_key)
+        elif recovered is not None and recovered.status == BackupSet.Status.COMPLETED:
+            # The publication committed; only the post-commit response/query
+            # failed. Return the durable result without deleting its files.
+            return recovered
         if isinstance(exc, (ValidationError, PermissionDenied)):
             raise
         raise ValidationError(f"备份生成失败：{_safe_error(exc)}") from exc
@@ -544,14 +645,26 @@ def start_download_grant(*, actor, grant, request=None):
     context = request_audit_context(request)
     now = timezone.now()
     with transaction.atomic():
-        locked = BackupDownloadGrant._base_manager.select_for_update().select_related(
-            "backup_set"
-        ).get(pk=grant.pk)
-        if locked.user_id != actor.pk or locked.company_id != locked.backup_set.company_id:
+        # All operations involving both records lock BackupSet before Grant.
+        # The FK is immutable, so the caller's already-loaded id is safe for
+        # selecting the first lock; the locked Grant is revalidated below.
+        locked_backup = BackupSet._base_manager.select_for_update().get(
+            pk=grant.backup_set_id
+        )
+        locked = (
+            BackupDownloadGrant._base_manager.select_for_update(of=("self",))
+            .select_related("backup_set")
+            .get(pk=grant.pk)
+        )
+        if (
+            locked.backup_set_id != locked_backup.pk
+            or locked.user_id != actor.pk
+            or locked.company_id != locked_backup.company_id
+        ):
             raise PermissionDenied("该下载授权不属于当前用户。")
         if locked.status != BackupDownloadGrant.Status.ISSUED or locked.expires_at <= now:
             raise ValidationError("下载授权已使用或已过期，请重新授权。")
-        package = backup_package_path(locked.backup_set)
+        package = backup_package_path(locked_backup)
         BackupDownloadGrant._base_manager.filter(pk=locked.pk).update(
             status=BackupDownloadGrant.Status.STARTED,
             started_at=now,
@@ -563,7 +676,7 @@ def start_download_grant(*, actor, grant, request=None):
             object_type="BackupDownloadGrant",
             object_id=locked.pk,
             old_data={"status": BackupDownloadGrant.Status.ISSUED},
-            new_data={"status": BackupDownloadGrant.Status.STARTED, "backup_set_id": locked.backup_set.backup_set_id},
+            new_data={"status": BackupDownloadGrant.Status.STARTED, "backup_set_id": locked_backup.backup_set_id},
             **context,
         )
         locked.refresh_from_db()
@@ -626,34 +739,86 @@ def expire_due_backups(*, as_of=None):
         status=BackupSet.Status.COMPLETED, expires_at__lt=as_of
     ).exclude(pk__in=protected_automatic_ids).order_by("expires_at", "pk")
     for backup_id in queryset.values_list("pk", flat=True):
-        with transaction.atomic():
-            backup = BackupSet._base_manager.select_for_update().get(pk=backup_id)
-            if backup.status != BackupSet.Status.COMPLETED or backup.expires_at >= as_of:
-                continue
-            path = _storage_path(backup.storage_key)
-            mirror_path = (
-                _storage_path(backup.storage_key, root=settings.BACKUP_MIRROR_ROOT)
-                if settings.BACKUP_MIRROR_ROOT
-                else None
-            )
-            path.unlink(missing_ok=True)
-            if mirror_path:
-                mirror_path.unlink(missing_ok=True)
-            BackupSet._base_manager.filter(pk=backup.pk).update(
-                status=BackupSet.Status.EXPIRED,
-                storage_key="",
-                expired_at=as_of,
-            )
-            write_business_audit_log(
-                company=backup.company,
-                user=None,
-                action="backup.expired",
-                object_type="BackupSet",
-                object_id=backup.pk,
-                old_data={"status": BackupSet.Status.COMPLETED},
-                new_data={"status": BackupSet.Status.EXPIRED, "expired_at": as_of},
-            )
-            expired.append(backup.pk)
+        moved = ()
+        try:
+            with transaction.atomic():
+                backup = BackupSet._base_manager.select_for_update().get(pk=backup_id)
+                if (
+                    backup.status != BackupSet.Status.COMPLETED
+                    or backup.expires_at >= as_of
+                ):
+                    continue
+                started_grants = list(
+                    BackupDownloadGrant._base_manager.select_for_update(of=("self",))
+                    .filter(
+                        backup_set=backup,
+                        status=BackupDownloadGrant.Status.STARTED,
+                    )
+                    .select_related("user")
+                    .order_by("pk")
+                )
+                lease_grace = timedelta(
+                    minutes=settings.BACKUP_DOWNLOAD_GRANT_MINUTES
+                )
+                active_leases = [
+                    grant
+                    for grant in started_grants
+                    if grant.expires_at + lease_grace > as_of
+                ]
+                if active_leases:
+                    # A response may not have opened the path yet. Keeping the
+                    # durable STARTED lease prevents expiry from winning that
+                    # gap after start_download_grant releases its transaction.
+                    continue
+                for stale_grant in started_grants:
+                    reason = (
+                        "下载租约已超过授权 expires_at 及同长度宽限期，"
+                        "由备份到期任务标记失败。"
+                    )
+                    BackupDownloadGrant._base_manager.filter(
+                        pk=stale_grant.pk
+                    ).update(
+                        status=BackupDownloadGrant.Status.FAILED,
+                        finished_at=as_of,
+                        failure_reason=reason,
+                    )
+                    write_business_audit_log(
+                        company=backup.company,
+                        user=stale_grant.user,
+                        action="backup.download_failed",
+                        object_type="BackupDownloadGrant",
+                        object_id=stale_grant.pk,
+                        old_data={"status": BackupDownloadGrant.Status.STARTED},
+                        new_data={
+                            "status": BackupDownloadGrant.Status.FAILED,
+                            "backup_set_id": backup.backup_set_id,
+                            "reason": "stale_started_lease",
+                        },
+                    )
+                moved = _quarantine_package_files(backup.storage_key)
+                BackupSet._base_manager.filter(pk=backup.pk).update(
+                    status=BackupSet.Status.EXPIRED,
+                    storage_key="",
+                    expired_at=as_of,
+                )
+                write_business_audit_log(
+                    company=backup.company,
+                    user=None,
+                    action="backup.expired",
+                    object_type="BackupSet",
+                    object_id=backup.pk,
+                    old_data={"status": BackupSet.Status.COMPLETED},
+                    new_data={
+                        "status": BackupSet.Status.EXPIRED,
+                        "expired_at": as_of,
+                    },
+                )
+                expired.append(backup.pk)
+        except Exception:
+            _restore_quarantined_package_files(moved)
+            raise
+        else:
+            _delete_quarantined_package_files(moved)
     return expired
 
 

@@ -27,6 +27,10 @@ from tests.test_sprint4_acceptance import _base_context
 
 
 pytestmark = pytest.mark.django_db(transaction=True)
+requires_postgresql_backup = pytest.mark.skipif(
+    connection.vendor != "postgresql",
+    reason="正式数据库与附件一致性备份只支持 PostgreSQL。",
+)
 
 
 def _configure_backup_settings(settings, tmp_path):
@@ -75,6 +79,7 @@ def test_backup_crypto_round_trip_and_wrong_passphrase_fails(tmp_path):
         )
 
 
+@requires_postgresql_backup
 def test_manual_backup_is_encrypted_mirrored_verified_idempotent_and_expired(
     settings, tmp_path, monkeypatch
 ):
@@ -123,6 +128,7 @@ def test_manual_backup_is_encrypted_mirrored_verified_idempotent_and_expired(
     assert not primary.exists() and not mirror.exists()
 
 
+@requires_postgresql_backup
 def test_backup_permissions_and_one_time_download_grant(settings, tmp_path, monkeypatch):
     context = _base_context("S12GRANT")
     _mark_recently_authenticated(context["admin"])
@@ -155,6 +161,7 @@ def test_backup_permissions_and_one_time_download_grant(settings, tmp_path, monk
         start_download_grant(actor=context["admin"], grant=grant)
 
 
+@requires_postgresql_backup
 def test_automatic_backup_missing_key_fails_closed_and_is_audited(
     settings, tmp_path, monkeypatch
 ):
@@ -177,6 +184,7 @@ def test_automatic_backup_missing_key_fails_closed_and_is_audited(
     ).exists()
 
 
+@requires_postgresql_backup
 def test_retention_never_removes_the_only_successful_automatic_backup(
     settings, tmp_path, monkeypatch
 ):
@@ -200,6 +208,7 @@ def test_retention_never_removes_the_only_successful_automatic_backup(
     assert backup.status == BackupSet.Status.COMPLETED
 
 
+@requires_postgresql_backup
 def test_backup_http_is_system_admin_only_reauthenticates_and_never_exposes_path(
     client, settings, tmp_path, monkeypatch
 ):
@@ -321,6 +330,7 @@ def test_postgresql_guards_reject_backup_delete_and_cross_company_grant():
             )
 
 
+@requires_postgresql_backup
 def test_backup_actor_deletion_preserves_backup_and_download_history(
     settings, tmp_path, monkeypatch
 ):

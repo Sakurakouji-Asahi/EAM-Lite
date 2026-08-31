@@ -6,12 +6,13 @@ from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
 from apps.audit.services import write_business_audit_log
+from apps.masterdata.permissions import current_company, role_names_for
 from apps.supplies.domain import (
     ZERO_COST,
     ZERO_MONEY,
@@ -44,6 +45,24 @@ ACTIVE_COUNT_STATUSES = (
     SupplyCountStatus.IN_PROGRESS,
     SupplyCountStatus.RECONCILIATION,
 )
+SUPPLY_REBUILD_ROLES = frozenset({"system_admin", "finance"})
+
+
+def _require_rebuild_access(*, company, actor):
+    active_company = current_company()
+    if (
+        active_company is None
+        or company is None
+        or getattr(company, "pk", None) != active_company.pk
+    ):
+        raise PermissionDenied("只能核对或重建当前启用公司的低值物品余额。")
+    if (
+        actor is None
+        or not getattr(actor, "is_authenticated", False)
+        or not actor.is_active
+        or not role_names_for(actor).intersection(SUPPLY_REBUILD_ROLES)
+    ):
+        raise PermissionDenied("只有系统管理员或财务可以执行低值物品余额重建。")
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,6 +262,7 @@ def _audit_rebuild(*, actor, company, kind, reason, before):
 
 
 def rebuild_stock_balances(*, company, actor, reason, confirm=False):
+    _require_rebuild_access(company=company, actor=actor)
     reason = str(reason or "").strip()
     if not reason:
         raise ValidationError("库存余额重建必须填写原因。")
@@ -310,6 +330,7 @@ def rebuild_stock_balances(*, company, actor, reason, confirm=False):
 
 
 def rebuild_custodies(*, company, actor, reason, confirm=False):
+    _require_rebuild_access(company=company, actor=actor)
     reason = str(reason or "").strip()
     if not reason:
         raise ValidationError("保管余额重建必须填写原因。")

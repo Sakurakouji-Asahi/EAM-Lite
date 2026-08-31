@@ -415,6 +415,12 @@ def deactivate_supply_warehouse(*, actor, warehouse, reason="", request=None):
     ).get(pk=warehouse.pk)
     if not warehouse.is_active:
         return warehouse
+    if warehouse.stock_balances.filter(quantity_on_hand__gt=ZERO_QTY).exists():
+        raise ValidationError(
+            "仓库仍有库存数量，停用后将无法正常调拨或领用；请先清理库存。"
+        )
+    if warehouse.count_tasks.filter(status__in=ACTIVE_SUPPLY_COUNT_STATUSES).exists():
+        raise ValidationError("仓库存在进行中或差异处理中的盘点任务，不能停用。")
     warehouse.is_active = False
     warehouse.updated_by = actor
     warehouse.save(update_fields=["is_active", "updated_by", "updated_at"])
@@ -547,6 +553,21 @@ def deactivate_supply_item(*, actor, item, reason="", request=None):
     require_manage_supply_item(actor, item.item_type)
     if not item.is_active:
         return item
+    if item.stock_balances.filter(quantity_on_hand__gt=ZERO_QTY).exists():
+        raise ValidationError(
+            "物品仍有仓库库存，停用后将无法正常清理；请先处理库存余额。"
+        )
+    if item.custodies.filter(
+        status=SupplyCustodyStatus.OPEN,
+        current_quantity__gt=ZERO_QTY,
+    ).exists():
+        raise ValidationError(
+            "物品仍有未结清的耐用品保管，停用后将影响归还和清退；请先结清保管。"
+        )
+    if item.count_lines.filter(
+        count_task__status__in=ACTIVE_SUPPLY_COUNT_STATUSES
+    ).exists():
+        raise ValidationError("物品已进入活动盘点快照，不能停用。")
     item.is_active = False
     item.updated_by = actor
     item.save(update_fields=["is_active", "updated_by", "updated_at"])
@@ -1113,13 +1134,22 @@ def update_draft_document(*, actor, document, data, lines, request=None):
     elif document.document_type == SupplyDocumentType.RETURN:
         if source is not None or target is None:
             raise ValidationError("退回单必须只填写目标仓库。")
-        source_headers = {
-            (
-                line["source_issue_line"].document.department_id,
-                line["source_issue_line"].document.employee_id,
-            )
-            for line in prepared_lines
-        }
+        source_headers = set()
+        for line in prepared_lines:
+            if line["source_custody"] is not None:
+                source_headers.add(
+                    (
+                        line["source_custody"].department_id,
+                        line["source_custody"].employee_id,
+                    )
+                )
+            else:
+                source_headers.add(
+                    (
+                        line["source_issue_line"].document.department_id,
+                        line["source_issue_line"].document.employee_id,
+                    )
+                )
         if len(source_headers) != 1:
             raise ValidationError("一张退回单的原领用明细必须属于同一部门和员工。")
         expected_department_id, expected_employee_id = source_headers.pop()
@@ -1373,6 +1403,44 @@ def _required_custody_action_values(*, quantity, business_date, reason, idempote
     )
 
 
+def _lock_supply_employee(*, company, employee_id):
+    from apps.masterdata.models import Employee
+
+    if employee_id is None:
+        return None
+    queryset = Employee.objects.select_for_update()
+    if connection.vendor == "postgresql":
+        # Status changes still conflict with NO KEY UPDATE, while later
+        # custody/document foreign-key checks can take KEY SHARE without a
+        # lock-conversion deadlock behind a queued offboarding transaction.
+        queryset = queryset.select_for_update(of=("self",), no_key=True)
+    return queryset.select_related("department").filter(
+        pk=employee_id,
+        company=company,
+    ).first()
+
+
+def _lock_supply_department(*, company, department_id):
+    from apps.masterdata.models import Department
+
+    if department_id is None:
+        return None
+    return Department.objects.select_for_update().filter(
+        pk=department_id,
+        company=company,
+    ).first()
+
+
+def _lock_supply_warehouse(*, company, warehouse_id, require_active=False):
+    queryset = SupplyWarehouse.objects.select_for_update().filter(
+        pk=warehouse_id,
+        company=company,
+    )
+    if require_active:
+        queryset = queryset.filter(is_active=True)
+    return queryset.first()
+
+
 @transaction.atomic
 def return_custody_to_warehouse(
     *,
@@ -1504,8 +1572,14 @@ def transfer_custody(
         require_execute_supply_count_task(actor, count_task)
     if target_department is None:
         raise ValidationError({"target_department": "目标部门必填。"})
-    from apps.masterdata.models import Department, Employee
-
+    employee = _lock_supply_employee(
+        company=custody.company,
+        employee_id=getattr(target_employee, "pk", None),
+    )
+    department = _lock_supply_department(
+        company=custody.company,
+        department_id=getattr(target_department, "pk", None),
+    )
     custody = (
         SupplyCustody.objects.select_for_update(of=("self",))
         .select_related("company", "item", "department", "employee")
@@ -1541,18 +1615,9 @@ def transfer_custody(
         ):
             return existing.to_custody
         raise ValidationError("同一保管动作幂等键已用于不同内容。")
-    department = Department.objects.select_for_update().filter(
-        pk=getattr(target_department, "pk", None),
-        company=custody.company,
-        is_active=True,
-    ).first()
-    if department is None:
+    if department is None or not department.is_active:
         raise ValidationError({"target_department": "目标部门不属于当前公司或已经停用。"})
-    employee = None
     if target_employee is not None:
-        employee = Employee.objects.select_for_update().select_related(
-            "department"
-        ).filter(pk=getattr(target_employee, "pk", None), company=custody.company).first()
         if employee is None or employee.department_id != department.pk:
             raise ValidationError({"target_employee": "目标员工不属于目标部门或当前公司。"})
         if (
@@ -1942,6 +2007,37 @@ def _posting_balance_requests(document, lines):
     return requests
 
 
+def _lock_and_validate_issue_responsibility(document):
+    """Serialize issue posting with HR status changes.
+
+    Offboarding locks the employee before it snapshots open custodies.  Taking
+    the same row lock here means either the issue commits first and is included
+    in that snapshot, or posting observes the new leaving/resigned state and
+    fails before stock or custody is changed.
+    """
+
+    employee = _lock_supply_employee(
+        company=document.company,
+        employee_id=document.employee_id,
+    )
+    if document.employee_id and employee is None:
+        raise ValidationError({"employee": "领用员工不属于当前公司。"})
+    department = _lock_supply_department(
+        company=document.company,
+        department_id=document.department_id,
+    )
+    if department is None or not department.is_active:
+        raise ValidationError({"department": "领用部门必须属于当前公司且处于启用状态。"})
+    if employee is not None:
+        if employee.department_id != department.pk:
+            raise ValidationError({"employee": "领用员工不属于所选领用部门。"})
+        if employee.employment_status != "active" or not employee.is_active:
+            raise ValidationError({"employee": "领用员工必须是在职且启用的员工。"})
+        document.employee = employee
+    document.department = department
+    return department, employee
+
+
 def _lock_posting_warehouses(*, document, source_count_task=None):
     warehouses = {
         warehouse.pk: warehouse
@@ -1961,6 +2057,8 @@ def _lock_posting_warehouses(*, document, source_count_task=None):
     if len(locked) != len(warehouses):
         raise ValidationError("单据涉及的仓库不存在或不属于当前公司。")
     for warehouse in locked.values():
+        if not warehouse.is_active:
+            raise ValidationError("单据涉及的仓库已经停用，不能过账。")
         active = (
             SupplyCountTask.objects.filter(
                 company=document.company,
@@ -2527,6 +2625,8 @@ def _post_supply_document_internal(
         raise ValidationError("当前 Sprint 不允许过账该单据类型。")
     if idempotency_key is not None and not str(idempotency_key).strip():
         raise ValidationError("过账幂等键不能为空。")
+    if document.document_type == SupplyDocumentType.ISSUE:
+        _lock_and_validate_issue_responsibility(document)
     document.full_clean()
     for warehouse in (document.source_warehouse, document.target_warehouse):
         if warehouse is not None and (
@@ -2551,6 +2651,17 @@ def _post_supply_document_internal(
         document=document,
         source_count_task=source_count_task,
     )
+    item_ids = sorted({line.item_id for line in lines}, key=str)
+    locked_items = {
+        item.pk: item
+        for item in SupplyItem.objects.select_for_update()
+        .filter(company=document.company, pk__in=item_ids)
+        .order_by("pk")
+    }
+    if len(locked_items) != len(item_ids):
+        raise ValidationError("单据物品不存在或不属于当前公司。")
+    for line in lines:
+        line.item = locked_items[line.item_id]
     locked_custodies = {}
     if document.document_type == SupplyDocumentType.RETURN:
         source_document_ids = sorted(
@@ -2821,6 +2932,40 @@ def reverse_supply_document(
         .select_related("item", "source_issue_line", "source_custody")
         .order_by("line_no")
     )
+    locked_return_department = None
+    locked_return_employee = None
+    durable_return_lines = [
+        line
+        for line in original_lines
+        if document.document_type == SupplyDocumentType.RETURN
+        and line.source_custody_id is not None
+    ]
+    if durable_return_lines:
+        from apps.masterdata.models import Department, Employee
+
+        # Match the employee -> department lock order used by offboarding.
+        if document.employee_id:
+            employee_qs = Employee.objects.select_for_update()
+            if connection.vendor == "postgresql":
+                employee_qs = employee_qs.select_for_update(of=("self",))
+            locked_return_employee = employee_qs.filter(
+                pk=document.employee_id,
+                company=document.company,
+            ).first()
+            if locked_return_employee is None:
+                raise ValidationError("原责任员工已不存在，不能恢复耐用品保管。")
+        locked_return_department = Department.objects.select_for_update().filter(
+            pk=document.department_id,
+            company=document.company,
+        ).first()
+        if locked_return_department is None or not locked_return_department.is_active:
+            raise ValidationError("原责任部门已停用或不属于当前公司，不能恢复耐用品保管。")
+        if locked_return_employee is not None and (
+            locked_return_employee.department_id != locked_return_department.pk
+            or locked_return_employee.employment_status != "active"
+            or not locked_return_employee.is_active
+        ):
+            raise ValidationError("原责任员工已离职、停用或调离原部门，不能恢复耐用品保管。")
     source_issue_ids = sorted(
         {
             line.source_issue_line_id
@@ -2876,6 +3021,11 @@ def reverse_supply_document(
             raise ValidationError("耐用品归还来源保管已不存在，不能冲销。")
         for line in durable_lines:
             custody = locked_return_custodies[line.source_custody_id]
+            if (
+                custody.department_id != document.department_id
+                or custody.employee_id != document.employee_id
+            ):
+                raise ValidationError("耐用品归还单责任快照与来源保管不一致，不能冲销。")
             _assert_custody_count_action_allowed(custody=custody)
             related = list(
                 SupplyCustodyMovement.objects.select_for_update()
@@ -2989,6 +3139,12 @@ def reverse_supply_document(
             line = next(value for value in original_lines if value.pk == line_id)
             custody = locked_custodies[line_id]
             _assert_custody_count_action_allowed(custody=custody)
+            if EmployeeSupplyClearanceItem.objects.select_for_update().filter(
+                custody=custody
+            ).exists():
+                raise ValidationError(
+                    "该耐用品保管已纳入离职清退，不能冲销原领用单。"
+                )
             movements = list(
                 SupplyCustodyMovement.objects.select_for_update()
                 .filter(Q(from_custody=custody) | Q(to_custody=custody))
@@ -3450,8 +3606,6 @@ def create_supply_count_task(*, actor, company, data, request=None):
 
 @transaction.atomic
 def publish_supply_count_task(*, task, actor, request=None):
-    from apps.masterdata.models import Department, Employee
-
     task = _lock_supply_count_task(task)
     require_execute_supply_count_task(actor, task)
     if task.status == SupplyCountStatus.IN_PROGRESS:
@@ -3462,11 +3616,13 @@ def publish_supply_count_task(*, task, actor, request=None):
         raise ValidationError("草稿盘点任务存在异常快照行，不能发布。")
     now = timezone.now()
     if task.count_domain == SupplyCountDomain.WAREHOUSE_STOCK:
-        warehouse = SupplyWarehouse.objects.select_for_update().get(
-            pk=task.warehouse_id,
+        warehouse = _lock_supply_warehouse(
             company=task.company,
-            is_active=True,
+            warehouse_id=task.warehouse_id,
+            require_active=True,
         )
+        if warehouse is None:
+            raise ValidationError("盘点仓库不属于当前公司或已经停用。")
         active = SupplyCountTask.objects.filter(
             company=task.company,
             count_domain=SupplyCountDomain.WAREHOUSE_STOCK,
@@ -3502,15 +3658,25 @@ def publish_supply_count_task(*, task, actor, request=None):
                 ),
             )
     else:
-        Department.objects.select_for_update().get(
-            pk=task.department_id, company=task.company
+        employee = _lock_supply_employee(
+            company=task.company,
+            employee_id=task.employee_id,
         )
-        if task.employee_id:
-            Employee.objects.select_for_update().get(
-                pk=task.employee_id,
-                company=task.company,
-                department_id=task.department_id,
-            )
+        department = _lock_supply_department(
+            company=task.company,
+            department_id=task.department_id,
+        )
+        if department is None or not department.is_active:
+            raise ValidationError("盘点部门不属于当前公司或已经停用。")
+        if task.employee_id and (
+            employee is None
+            or employee.department_id != department.pk
+            or employee.employment_status != "active"
+            or not employee.is_active
+        ):
+            raise ValidationError("盘点员工必须属于盘点部门且在职、启用。")
+        task.department = department
+        task.employee = employee
         overlap = SupplyCountTask.objects.filter(
             company=task.company,
             count_domain=SupplyCountDomain.CUSTODY,
@@ -3599,9 +3765,13 @@ def add_supply_count_item(*, task, item, actor, request=None):
         or task.status != SupplyCountStatus.IN_PROGRESS
     ):
         raise ValidationError("只有进行中的仓库盘点可以新增零库存盘盈物品。")
-    SupplyWarehouse.objects.select_for_update().get(
-        pk=task.warehouse_id, company=task.company
+    warehouse = _lock_supply_warehouse(
+        company=task.company,
+        warehouse_id=task.warehouse_id,
+        require_active=True,
     )
+    if warehouse is None:
+        raise ValidationError("盘点仓库不属于当前公司或已经停用。")
     item = SupplyItem.objects.select_for_update().filter(
         pk=getattr(item, "pk", None), company=task.company, is_active=True
     ).first()
@@ -4116,9 +4286,13 @@ def close_supply_count_task(*, task, actor, request=None):
     if task.status != SupplyCountStatus.RECONCILIATION:
         raise ValidationError("只有差异处理中的盘点任务可以关闭。")
     if task.count_domain == SupplyCountDomain.WAREHOUSE_STOCK:
-        task.warehouse = SupplyWarehouse.objects.select_for_update().get(
-            pk=task.warehouse_id, company=task.company
+        task.warehouse = _lock_supply_warehouse(
+            company=task.company,
+            warehouse_id=task.warehouse_id,
+            require_active=True,
         )
+        if task.warehouse is None:
+            raise ValidationError("盘点仓库不属于当前公司或已经停用。")
     line_queryset = SupplyCountLine.objects.select_for_update()
     if connection.vendor == "postgresql":
         line_queryset = line_queryset.select_for_update(of=("self",))

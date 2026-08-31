@@ -33,7 +33,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 def _postgresql_only():
     if connection.vendor != "postgresql":
-        pytest.skip("Sprint 10 database acceptance requires PostgreSQL 18.4")
+        pytest.skip("Sprint 10 database acceptance requires PostgreSQL 18.6")
 
 
 def _force_deferred_constraints():
@@ -53,7 +53,7 @@ def _one_item_clearance(prefix):
     return context, asset, clearance, clearance.items.get()
 
 
-def test_postgresql_18_4_and_sprint10_triggers_are_installed():
+def test_postgresql_18_6_and_sprint10_triggers_are_installed():
     _postgresql_only()
     expected = {
         "trg_offboarding_employee_transition": (False, False),
@@ -69,7 +69,7 @@ def test_postgresql_18_4_and_sprint10_triggers_are_installed():
     }
     with connection.cursor() as cursor:
         cursor.execute("SHOW server_version")
-        assert cursor.fetchone()[0].startswith("18.4")
+        assert cursor.fetchone()[0].startswith("18.6")
         cursor.execute(
             """
             SELECT tgname, tgdeferrable, tginitdeferred
