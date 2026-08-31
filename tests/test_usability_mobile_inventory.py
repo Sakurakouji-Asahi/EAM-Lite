@@ -149,6 +149,54 @@ def test_opaque_origin_inventory_bridge_keeps_csrf_and_path_scope():
     )
     assert accepted.status_code == 302
 
+    anonymous = Client(enforce_csrf_checks=True)
+    anonymous.cookies["csrftoken"] = csrf_token
+    assert anonymous.post(
+        scan_url,
+        {"scan_bridge": bridge, "csrfmiddlewaretoken": csrf_token},
+        HTTP_ORIGIN="null",
+    ).status_code == 403
+
+    without_csrf_cookie = Client(enforce_csrf_checks=True)
+    without_csrf_cookie.force_login(assignee)
+    assert without_csrf_cookie.post(
+        scan_url,
+        {"scan_bridge": bridge, "csrfmiddlewaretoken": csrf_token},
+        HTTP_ORIGIN="null",
+    ).status_code == 403
+
+    assert csrf_client.post(
+        scan_url,
+        {"scan_bridge": bridge},
+        HTTP_ORIGIN="null",
+    ).status_code == 403
+    assert csrf_client.post(
+        scan_url,
+        {"csrfmiddlewaretoken": csrf_token},
+        HTTP_ORIGIN="null",
+    ).status_code == 403
+    assert csrf_client.post(
+        scan_url,
+        {"scan_bridge": f"{bridge}tampered", "csrfmiddlewaretoken": csrf_token},
+        HTTP_ORIGIN="null",
+    ).status_code == 403
+
+    unauthorized = Client(enforce_csrf_checks=True)
+    unauthorized.force_login(make_user("ux-qr-opaque-hr", "hr"))
+    unauthorized.cookies["csrftoken"] = csrf_token
+    assert unauthorized.post(
+        scan_url,
+        {"scan_bridge": bridge, "csrfmiddlewaretoken": csrf_token},
+        HTTP_ORIGIN="null",
+    ).status_code == 404
+
+    assert csrf_client.post(
+        reverse("logout"),
+        {"scan_bridge": bridge, "csrfmiddlewaretoken": csrf_token},
+        HTTP_ORIGIN="null",
+    ).status_code == 403
+    assert "_auth_user_id" in csrf_client.session
+
     # The compatibility exception is for the signed bridge only. A raw-token
     # scan, another host, or another endpoint still uses normal Origin checks.
     assert csrf_client.post(
