@@ -424,7 +424,8 @@ def deactivate_supply_warehouse(*, actor, warehouse, reason="", request=None):
     )
     if live_balances:
         raise ValidationError(
-            "仓库仍有非零库存，必须先调出、领用或受控调整至零后才能停用。"
+            "仓库仍有库存数量或金额为非零（非零库存），"
+            "必须先调出、领用或受控调整至零后才能停用。"
         )
     active_default_items = list(
         SupplyItem.objects.select_for_update()
@@ -612,7 +613,8 @@ def deactivate_supply_item(*, actor, item, reason="", request=None):
     )
     if live_balances:
         raise ValidationError(
-            "物品仍有非零仓库库存，必须先领用、调出或受控调整至零后才能停用。"
+            "物品仍有仓库库存（非零仓库库存），"
+            "必须先领用、调出或受控调整至零后才能停用。"
         )
     open_custodies = list(
         SupplyCustody.objects.select_for_update(of=("self",))
