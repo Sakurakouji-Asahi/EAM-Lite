@@ -196,6 +196,21 @@ def test_finance_can_write_and_management_is_strictly_read_only(client):
     assert client.post(reverse("finance:settings"), {"fixed_asset_warning_amount": "1"}).status_code == 403
 
 
+def test_finance_confirmation_uses_local_accounting_treatment_script(client):
+    context = _context()
+    client.force_login(context["finance"])
+
+    response = client.get(
+        reverse("finance:finance-confirm", args=[context["asset"].pk])
+    )
+
+    assert response.status_code == 200
+    html = response.content.decode()
+    assert 'id="finance-confirm-form"' in html
+    assert "/static/js/finance-confirm-form.js" in html
+    assert "<script>" not in html
+
+
 def test_management_reads_confirmed_f1_but_never_receives_qr_token(client):
     context = _context()
     asset = _finance_row(context)

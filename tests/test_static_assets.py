@@ -114,3 +114,18 @@ def test_application_interaction_script_prevents_repeat_submit_without_disabling
     assert 'event.preventDefault()' in content
     assert ".disabled" not in content
     assert "fetch(" not in content
+
+
+def test_finance_confirmation_script_clears_nonfixed_depreciation_controls():
+    script = Path(finders.find("js/finance-confirm-form.js"))
+    content = script.read_text(encoding="utf-8")
+
+    assert 'treatment.value === "controlled_non_fixed"' in content
+    assert '"id_fixed_asset_category"' in content
+    assert '"id_depreciation_policy"' in content
+    assert '"id_method"' in content
+    assert '"id_opening_actual_accumulated_depreciation"' in content
+    assert 'field.value = ""' in content
+    assert "field.disabled = controlled" in content
+    assert 'field.value = "0.00"' in content
+    assert "fetch(" not in content
