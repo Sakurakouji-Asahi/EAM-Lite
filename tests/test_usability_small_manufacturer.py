@@ -5,7 +5,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.assets.lifecycle_forms import AssetLoanForm, AssetTransferForm
-from apps.offboarding.models import EmployeeAssetClearance
+from apps.offboarding.services import initiate_clearance
 from tests.test_sprint3_support import (
     complete_initialization,
     make_company,
@@ -44,25 +44,18 @@ def test_offboarding_list_is_paginated_and_keeps_total_count(client):
     hr = make_user("ux-page-hr", "hr")
     complete_initialization(company, admin)
     department = make_department(company, "UXPAGE-D")
-    now = timezone.now()
-    rows = []
     for index in range(26):
         employee = make_employee(
             company,
             department,
             f"UXPAGE-{index:02d}",
         )
-        rows.append(
-            EmployeeAssetClearance(
-                company=company,
-                employee=employee,
-                initiated_at=now,
-                initiated_by=hr,
-                status=EmployeeAssetClearance.Status.OPEN,
-                idempotency_key=f"ux-page-{index:02d}",
-            )
+        initiate_clearance(
+            actor=hr,
+            employee=employee,
+            idempotency_key=f"ux-page-{index:02d}",
+            remark="易用性分页测试",
         )
-    EmployeeAssetClearance.objects.bulk_create(rows)
     client.force_login(hr)
 
     first = client.get(reverse("offboarding:clearance-list"))
