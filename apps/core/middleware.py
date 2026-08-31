@@ -15,6 +15,10 @@ _QR_CONFIRM_PATHS = (
         r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/labels/confirm/$"
     ),
 )
+_INVENTORY_QR_BRIDGE_PATH = re.compile(
+    r"^/inventory/tasks/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/scan/$"
+)
 
 
 class QrOpaqueOriginCsrfCompatibilityMiddleware:
@@ -25,8 +29,10 @@ class QrOpaqueOriginCsrfCompatibilityMiddleware:
     The compatibility paths are intentionally narrow: they only treat that
     origin as absent for QR scan attachment and per-asset Web attachment POSTs,
     with the configured QR host, session cookie, CSRF cookie and submitted
-    CSRF token all still required. Django's normal CsrfViewMiddleware performs
-    the actual token validation.
+    CSRF token all still required. The inventory scan path is accepted only
+    for the short-lived signed ``scan_bridge`` handoff rendered by a valid QR
+    page. Django's normal CsrfViewMiddleware performs the actual token
+    validation.
     """
 
     def __init__(self, get_response):
@@ -48,10 +54,14 @@ class QrOpaqueOriginCsrfCompatibilityMiddleware:
             return False
         if request.META.get("HTTP_ORIGIN", "").strip().casefold() != "null":
             return False
-        if not any(
+        is_qr_confirmation = any(
             pattern.fullmatch(request.path_info)
             for pattern in _QR_CONFIRM_PATHS
-        ):
+        )
+        is_inventory_bridge = bool(
+            _INVENTORY_QR_BRIDGE_PATH.fullmatch(request.path_info)
+        )
+        if not is_qr_confirmation and not is_inventory_bridge:
             return False
         try:
             if request.get_host().casefold() != self.expected_host:
@@ -62,6 +72,12 @@ class QrOpaqueOriginCsrfCompatibilityMiddleware:
             return False
         if not request.COOKIES.get(settings.CSRF_COOKIE_NAME):
             return False
+        if is_inventory_bridge:
+            try:
+                if not request.POST.get("scan_bridge", "").strip():
+                    return False
+            except (SuspiciousOperation, UnreadablePostError):
+                return False
         submitted_token = request.META.get(settings.CSRF_HEADER_NAME, "").strip()
         if not submitted_token:
             try:

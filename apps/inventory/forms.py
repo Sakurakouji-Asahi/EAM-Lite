@@ -145,24 +145,60 @@ class InventoryTaskForm(forms.Form):
 class InventoryScanForm(forms.Form):
     idempotency_key = forms.CharField(widget=forms.HiddenInput, required=False)
     actual_location = forms.ModelChoiceField(
-        label="实际位置", required=False, queryset=Location.objects.none()
+        label="现场位置",
+        required=False,
+        queryset=Location.objects.none(),
+        help_text="默认带入任务发布时的位置；实物不在原位置时，请选择现场实际位置。",
     )
     actual_employee = forms.ModelChoiceField(
-        label="实际责任人", required=False, queryset=Employee.objects.none()
+        label="现场责任人",
+        required=False,
+        queryset=Employee.objects.none(),
+        help_text="默认带入任务发布时的责任人；现场不一致时，请选择实际责任人。",
     )
-    actual_status = forms.ChoiceField(label="实际状态", choices=())
-    other_mismatch = forms.BooleanField(label="其他异常", required=False)
-    note = forms.CharField(label="异常说明", required=False, widget=forms.Textarea)
+    actual_status = forms.ChoiceField(
+        label="现场状态",
+        choices=(),
+        help_text="默认带入任务发布时的资产状态。",
+    )
+    other_mismatch = forms.BooleanField(
+        label="还有位置、责任人、状态以外的异常",
+        required=False,
+        help_text="例如标签破损、实物信息无法辨认。勾选后必须填写异常说明。",
+    )
+    note = forms.CharField(
+        label="异常说明（按需填写）",
+        required=False,
+        widget=forms.Textarea,
+        help_text="位置、责任人或状态不一致时可补充原因；勾选其他异常时必填。",
+    )
 
-    def __init__(self, *args, actor=None, task=None, supplemental=False, **kwargs):
+    def __init__(
+        self,
+        *args,
+        actor=None,
+        task=None,
+        task_asset=None,
+        supplemental=False,
+        **kwargs,
+    ):
         if actor is None or task is None:
             raise PermissionDenied("扫码表单必须绑定用户和盘点任务。")
+        if task_asset is not None and (
+            not getattr(task_asset, "pk", None)
+            or task_asset.inventory_task_id != task.pk
+            or task_asset.company_id != task.company_id
+        ):
+            raise PermissionDenied("扫码表单的应盘快照不属于当前任务。")
         if supplemental:
             if not can_reconcile_inventory_task(actor, task):
                 raise PermissionDenied("您没有执行受控补盘的权限。")
         elif not can_scan_inventory_task(actor, task):
             raise PermissionDenied("您没有执行此盘点任务的权限。")
-        self.actor, self.task, self.supplemental = actor, task, supplemental
+        self.actor = actor
+        self.task = task
+        self.task_asset = task_asset
+        self.supplemental = supplemental
         super().__init__(*args, **kwargs)
         from apps.assets.models import Asset
 
@@ -178,6 +214,16 @@ class InventoryScanForm(forms.Form):
         self.fields["actual_status"].choices = Asset.AssetStatus.choices
         if not self.is_bound:
             self.initial.setdefault("idempotency_key", uuid.uuid4().hex)
+            if task_asset is not None:
+                self.initial.setdefault(
+                    "actual_location", task_asset.expected_location_id
+                )
+                self.initial.setdefault(
+                    "actual_employee", task_asset.expected_employee_id
+                )
+                self.initial.setdefault(
+                    "actual_status", task_asset.expected_asset_status
+                )
         _style(self)
 
     def clean_idempotency_key(self):

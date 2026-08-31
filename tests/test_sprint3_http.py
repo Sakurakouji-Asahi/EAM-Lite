@@ -161,6 +161,29 @@ def test_create_edit_detail_and_dynamic_fields_work_without_financial_inputs(cli
     assert asset.custom_values.get().value_text == "蓝"
 
 
+def test_create_can_continue_directly_to_photo_upload_and_list_hides_finance_filters(client):
+    actor, company, department, employee, category, _site, _area, location = make_context()
+    client.force_login(actor)
+    data = form_data(category, department, employee, location)
+    data["next_step"] = "attachments"
+
+    created = client.post(reverse("assets:asset-create"), data)
+
+    asset = Asset.objects.get(company=company)
+    assert created.status_code == 302
+    assert created.url == reverse("assets:attachment-upload", args=[asset.pk])
+    listing = client.get(
+        reverse("assets:asset-list"),
+        {"accounting_treatment": "controlled_non_fixed"},
+    )
+    assert listing.status_code == 200
+    assert "会计认定".encode() not in listing.content
+    assert asset.asset_name.encode() in listing.content
+    assert "报表与导出".encode() in listing.content
+    assert "Excel 导入".encode() in listing.content
+    assert "标签打印".encode() in listing.content
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     (

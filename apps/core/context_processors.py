@@ -15,12 +15,24 @@ from apps.masterdata.permissions import (
 )
 
 
-ASSET_PRIMARY_ROLES = frozenset({"finance", "equipment"})
-SUPPLY_PRIMARY_ROLES = frozenset({"finance", "warehouse"})
+ASSET_PRIMARY_ROLES = frozenset({"finance", "equipment", "warehouse"})
+SUPPLY_PRIMARY_ROLES = frozenset(
+    {"system_admin", "finance", "warehouse", "equipment", "management"}
+)
 TASK_PRIMARY_ROLES = frozenset(
     {"finance", "equipment", "employee", "warehouse", "hr"}
 )
-REPORT_PRIMARY_ROLES = frozenset({"finance", "management"})
+REPORT_PRIMARY_ROLES = frozenset(
+    {
+        "system_admin",
+        "finance",
+        "equipment",
+        "department_manager",
+        "warehouse",
+        "hr",
+        "management",
+    }
+)
 SETTINGS_PRIMARY_ROLES = frozenset(
     {"system_admin", "finance", "equipment", "warehouse", "hr"}
 )
@@ -79,6 +91,12 @@ _ASSET_MAINTENANCE_VIEWS = frozenset(
         "maintenance:plan-status",
     }
 )
+_INDIVIDUAL_DURABLE_VIEWS = frozenset(
+    {
+        "supplies:individual-durable-list",
+        "supplies:individual-durable-create",
+    }
+)
 
 _PAGE_LABELS = {
     "home": "首页",
@@ -92,7 +110,7 @@ _PAGE_LABELS = {
     "supplies:document-list": "入库、领用与调拨",
     "supplies:stock-balance-list": "当前库存",
     "supplies:stock-ledger-list": "出入库明细",
-    "supplies:custody-list": "员工／部门保管",
+    "supplies:custody-list": "耐用品保管",
     "supplies:my-custodies": "我的领用与保管",
     "supplies:item-list": "物品档案",
     "supplies:reconciliation-help": "库存核对帮助",
@@ -117,13 +135,15 @@ _PAGE_LABELS = {
     "masterdata:user-permissions-list": "用户与权限",
     "masterdata:setup": "初始化检查",
     "imports:home": "初始化与 Excel 导入",
-    "audit:log-list": "操作审计",
+    "audit:log-list": "操作日志",
     "operations:backup-list": "数据备份",
     "supplies:category-list": "物品分类",
     "supplies:warehouse-list": "仓库档案",
     "finance:policy-list": "折旧政策",
     "finance:fixed-category-list": "固定资产类别",
     "finance:settings": "财务参数",
+    "supplies:individual-durable-list": "逐件低值耐用品",
+    "supplies:individual-durable-create": "新增逐件低值耐用品",
 }
 
 
@@ -142,6 +162,8 @@ def _active_section(view_name: str, namespace: str) -> str:
     if view_name == "home":
         return "home"
     if view_name in _ASSET_MAINTENANCE_VIEWS:
+        return "assets"
+    if view_name in _INDIVIDUAL_DURABLE_VIEWS:
         return "assets"
     if view_name == "task-center" or namespace in {
         "inventory",
@@ -169,8 +191,24 @@ def _active_section(view_name: str, namespace: str) -> str:
     return "home"
 
 
-def _active_item(view_name: str, active_section: str) -> str:
+def _is_individual_durable_entry(view_name: str, query) -> bool:
+    if view_name in _INDIVIDUAL_DURABLE_VIEWS:
+        return True
+    if view_name == "assets:asset-list":
+        return bool(
+            query.get("accounting_treatment") == "controlled_non_fixed"
+            or query.get("view") == "individual_durable"
+        )
+    if view_name == "assets:asset-create":
+        return query.get("source") == "individual_durable"
+    return False
+
+
+def _active_item(view_name: str, active_section: str, query=None) -> str:
+    query = query or {}
     if active_section == "assets":
+        if _is_individual_durable_entry(view_name, query):
+            return "individual_durables"
         if view_name == "assets:asset-create":
             return "asset_create"
         if view_name.startswith("assets:label-") or view_name.startswith(
@@ -270,35 +308,45 @@ def _active_item(view_name: str, active_section: str) -> str:
     return "home"
 
 
-def _page_label(view_name: str, active_section: str) -> str:
+def _page_label(view_name: str, active_section: str, query=None) -> str:
+    query = query or {}
+    if _is_individual_durable_entry(view_name, query):
+        return (
+            "新增逐件低值耐用品"
+            if view_name in {
+                "assets:asset-create",
+                "supplies:individual-durable-create",
+            }
+            else "逐件低值耐用品"
+        )
     if view_name in _PAGE_LABELS:
         return _PAGE_LABELS[view_name]
     prefixes = (
         ("assets:", "资产详情与操作"),
         ("supplies:count-", "物品盘点"),
         ("supplies:document-", "入库、领用与调拨"),
-        ("supplies:custody-", "员工／部门保管"),
+        ("supplies:custody-", "耐用品保管"),
         ("supplies:", "办公用品与低值品"),
         ("inventory:", "资产盘点"),
         ("maintenance:", "保养任务"),
         ("offboarding:", "离职清退"),
         ("finance:", "资产财务"),
         ("reports:supply-", "办公用品与低值品报表"),
-        ("reports:", "财务与报表"),
+        ("reports:", "报表与财务"),
         ("masterdata:", "基础资料"),
         ("imports:", "初始化与 Excel 导入"),
-        ("audit:", "操作审计"),
+        ("audit:", "操作日志"),
         ("operations:", "数据备份"),
     )
     for prefix, label in prefixes:
         if view_name.startswith(prefix):
             return label
     return {
-        "assets": "资产",
+        "assets": "资产管理",
         "supplies": "办公用品与低值品",
-        "tasks": "任务中心",
-        "finance_reports": "财务与报表",
-        "settings": "系统设置",
+        "tasks": "我的工作",
+        "finance_reports": "报表与财务",
+        "settings": "基础资料与设置",
     }.get(active_section, "首页")
 
 
@@ -311,21 +359,24 @@ def build_application_navigation(request) -> dict:
         company = current_company(include_inactive=True)
         initialized = _initialized(company)
         roles = role_names_for(user)
-        manager_has_scope = bool(
-            company
-            and "department_manager" in roles
-            and resolve_department_ids(user, company)
+        manager_department_ids = (
+            resolve_department_ids(user, company)
+            if company and "department_manager" in roles
+            else set()
         )
+        manager_has_scope = bool(manager_department_ids)
     except (OperationalError, ProgrammingError):
         company = None
         initialized = False
         roles = set()
+        manager_department_ids = set()
         manager_has_scope = False
 
+    from apps.assets.permissions import can_create_asset_draft
     from apps.audit.permissions import can_view_audit_logs
     from apps.finance.permissions import can_manage_finance, can_view_finance
     from apps.operations.permissions import can_manage_backups
-    from apps.reports.permissions import can_view_external_reference
+    from apps.reports.permissions import can_view_external_reference, can_view_report
     from apps.supplies.models import SupplyItemType
     from apps.supplies.permissions import (
         can_create_supply_document,
@@ -334,6 +385,7 @@ def build_application_navigation(request) -> dict:
         can_manage_supply_item,
         can_manage_supply_warehouse,
         can_view_supply_custodies,
+        can_view_supply_documents,
         can_view_supply_master_data,
         can_view_supply_module,
         can_view_supply_stock,
@@ -351,9 +403,29 @@ def build_application_navigation(request) -> dict:
     show_tasks = initialized and bool(
         roles.intersection(TASK_PRIMARY_ROLES) or has_manager_work
     )
-    show_finance_reports = initialized and bool(
-        roles.intersection(REPORT_PRIMARY_ROLES) or has_manager_work
+    can_view_reports = bool(
+        company
+        and roles.intersection(REPORT_PRIMARY_ROLES)
+        and (
+            can_view_report(user, "asset_ledger")
+            or can_view_report(user, "offboarding_unresolved")
+        )
     )
+    show_finance_reports = initialized and can_view_reports
+    can_create_asset = bool(
+        initialized and company and can_create_asset_draft(user, company)
+    )
+    if initialized and company and not can_create_asset and manager_department_ids:
+        from apps.masterdata.models import Department
+
+        scoped_department = Department.objects.filter(
+            company=company,
+            pk__in=manager_department_ids,
+        ).first()
+        can_create_asset = bool(
+            scoped_department
+            and can_create_asset_draft(user, company, scoped_department)
+        )
     show_settings = bool(roles.intersection(SETTINGS_PRIMARY_ROLES))
 
     resolver_match = getattr(request, "resolver_match", None)
@@ -383,11 +455,11 @@ def build_application_navigation(request) -> dict:
             active_section = "settings"
 
     section_labels = {
-        "assets": "资产",
+        "assets": "资产管理",
         "supplies": "办公用品与低值品",
-        "tasks": "任务中心",
-        "finance_reports": "财务与报表",
-        "settings": "系统设置",
+        "tasks": "我的工作",
+        "finance_reports": "报表与财务",
+        "settings": "基础资料与设置",
     }
     section_urls = {
         "assets": reverse("assets:asset-list"),
@@ -399,6 +471,7 @@ def build_application_navigation(request) -> dict:
 
     can_view_supply = bool(company and can_view_supply_module(user))
     can_view_stock = bool(company and can_view_supply_stock(user))
+    can_view_documents = bool(company and can_view_supply_documents(user))
     can_view_custodies = bool(company and can_view_supply_custodies(user))
     can_view_supply_masters = bool(company and can_view_supply_master_data(user))
     can_manage_items = bool(
@@ -409,8 +482,8 @@ def build_application_navigation(request) -> dict:
         "roles": roles,
         "initialized": initialized,
         "active_section": active_section,
-        "active_item": _active_item(view_name, active_section),
-        "page_label": _page_label(view_name, active_section),
+        "active_item": _active_item(view_name, active_section, request.GET),
+        "page_label": _page_label(view_name, active_section, request.GET),
         "section_label": section_labels.get(active_section, ""),
         "section_url": section_urls.get(active_section, ""),
         "show_assets": show_assets,
@@ -430,8 +503,7 @@ def build_application_navigation(request) -> dict:
             )
         ),
         "asset": {
-            "can_create": initialized
-            and bool(roles.intersection({"finance", "equipment"}) or has_manager_work),
+            "can_create": can_create_asset,
             "can_manage_labels": initialized
             and bool(roles.intersection({"finance", "equipment"})),
             "can_view_maintenance_plans": initialized
@@ -439,7 +511,7 @@ def build_application_navigation(request) -> dict:
         },
         "supplies": {
             "can_view_stock": can_view_stock,
-            "can_view_documents": can_view_supply,
+            "can_view_documents": can_view_documents,
             "can_manage_documents": bool(
                 company and can_create_supply_document(user)
             ),
@@ -480,7 +552,7 @@ def build_application_navigation(request) -> dict:
         "finance_reports": {
             "can_manage_finance": can_manage_finance(user),
             "can_view_finance": can_view_finance(user),
-            "can_view_reports": show_finance_reports,
+            "can_view_reports": can_view_reports,
             "can_view_tplus": "finance" in roles,
             "can_view_external_references": can_view_external_reference(user),
             "can_view_audit": can_view_audit_logs(user),
@@ -527,13 +599,15 @@ def build_application_navigation(request) -> dict:
         "home": {
             "show_asset_overview": initialized
             and bool(
-                roles.intersection({"finance", "equipment", "employee", "management"})
+                roles.intersection(
+                    {"finance", "equipment", "employee", "warehouse", "management"}
+                )
                 or has_manager_work
             ),
             "show_supply_overview": initialized
             and can_view_supply
             and bool(
-                roles.intersection({"finance", "warehouse", "equipment", "employee"})
+                roles.intersection(SUPPLY_PRIMARY_ROLES | {"employee"})
                 or has_manager_work
             ),
             "show_admin_focus": roles == {"system_admin"},

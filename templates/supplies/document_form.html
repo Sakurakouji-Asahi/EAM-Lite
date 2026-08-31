@@ -16,13 +16,13 @@
       {% for field in form.visible_fields %}
       <div class="{% if field.name == 'remark' %}col-12{% else %}col-md-6{% endif %}">
         <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %}<span class="required-mark">*</span>{% endif %}</label>
-        {{ field }}{% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+        {{ field }}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}{% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
       </div>
       {% endfor %}
     </div>
   </div></section>
   <section class="card shadow-sm mb-4"><div class="card-body">
-    <div class="d-flex justify-content-between align-items-center mb-3"><h2 class="h5 mb-0">单据明细</h2><div class="d-flex align-items-center gap-2"><span class="text-secondary small">可填写多行，空白行会忽略</span><button class="btn btn-sm btn-outline-primary" type="button" id="add-supply-line">新增明细行</button></div></div>
+    <div class="d-flex justify-content-between align-items-center mb-3"><h2 class="h5 mb-0">单据明细</h2><div class="d-flex align-items-center gap-2"><span class="text-secondary small">可填写多行，空白行会忽略</span><span class="visually-hidden" id="supply-line-status" aria-live="polite"></span><button class="btn btn-sm btn-outline-primary" type="button" id="add-supply-line" aria-describedby="supply-line-status">新增明细行</button></div></div>
     {{ formset.management_form }}
     {% if formset.non_form_errors %}<div class="alert alert-danger">{{ formset.non_form_errors }}</div>{% endif %}
     <div class="table-responsive"><table class="table align-middle">
@@ -43,7 +43,7 @@
       <td><div class="form-check">{{ formset.empty_form.DELETE }}<label class="form-check-label" for="{{ formset.empty_form.DELETE.id_for_label }}">删除</label></div></td>
     </tr></template>
   </div></section>
-  <div class="app-form-actions app-form-actions-contained"><button class="btn btn-primary" type="submit">保存草稿</button><a class="btn btn-outline-secondary" href="{% url 'supplies:document-list' %}">取消</a></div>
+  <div class="app-form-actions app-form-actions-contained mobile-action-bar"><button class="btn btn-outline-primary" type="submit" name="next_action" value="detail">仅保存草稿</button>{% if can_continue_to_post %}<button class="btn btn-primary" type="submit" name="next_action" value="post">保存并核对过账</button>{% endif %}<a class="btn btn-outline-secondary" href="{% url 'supplies:document-list' %}">取消</a></div>
 </form>
 <script src="{% static 'js/supply-document-form.js' %}" defer></script>
 {% endblock %}

@@ -29,7 +29,8 @@ def test_home_request_uses_only_local_bootstrap_and_htmx(client):
     assert "/static/vendor/bootstrap/5.3.8/css/bootstrap.min.css" in html
     assert "/static/vendor/bootstrap/5.3.8/js/bootstrap.bundle.min.js" in html
     assert "/static/vendor/htmx/2.0.10/htmx.min.js" in html
-    assert "/static/js/app.js?v=20260824-ux1" in html
+    assert "/static/js/app.js?v=20260831-usability1" in html
+    assert "/static/css/app.css?v=20260831-usability1" in html
     htmx_config = '<meta name="htmx-config" content=\'{"includeIndicatorStyles": false}\'>'
     assert htmx_config in html
     assert html.index(htmx_config) < html.index("/static/vendor/htmx/2.0.10/htmx.min.js")

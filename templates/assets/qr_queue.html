@@ -9,15 +9,31 @@
     <a class="btn btn-outline-secondary" href="{% url 'assets:label-batch-list' %}">打印批次</a>
   </header>
 
+  <form method="get" class="card card-body app-filter-card mb-3">
+    <input type="hidden" name="status" value="{{ selected_status }}">
+    <div class="row g-2 align-items-end">
+      <div class="col-12 col-md">
+        <label class="form-label" for="label-search">搜索标签资产</label>
+        <input class="form-control" id="label-search" type="search" name="q" value="{{ query }}" placeholder="编号、名称、序列号、部门或责任人">
+      </div>
+      <div class="col-12 col-md-auto d-grid d-md-flex gap-2">
+        <button class="btn btn-primary" type="submit">搜索</button>
+        {% if query %}<a class="btn btn-outline-secondary" href="?status={{ selected_status }}">清除搜索</a>{% endif %}
+      </div>
+    </div>
+  </form>
+
   <nav class="nav nav-pills mb-3" aria-label="标签状态筛选">
     {% for value, label in status_choices %}
-      <a class="nav-link {% if selected_status == value %}active{% endif %}" href="?status={{ value }}">{{ label }}</a>
+      <a class="nav-link {% if selected_status == value %}active{% endif %}" href="?status={{ value }}{% if query %}&amp;q={{ query|urlencode }}{% endif %}">{{ label }}</a>
     {% endfor %}
   </nav>
 
   <form method="post" class="card shadow-sm">
     {% csrf_token %}
     <input type="hidden" name="status" value="{{ selected_status }}">
+    <input type="hidden" name="q" value="{{ query }}">
+    <input type="hidden" name="page" value="{{ page_obj.number }}">
     {{ form.idempotency_key }}
     {% if form.non_field_errors %}<div class="alert alert-danger m-3 mb-0">{{ form.non_field_errors }}</div>{% endif %}
     {% if form.asset_ids.errors %}<div class="alert alert-danger m-3 mb-0">{{ form.asset_ids.errors }}</div>{% endif %}
@@ -28,7 +44,7 @@
           {% for row in rows %}
             <tr>
               <td>{% if row.selectable %}<input class="form-check-input" type="checkbox" name="asset_ids" value="{{ row.asset.pk }}" aria-label="选择 {{ row.asset.asset_code }}">{% else %}—{% endif %}</td>
-              <td><a href="{% url 'assets:asset-current-qr' row.asset.pk %}" target="_blank" rel="noopener noreferrer" title="查看 {{ row.asset.asset_code }} 的二维码"><img class="qr-table-thumb" src="{% url 'assets:asset-current-qr' row.asset.pk %}" width="72" height="72" alt="{{ row.asset.asset_code }} 的当前二维码"></a></td>
+              <td><a href="{% url 'assets:asset-current-qr' row.asset.pk %}" target="_blank" rel="noopener noreferrer" title="查看 {{ row.asset.asset_code }} 的二维码"><img class="qr-table-thumb" src="{% url 'assets:asset-current-qr' row.asset.pk %}" width="72" height="72" loading="lazy" decoding="async" alt="{{ row.asset.asset_code }} 的当前二维码"></a></td>
               <td>{{ row.asset.asset_code }}</td>
               <td>{{ row.asset.asset_name }}</td>
               <td>{{ row.asset.department.name|default:"—" }}</td>
@@ -39,11 +55,12 @@
               <td><div class="d-flex flex-wrap gap-2">{% if row.qr_identity.label_status == 'printed' %}<a class="btn btn-sm btn-primary" href="{% url 'assets:qr-web-attach' row.asset.pk %}">Web 确认贴标</a>{% elif row.qr_identity.label_status == 'attached' %}<a class="btn btn-sm btn-outline-danger" href="{% url 'assets:qr-rotate' row.asset.pk %}">换标</a>{% endif %}<a class="btn btn-sm btn-outline-primary" href="{% url 'assets:asset-detail' row.asset.pk %}">查看资产</a></div></td>
             </tr>
           {% empty %}
-            <tr><td colspan="10" class="text-center text-secondary py-4">当前筛选下没有标签。</td></tr>
+            <tr><td colspan="10"><div class="app-empty-state"><strong>{% if query %}没有匹配“{{ query }}”的标签资产{% else %}当前状态下没有标签资产{% endif %}</strong><span>可调整搜索词或切换上方标签状态。</span>{% if query %}<a class="btn btn-sm btn-outline-secondary" href="?status={{ selected_status }}">清除搜索</a>{% endif %}</div></td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
+    <div class="card-body border-top py-2">{% include "_pagination.html" %}</div>
     {% if selected_status != 'attached' %}
       <div class="card-body border-top">
         <div class="row g-3">

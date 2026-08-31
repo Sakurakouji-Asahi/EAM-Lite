@@ -1435,6 +1435,13 @@ form[data-eam-submitting="true"] button[type="submit"]::after {
   min-width: 40rem;
 }
 
+.inventory-qr-task {
+  padding: 0.85rem;
+  border: 1px solid var(--eam-line);
+  border-radius: var(--eam-radius-sm);
+  background: var(--eam-surface-muted);
+}
+
 .maintenance-card-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1635,6 +1642,24 @@ form[data-eam-submitting="true"] button[type="submit"]::after {
     min-height: 44px;
   }
 
+  .btn-sm,
+  .dropdown-item,
+  .nav-pills .nav-link,
+  .app-mobile-nav .app-nav-link,
+  .app-mobile-nav .app-nav-group summary {
+    min-height: 44px;
+  }
+
+  .app-menu-toggle {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+  }
+
+  .app-user-menu {
+    min-height: 44px;
+  }
+
   .form-control,
   .form-select {
     min-height: 44px;
@@ -1644,6 +1669,38 @@ form[data-eam-submitting="true"] button[type="submit"]::after {
   .maintenance-mobile-action {
     min-height: 44px;
     width: 100%;
+  }
+
+  .inventory-scan-actions,
+  .mobile-action-bar {
+    position: sticky;
+    bottom: max(0.5rem, env(safe-area-inset-bottom));
+    z-index: 30;
+    padding: 0.65rem;
+    border: 1px solid var(--eam-line-strong);
+    border-radius: var(--eam-radius-sm);
+    background: var(--eam-surface);
+    box-shadow: 0 10px 28px rgb(22 50 79 / 16%);
+  }
+
+  .mobile-action-bar .btn,
+  .mobile-action-bar button,
+  .inventory-scan-actions .btn {
+    min-height: 44px;
+  }
+
+  .inventory-snapshot-current .inventory-action-column {
+    position: sticky;
+    right: 0;
+    z-index: 4;
+    min-width: 7.5rem;
+    background: var(--eam-surface);
+    box-shadow: -2px 0 0 var(--eam-line);
+  }
+
+  .inventory-snapshot-current thead .inventory-action-column {
+    z-index: 5;
+    background: var(--eam-surface-muted);
   }
 
   .inventory-summary-grid,

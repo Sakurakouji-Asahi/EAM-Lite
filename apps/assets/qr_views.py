@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import secrets
 from decimal import Decimal
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.storage import default_storage
+from django.core.paginator import Paginator
 from django.db.models import Count, Max, Prefetch, Q, Sum
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -175,7 +177,7 @@ def _maintenance_context(user, asset):
     }
 
 
-def _queue_assets(user, company):
+def _queue_assets(user, company, *, query=""):
     active_identities = AssetQrIdentity.objects.filter(status="active").annotate(
         last_printed_at=Max("print_items__batch__printed_at")
     ).order_by("version")
@@ -184,6 +186,14 @@ def _queue_assets(user, company):
     ).prefetch_related(
         Prefetch("qr_identities", queryset=active_identities, to_attr="active_qr_rows")
     )
+    if query:
+        queryset = queryset.filter(
+            Q(asset_code__icontains=query)
+            | Q(asset_name__icontains=query)
+            | Q(serial_number__icontains=query)
+            | Q(department__name__icontains=query)
+            | Q(responsible_employee__name__icontains=query)
+        )
     return list(
         scoped_printable_assets(user, company, queryset)
         .filter(asset_code__isnull=False, qr_identities__status="active")
@@ -220,12 +230,16 @@ def label_queue(request):
         return login_response
     company = _company()
     _require_label_role(request.user)
-    all_assets = _queue_assets(request.user, company)
     selected_status = (
         request.POST.get("status") if request.method == "POST" else request.GET.get("status")
     ) or "ready_to_print"
     if selected_status not in QUEUE_STATUSES:
         selected_status = "ready_to_print"
+    query = (
+        request.POST.get("q") if request.method == "POST" else request.GET.get("q")
+    ) or ""
+    query = query.strip()[:200]
+    all_assets = _queue_assets(request.user, company, query=query)
 
     rows = []
     printable_assets = []
@@ -245,6 +259,11 @@ def label_queue(request):
                     "location_path": _location_path(asset.location),
                 }
             )
+
+    page_number = (
+        request.POST.get("page") if request.method == "POST" else request.GET.get("page")
+    )
+    page_obj = Paginator(rows, 25).get_page(page_number)
 
     form = LabelPrintForm(
         request.POST or None,
@@ -279,7 +298,15 @@ def label_queue(request):
         "assets/qr_queue.html",
         {
             "form": form,
-            "rows": rows,
+            "rows": page_obj.object_list,
+            "page_obj": page_obj,
+            "pagination_query": urlencode(
+                {
+                    "status": selected_status,
+                    **({"q": query} if query else {}),
+                }
+            ),
+            "query": query,
             "selected_status": selected_status,
             "status_choices": AssetQrIdentity.LabelStatus.choices[1:],
         },
@@ -496,6 +523,40 @@ def _lookup_scanned_identity(token):
     ).first()
 
 
+def _inventory_scan_entries(user, identity):
+    """Return only active task rows the current user may scan."""
+
+    if identity.label_status != AssetQrIdentity.LabelStatus.ATTACHED:
+        return []
+    from apps.inventory.models import InventoryTask, InventoryTaskAsset
+    from apps.inventory.permissions import can_scan_inventory_task
+    from apps.inventory.views import build_qr_scan_bridge
+
+    rows = InventoryTaskAsset.objects.select_related("inventory_task").filter(
+        company_id=identity.company_id,
+        asset_id=identity.asset_id,
+        inventory_task__company_id=identity.company_id,
+        inventory_task__status=InventoryTask.Status.IN_PROGRESS,
+    ).order_by("inventory_task__planned_end", "inventory_task__task_code")
+    entries = []
+    for row in rows:
+        task = row.inventory_task
+        if not can_scan_inventory_task(user, task):
+            continue
+        entries.append(
+            {
+                "task": task,
+                "row": row,
+                "bridge": build_qr_scan_bridge(
+                    user=user,
+                    task=task,
+                    qr_identity=identity,
+                ),
+            }
+        )
+    return entries
+
+
 def _invalid_scan(request, *, revoked=False):
     template = "assets/qr_scan_invalid.html"
     response = render(
@@ -507,7 +568,7 @@ def _invalid_scan(request, *, revoked=False):
     return _scan_response(response)
 
 
-def _scan_asset_or_response(request, token):
+def _scan_asset_or_response(request, token, *, include_inventory_entries=False):
     identity_stub = _lookup_scanned_identity(token)
     if identity_stub is None:
         return None, _invalid_scan(request)
@@ -516,6 +577,11 @@ def _scan_asset_or_response(request, token):
     company = _company()
     if identity_stub.company_id != company.pk:
         return None, _invalid_scan(request)
+    inventory_entries = (
+        _inventory_scan_entries(request.user, identity_stub)
+        if include_inventory_entries
+        else []
+    )
     asset = (
         scoped_scannable_assets(
             request.user,
@@ -527,6 +593,11 @@ def _scan_asset_or_response(request, token):
         .filter(pk=identity_stub.asset_id)
         .first()
     )
+    inventory_only_access = asset is None and bool(inventory_entries)
+    if inventory_only_access:
+        asset = Asset.objects.select_related(
+            "company", "category", "department", "responsible_employee", "location"
+        ).filter(company=company, pk=identity_stub.asset_id).first()
     if asset is None:
         write_business_audit_log(
             company=company,
@@ -541,7 +612,7 @@ def _scan_asset_or_response(request, token):
         response = render(request, "assets/qr_scan_forbidden.html", status=403)
         return None, _scan_response(response)
     identity = AssetQrIdentity.objects.get(pk=identity_stub.pk)
-    return (asset, identity), None
+    return (asset, identity, inventory_entries, inventory_only_access), None
 
 
 @require_http_methods(["GET"])
@@ -549,10 +620,14 @@ def qr_scan(request, token):
     login_response = _require_login(request)
     if login_response:
         return _scan_response(login_response)
-    result, response = _scan_asset_or_response(request, token)
+    result, response = _scan_asset_or_response(
+        request,
+        token,
+        include_inventory_entries=True,
+    )
     if response is not None:
         return response
-    asset, qr_identity = result
+    asset, qr_identity, inventory_entries, inventory_only_access = result
     can_p1 = can_view_asset_p1(request.user, asset)
     can_summary = can_view_asset_summary_fields(request.user, asset)
     can_financial = can_view_financial_fields(request.user)
@@ -591,7 +666,9 @@ def qr_scan(request, token):
             initial={"scanned_token": token},
         )
     maintenance_context = (
-        _maintenance_context(request.user, asset) if not archived else {}
+        _maintenance_context(request.user, asset)
+        if not archived and not inventory_only_access
+        else {"show_maintenance": False}
     )
     response = render(
         request,
@@ -610,6 +687,19 @@ def qr_scan(request, token):
             "location_path": _location_path(asset.location),
             "attachment_form": attachment_form,
             "first_attachment": first_attachment,
+            "inventory_scan_entries": inventory_entries,
+            "inventory_only_access": inventory_only_access,
+            "inventory_snapshot": (
+                inventory_entries[0]["row"] if inventory_only_access else None
+            ),
+            "inventory_snapshot_status_label": (
+                dict(Asset.AssetStatus.choices).get(
+                    inventory_entries[0]["row"].expected_asset_status,
+                    inventory_entries[0]["row"].expected_asset_status,
+                )
+                if inventory_only_access
+                else None
+            ),
             **maintenance_context,
         },
     )
@@ -649,7 +739,7 @@ def qr_attach(request, token):
     result, response = _scan_asset_or_response(request, token)
     if response is not None:
         return response
-    asset, qr_identity = result
+    asset, qr_identity, _inventory_entries, _inventory_only_access = result
     first_attachment = asset.asset_status == Asset.AssetStatus.PENDING_LABEL
     form = LabelAttachmentForm(request.POST, first_attachment=first_attachment)
     if form.is_valid() and not secrets.compare_digest(
