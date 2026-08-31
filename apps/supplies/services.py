@@ -20,6 +20,7 @@ from .domain import (
     ZERO_MONEY,
     ZERO_QTY,
     allocate_custody_amount,
+    calculate_average_unit_cost,
     calculate_issue,
     calculate_receipt,
     calculate_receipt_from_amount,
@@ -415,11 +416,35 @@ def deactivate_supply_warehouse(*, actor, warehouse, reason="", request=None):
     ).get(pk=warehouse.pk)
     if not warehouse.is_active:
         return warehouse
-    if warehouse.stock_balances.filter(quantity_on_hand__gt=ZERO_QTY).exists():
+    live_balances = list(
+        SupplyStockBalance.objects.select_for_update()
+        .filter(company=warehouse.company, warehouse=warehouse)
+        .filter(Q(quantity_on_hand__gt=ZERO_QTY) | Q(amount_on_hand__gt=ZERO_MONEY))
+        .order_by("item_id", "pk")
+    )
+    if live_balances:
         raise ValidationError(
-            "仓库仍有库存数量，停用后将无法正常调拨或领用；请先清理库存。"
+            "仓库仍有非零库存，必须先调出、领用或受控调整至零后才能停用。"
         )
-    if warehouse.count_tasks.filter(status__in=ACTIVE_SUPPLY_COUNT_STATUSES).exists():
+    active_default_items = list(
+        SupplyItem.objects.select_for_update()
+        .filter(
+            company=warehouse.company,
+            default_warehouse=warehouse,
+            is_active=True,
+        )
+        .order_by("pk")
+        .values_list("pk", flat=True)
+    )
+    if active_default_items:
+        raise ValidationError(
+            "仍有启用物品把该仓库设为默认仓库，请先改配或清空默认仓库。"
+        )
+    if SupplyCountTask.objects.filter(
+        company=warehouse.company,
+        warehouse=warehouse,
+        status__in=ACTIVE_SUPPLY_COUNT_STATUSES,
+    ).exists():
         raise ValidationError("仓库存在进行中或差异处理中的盘点任务，不能停用。")
     warehouse.is_active = False
     warehouse.updated_by = actor
@@ -440,6 +465,19 @@ def create_supply_item(*, actor, company, data, request=None):
     item_type = data.get("item_type")
     require_manage_supply_item(actor, item_type)
     _require_current_company(company)
+    data = dict(data)
+    requested_warehouse = data.get("default_warehouse")
+    if requested_warehouse is not None:
+        locked_warehouse = SupplyWarehouse.objects.select_for_update().filter(
+            pk=getattr(requested_warehouse, "pk", None),
+            company=company,
+            is_active=True,
+        ).first()
+        if locked_warehouse is None:
+            raise ValidationError(
+                {"default_warehouse": "默认仓库不属于当前公司或已经停用。"}
+            )
+        data["default_warehouse"] = locked_warehouse
     item = _apply(
         SupplyItem(company=company, created_by=actor, updated_by=actor),
         data,
@@ -476,6 +514,19 @@ def create_supply_item(*, actor, company, data, request=None):
 @transaction.atomic
 def update_supply_item(*, actor, item, data, request=None):
     _require_current_company(item.company)
+    data = dict(data)
+    if "default_warehouse" in data and data["default_warehouse"] is not None:
+        requested_warehouse = data["default_warehouse"]
+        locked_warehouse = SupplyWarehouse.objects.select_for_update().filter(
+            pk=getattr(requested_warehouse, "pk", None),
+            company=item.company,
+            is_active=True,
+        ).first()
+        if locked_warehouse is None:
+            raise ValidationError(
+                {"default_warehouse": "默认仓库不属于当前公司或已经停用。"}
+            )
+        data["default_warehouse"] = locked_warehouse
     item = SupplyItem.objects.select_for_update().select_related(
         "company", "category"
     ).get(pk=item.pk)
@@ -553,21 +604,36 @@ def deactivate_supply_item(*, actor, item, reason="", request=None):
     require_manage_supply_item(actor, item.item_type)
     if not item.is_active:
         return item
-    if item.stock_balances.filter(quantity_on_hand__gt=ZERO_QTY).exists():
+    live_balances = list(
+        SupplyStockBalance.objects.select_for_update()
+        .filter(company=item.company, item=item)
+        .filter(Q(quantity_on_hand__gt=ZERO_QTY) | Q(amount_on_hand__gt=ZERO_MONEY))
+        .order_by("warehouse_id", "pk")
+    )
+    if live_balances:
         raise ValidationError(
-            "物品仍有仓库库存，停用后将无法正常清理；请先处理库存余额。"
+            "物品仍有非零仓库库存，必须先领用、调出或受控调整至零后才能停用。"
         )
-    if item.custodies.filter(
-        status=SupplyCustodyStatus.OPEN,
-        current_quantity__gt=ZERO_QTY,
-    ).exists():
+    open_custodies = list(
+        SupplyCustody.objects.select_for_update(of=("self",))
+        .filter(
+            company=item.company,
+            item=item,
+            status=SupplyCustodyStatus.OPEN,
+            current_quantity__gt=ZERO_QTY,
+        )
+        .order_by("pk")
+    )
+    if open_custodies:
         raise ValidationError(
-            "物品仍有未结清的耐用品保管，停用后将影响归还和清退；请先结清保管。"
+            "物品仍有未结清保管，必须先归还、转交处置并结清后才能停用。"
         )
-    if item.count_lines.filter(
-        count_task__status__in=ACTIVE_SUPPLY_COUNT_STATUSES
+    if SupplyCountLine.objects.filter(
+        company=item.company,
+        item=item,
+        count_task__status__in=ACTIVE_SUPPLY_COUNT_STATUSES,
     ).exists():
-        raise ValidationError("物品已进入活动盘点快照，不能停用。")
+        raise ValidationError("物品正在低值物品盘点中，不能停用。")
     item.is_active = False
     item.updated_by = actor
     item.save(update_fields=["is_active", "updated_by", "updated_at"])
@@ -1270,10 +1336,18 @@ def _update_balance(*, balance, calculation, updated_at):
 def _update_balance_values(
     *, balance, quantity, amount, average_unit_cost, updated_at
 ):
+    quantity = quantize_quantity(quantity)
+    amount = quantize_money(amount)
+    average_unit_cost = quantize_unit_cost(average_unit_cost)
+    expected_average = calculate_average_unit_cost(quantity, amount)
+    if average_unit_cost != expected_average:
+        raise ValidationError(
+            "库存移动平均成本与数量、金额不勾稽，已拒绝更新余额。"
+        )
     values = {
-        "quantity_on_hand": quantize_quantity(quantity),
-        "amount_on_hand": quantize_money(amount),
-        "average_unit_cost": quantize_unit_cost(average_unit_cost),
+        "quantity_on_hand": quantity,
+        "amount_on_hand": amount,
+        "average_unit_cost": average_unit_cost,
         "updated_at": updated_at,
     }
     _base_update(
@@ -1441,6 +1515,18 @@ def _lock_supply_warehouse(*, company, warehouse_id, require_active=False):
     return queryset.first()
 
 
+def _lock_custody_item(custody):
+    """Serialize custody actions with item freeze/deactivation operations."""
+
+    item = SupplyItem.objects.select_for_update().filter(
+        pk=custody.item_id,
+        company=custody.company,
+    ).first()
+    if item is None:
+        raise ValidationError("保管物品不存在或不属于当前公司。")
+    return item
+
+
 @transaction.atomic
 def return_custody_to_warehouse(
     *,
@@ -1461,6 +1547,7 @@ def return_custody_to_warehouse(
     if count_line is not None:
         count_task, locked_count_line = _lock_supply_count_line(count_line)
         require_execute_supply_count_task(actor, count_task)
+    locked_item = _lock_custody_item(custody)
     custody = (
         SupplyCustody.objects.select_for_update(of=("self",))
         .select_related(
@@ -1472,6 +1559,7 @@ def return_custody_to_warehouse(
         )
         .get(pk=custody.pk, company=custody.company)
     )
+    custody.item = locked_item
     require_manage_supply_custody(actor, custody, action="return_draft")
     quantity, business_date, reason, idempotency_key = _required_custody_action_values(
         quantity=quantity,
@@ -1580,11 +1668,13 @@ def transfer_custody(
         company=custody.company,
         department_id=getattr(target_department, "pk", None),
     )
+    locked_item = _lock_custody_item(custody)
     custody = (
         SupplyCustody.objects.select_for_update(of=("self",))
         .select_related("company", "item", "department", "employee")
         .get(pk=custody.pk, company=custody.company)
     )
+    custody.item = locked_item
     existing_queryset = SupplyCustodyMovement.objects.select_for_update()
     if connection.vendor == "postgresql":
         existing_queryset = existing_queryset.select_for_update(of=("self",))
@@ -1748,11 +1838,13 @@ def write_off_custody(
     if count_line is not None:
         count_task, locked_count_line = _lock_supply_count_line(count_line)
         require_execute_supply_count_task(actor, count_task)
+    locked_item = _lock_custody_item(custody)
     custody = (
         SupplyCustody.objects.select_for_update(of=("self",))
         .select_related("company", "item", "department", "employee")
         .get(pk=custody.pk, company=custody.company)
     )
+    custody.item = locked_item
     require_manage_supply_custody(actor, custody, action=action)
     existing = SupplyCustodyMovement.objects.select_for_update().filter(
         company=custody.company, idempotency_key=idempotency_key
@@ -1859,6 +1951,12 @@ def create_opening_custody_from_import_row(
     require_import_opening_custody(actor)
     company = import_row.batch.company
     _require_current_company(company)
+    item = SupplyItem.objects.select_for_update().filter(
+        pk=getattr(item, "pk", None),
+        company=company,
+    ).first()
+    if item is None:
+        raise ValidationError("期初保管物品不存在或不属于当前公司。")
     if (
         import_row.batch.import_type != "opening_custody"
         or import_row.batch.status not in {"validated", "confirmed"}
@@ -2058,7 +2156,7 @@ def _lock_posting_warehouses(*, document, source_count_task=None):
         raise ValidationError("单据涉及的仓库不存在或不属于当前公司。")
     for warehouse in locked.values():
         if not warehouse.is_active:
-            raise ValidationError("单据涉及的仓库已经停用，不能过账。")
+            raise ValidationError("单据仓库已经停用，不能过账；请取消草稿。")
         active = (
             SupplyCountTask.objects.filter(
                 company=document.company,
@@ -2083,6 +2181,28 @@ def _lock_posting_warehouses(*, document, source_count_task=None):
             "该仓库正在进行低值物品盘点，暂不能过账库存业务。"
             "请在盘点关闭或取消后重试。"
         )
+    return locked
+
+
+def _lock_posting_items(*, document, lines, require_active=True):
+    item_ids = sorted({line.item_id for line in lines}, key=str)
+    locked = {
+        item.pk: item
+        for item in SupplyItem.objects.select_for_update()
+        .filter(company=document.company, pk__in=item_ids)
+        .order_by("pk")
+    }
+    if len(locked) != len(item_ids):
+        raise ValidationError("单据物品不存在或不属于当前公司。")
+    for item in locked.values():
+        if require_active and not item.is_active:
+            raise ValidationError(f"物品 {item.item_code} 已停用，不能过账。")
+    for line in lines:
+        line.item = locked[line.item_id]
+        if line.source_issue_line_id:
+            line.source_issue_line.item = locked[line.item_id]
+        if line.source_custody_id:
+            line.source_custody.item = locked[line.item_id]
     return locked
 
 
@@ -2304,6 +2424,9 @@ def _post_consumable_return(*, document, lines, balances, actor, posted_at):
         returned_quantity = quantize_quantity(returned["quantity"] or ZERO_QTY)
         returned_amount = quantize_money(returned["amount"] or ZERO_MONEY)
         remaining_quantity = quantize_quantity(source.quantity - returned_quantity)
+        remaining_amount = quantize_money(source.posted_amount - returned_amount)
+        if remaining_quantity < ZERO_QTY or remaining_amount < ZERO_MONEY:
+            raise ValidationError("原领用累计退回数量或金额异常，请先执行库存核对。")
         if line.quantity > remaining_quantity:
             raise ValidationError(
                 "退回数量超过原领用未退数量：当前最多可退 {} {}。".format(
@@ -2311,11 +2434,22 @@ def _post_consumable_return(*, document, lines, balances, actor, posted_at):
                 )
             )
         if line.quantity == remaining_quantity:
-            return_amount = quantize_money(source.posted_amount - returned_amount)
+            return_amount = remaining_amount
         else:
-            return_amount = quantize_money(line.quantity * source.posted_unit_cost)
-        if return_amount < ZERO_MONEY:
-            raise ValidationError("原领用剩余可退金额异常，请先执行余额核对。")
+            # Allocate against the cumulative returned quantity, then take the
+            # incremental difference.  Rounding every small return separately
+            # can otherwise make the returned amount exceed the original
+            # issue (for example 5 x CNY 0.006 split into one-unit returns).
+            cumulative_amount = min(
+                quantize_money(
+                    (returned_quantity + line.quantity)
+                    * source.posted_unit_cost
+                ),
+                source.posted_amount,
+            )
+            return_amount = quantize_money(cumulative_amount - returned_amount)
+        if return_amount < ZERO_MONEY or return_amount > remaining_amount:
+            raise ValidationError("原领用剩余可退金额异常，请先执行库存核对。")
         balance = balances[(warehouse.pk, line.item_id)]
         calculation = calculate_receipt_from_amount(
             balance.quantity_on_hand,
@@ -2615,6 +2749,13 @@ def _post_supply_document_internal(
         require_post_supply_document(actor, document=document)
         if source_count_line is not None and document.document_type != SupplyDocumentType.RETURN:
             raise ValidationError("保管盘点解决上下文只能用于耐用品归还。")
+    effective_idempotency_key = str(
+        document.idempotency_key if idempotency_key is None else idempotency_key
+    ).strip()
+    if not effective_idempotency_key:
+        raise ValidationError("过账幂等键不能为空。")
+    if effective_idempotency_key != document.idempotency_key:
+        raise ValidationError("过账幂等键与该单据不一致，请刷新页面后重试。")
     if document.status == SupplyDocumentStatus.POSTED:
         return document
     if document.status != SupplyDocumentStatus.DRAFT:
@@ -2623,16 +2764,9 @@ def _post_supply_document_internal(
         SPRINT15_DOCUMENT_TYPES | {SupplyDocumentType.COUNT_ADJUSTMENT}
     ):
         raise ValidationError("当前 Sprint 不允许过账该单据类型。")
-    if idempotency_key is not None and not str(idempotency_key).strip():
-        raise ValidationError("过账幂等键不能为空。")
     if document.document_type == SupplyDocumentType.ISSUE:
         _lock_and_validate_issue_responsibility(document)
     document.full_clean()
-    for warehouse in (document.source_warehouse, document.target_warehouse):
-        if warehouse is not None and (
-            warehouse.company_id != document.company_id or not warehouse.is_active
-        ):
-            raise ValidationError("单据仓库已停用或不属于当前公司，不能过账；请取消草稿。")
     lines = list(
         document.lines.select_for_update(of=("self",))
         .select_related(
@@ -2647,22 +2781,6 @@ def _post_supply_document_internal(
     )
     if not lines:
         raise ValidationError("库存单据至少需要一条明细。")
-    _lock_posting_warehouses(
-        document=document,
-        source_count_task=source_count_task,
-    )
-    item_ids = sorted({line.item_id for line in lines}, key=str)
-    locked_items = {
-        item.pk: item
-        for item in SupplyItem.objects.select_for_update()
-        .filter(company=document.company, pk__in=item_ids)
-        .order_by("pk")
-    }
-    if len(locked_items) != len(item_ids):
-        raise ValidationError("单据物品不存在或不属于当前公司。")
-    for line in lines:
-        line.item = locked_items[line.item_id]
-    locked_custodies = {}
     if document.document_type == SupplyDocumentType.RETURN:
         source_document_ids = sorted(
             {
@@ -2681,6 +2799,19 @@ def _post_supply_document_internal(
             )
             .order_by("pk")
         )
+    locked_warehouses = _lock_posting_warehouses(
+        document=document,
+        source_count_task=source_count_task,
+    )
+    if document.source_warehouse_id:
+        document.source_warehouse = locked_warehouses[document.source_warehouse_id]
+    if document.target_warehouse_id:
+        document.target_warehouse = locked_warehouses[document.target_warehouse_id]
+    if source_count_task is not None:
+        source_count_task.warehouse = locked_warehouses[source_count_task.warehouse_id]
+    _lock_posting_items(document=document, lines=lines)
+    locked_custodies = {}
+    if document.document_type == SupplyDocumentType.RETURN:
         source_ids = sorted(
             {line.source_issue_line_id for line in lines if line.source_issue_line_id},
             key=str,
@@ -2911,6 +3042,11 @@ def reverse_supply_document(
         ).first()
         if existing is None:
             raise ValidationError("原单已标记冲销但未找到冲销单，请先执行数据核对。")
+        if (
+            existing.idempotency_key != cleaned_key
+            or existing.remark != cleaned_reason
+        ):
+            raise ValidationError("该原单已经使用另一请求内容完成冲销。")
         return existing
     if document.status != SupplyDocumentStatus.POSTED:
         raise ValidationError("只允许冲销已过账单据；草稿、已取消或已冲销单据不可冲销。")
@@ -2999,6 +3135,10 @@ def reverse_supply_document(
     if any(hasattr(ledger, "reversal_ledger") for ledger in original_ledgers):
         raise ValidationError("原单流水已经被冲销，不能重复执行。")
     _lock_posting_warehouses(document=document)
+    _lock_posting_items(
+        document=document,
+        lines=original_lines,
+    )
 
     durable_return_entries = {}
     if document.document_type == SupplyDocumentType.RETURN:
@@ -3047,6 +3187,10 @@ def reverse_supply_document(
                 custody_movement=original_movement
             ).exists():
                 raise ValidationError("该归还流水已作为离职清退证据，不能冲销。")
+            if SupplyCountLine.objects.filter(
+                resolution_custody_movement=original_movement
+            ).exists():
+                raise ValidationError("该归还流水已作为保管盘点解决证据，不能冲销。")
             if hasattr(original_movement, "reversal_movement"):
                 raise ValidationError("耐用品归还保管流水已经被冲销。")
             if any(
@@ -3631,6 +3775,19 @@ def publish_supply_count_task(*, task, actor, request=None):
         ).exclude(pk=task.pk)
         if active.exists():
             raise ValidationError("该仓库已有进行中或差异处理中的低值物品盘点任务。")
+        balance_item_ids = list(
+            SupplyStockBalance.objects.filter(
+                company=task.company,
+                warehouse=warehouse,
+            )
+            .order_by("item_id")
+            .values_list("item_id", flat=True)
+        )
+        list(
+            SupplyItem.objects.select_for_update()
+            .filter(company=task.company, pk__in=balance_item_ids)
+            .order_by("pk")
+        )
         balances = list(
             SupplyStockBalance.objects.select_for_update()
             .select_related("item")
@@ -3689,6 +3846,22 @@ def publish_supply_count_task(*, task, actor, request=None):
             )
         if overlap.exists():
             raise ValidationError("该部门或员工已被另一张活动耐用品保管盘点覆盖。")
+        custody_item_ids = list(
+            SupplyCustody.objects.filter(
+                company=task.company,
+                department_id=task.department_id,
+                status=SupplyCustodyStatus.OPEN,
+                current_quantity__gt=ZERO_QTY,
+            )
+            .order_by("item_id")
+            .values_list("item_id", flat=True)
+            .distinct()
+        )
+        list(
+            SupplyItem.objects.select_for_update()
+            .filter(company=task.company, pk__in=custody_item_ids)
+            .order_by("pk")
+        )
         custody_qs = (
             SupplyCustody.objects.select_for_update(of=("self",))
             if connection.vendor == "postgresql"
@@ -4501,6 +4674,10 @@ def correct_custody_for_count(
         raise ValidationError({"reason": "盘点更正原因不能为空。"})
     if not key:
         raise ValidationError({"idempotency_key": "盘点更正幂等键不能为空。"})
+    locked_item = SupplyItem.objects.select_for_update().get(
+        pk=line.item_id,
+        company=task.company,
+    )
     custody = (
         SupplyCustody.objects.select_for_update(of=("self",))
         if connection.vendor == "postgresql"
@@ -4508,6 +4685,7 @@ def correct_custody_for_count(
     ).select_related("item", "department", "employee").get(
         pk=line.custody_id, company=task.company
     )
+    custody.item = locked_item
     existing = SupplyCustodyMovement.objects.select_for_update().filter(
         company=task.company, idempotency_key=key
     ).first()

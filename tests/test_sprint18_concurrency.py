@@ -30,7 +30,6 @@ from tests.test_sprint18_rebuild import rebuild_context
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
-@pytest.fixture(autouse=True)
 def require_postgresql():
     if connection.vendor != "postgresql":
         pytest.skip("Sprint 18 余额重建并发锁验收需要 PostgreSQL。")
@@ -45,6 +44,7 @@ def _thread(callable_):
 
 
 def test_stock_rebuild_serializes_normal_posting_and_remains_consistent(monkeypatch):
+    require_postgresql()
     company, actor = rebuild_context()
     balance = SupplyStockBalance.objects.get(company=company)
     with transaction.atomic():
@@ -113,6 +113,7 @@ def test_stock_rebuild_serializes_normal_posting_and_remains_consistent(monkeypa
 
 
 def test_custody_rebuild_serializes_writeoff_and_remains_consistent(monkeypatch):
+    require_postgresql()
     company, actor = rebuild_context()
     custody = SupplyCustody.objects.get(company=company)
     with transaction.atomic():
