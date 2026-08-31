@@ -8,7 +8,7 @@
     <h1 class="h3 mb-1">EAM-Lite 企业资产管理系统</h1>
     {% if initialized and dashboard %}<p class="text-secondary mb-0">工作台数据截止 {{ dashboard.data_snapshot_at|date:'Y-m-d H:i:s' }}，只显示当前账号范围内的信息。</p>{% else %}<p class="text-secondary mb-0">系统初始化尚未完成，请由对应角色继续初始化设置。</p>{% endif %}
   </div>
-  {% if app_navigation.show_tasks %}<a class="btn btn-primary" href="{% url 'task-center' %}">查看我的待办</a>{% elif app_navigation.show_finance_reports %}<a class="btn btn-primary" href="{% url 'reports:report-center' %}">进入报表中心</a>{% elif app_navigation.show_settings %}<a class="btn btn-primary" href="{% url 'settings-center' %}">进入系统设置</a>{% endif %}
+  {% if app_navigation.show_tasks %}<a class="btn btn-primary" href="{% url 'task-center' %}">查看我的待办</a>{% elif app_navigation.show_finance_reports %}<a class="btn btn-primary" href="{% url 'reports:report-center' %}">进入报表中心</a>{% elif app_navigation.show_settings %}<a class="btn btn-primary" href="{% url 'settings-center' %}">进入基础资料与设置</a>{% endif %}
 </header>
 
 {% if initialized and dashboard %}
@@ -19,7 +19,7 @@
   {% if app_navigation.asset.can_create %}<a href="{% url 'assets:asset-create' %}"><strong>新增资产</strong><span>建立一件逐件资产草稿</span></a>{% endif %}
   {% if app_navigation.tasks.can_manage_labels %}<a href="{% url 'assets:label-queue' %}"><strong>标签与二维码</strong><span>打印并逐项确认贴标</span></a>{% endif %}
   {% if app_navigation.show_finance_reports %}<a href="{% url 'reports:report-center' %}"><strong>报表中心</strong><span>按权限查询和导出</span></a>{% endif %}
-  {% if app_navigation.show_settings %}<a href="{% url 'settings-center' %}"><strong>系统设置</strong><span>基础资料、导入和系统管理</span></a>{% endif %}
+  {% if app_navigation.show_settings %}<a href="{% url 'settings-center' %}"><strong>基础资料与设置</strong><span>基础资料、导入和系统管理</span></a>{% endif %}
 </nav>
 
 {% if app_navigation.home.show_admin_focus %}
@@ -60,7 +60,7 @@
     {% if app_navigation.supplies.can_view_stock %}<a class="metric-card" href="{% url 'supplies:stock-balance-list' %}"><span>当前库存组合</span><strong>{{ supply_dashboard.stock_combination_count|default:0 }}</strong></a>
     <a class="metric-card" href="{% url 'reports:supply-report-detail' 'supply_low_stock' %}"><span>低库存预警</span><strong>{{ supply_dashboard.low_stock_count|default:0 }}</strong></a>{% endif %}
     {% if app_navigation.supplies.can_view_custodies %}<a class="metric-card" href="{% url 'supplies:my-custodies' %}"><span>在管数量耐用品</span><strong>{{ supply_dashboard.custody_count|default:0 }}</strong></a>{% endif %}
-    <a class="metric-card" href="{% url 'supplies:individual-durable-list' %}"><span>逐件低值资产</span><strong>{{ supply_dashboard.controlled_non_fixed_count|default:0 }}</strong></a>
+    <a class="metric-card" href="{% url 'supplies:individual-durable-list' %}"><span>逐件低值耐用品</span><strong>{{ supply_dashboard.controlled_non_fixed_count|default:0 }}</strong></a>
   </div>
 </section>
 {% endif %}

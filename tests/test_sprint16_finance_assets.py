@@ -129,7 +129,7 @@ def test_asset_list_four_way_accounting_filter_and_individual_durable_shortcuts(
         {"accounting_treatment": "controlled_non_fixed"},
     )
     assert controlled.asset_name.encode() in controlled_response.content
-    assert "逐件低值资产".encode() in controlled_response.content
+    assert "受控非固定资产".encode() in controlled_response.content
     assert fixed.asset_name.encode() not in controlled_response.content
 
     unconfirmed_response = client.get(
@@ -140,7 +140,7 @@ def test_asset_list_four_way_accounting_filter_and_individual_durable_shortcuts(
 
     shortcut = client.get(reverse("supplies:individual-durable-list"))
     assert shortcut.status_code == 302
-    assert "accounting_treatment=controlled_non_fixed" in shortcut["Location"]
+    assert "view=individual_durable" in shortcut["Location"]
     create_shortcut = client.get(reverse("supplies:individual-durable-create"))
     assert create_shortcut.status_code == 302
     create_page = client.get(create_shortcut["Location"])

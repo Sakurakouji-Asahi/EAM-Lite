@@ -4,7 +4,7 @@
 <header class="app-page-header"><div><h1 class="h3 mb-1">新建低值物品盘点</h1><p class="text-secondary mb-0">仓库盘点发布后严格冻结库存；保管盘点只覆盖发布时开放保管。</p></div><a class="btn btn-outline-secondary" href="{% url 'supplies:count-task-list' %}">返回</a></header>
 <form method="post" class="card card-body shadow-sm">{% csrf_token %}
   {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
-  <div class="row g-3">{% for field in form %}{% if not field.is_hidden %}<div class="col-12 {% if field.name != 'remark' %}col-lg-6{% endif %}"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</div>{% else %}{{ field }}{% endif %}{% endfor %}</div>
+  <div class="row g-3">{% for field in form %}{% if not field.is_hidden %}<div class="col-12 {% if field.name != 'remark' %}col-lg-6{% endif %}"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}{% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</div>{% else %}{{ field }}{% endif %}{% endfor %}</div>
   <div class="mt-4 d-flex gap-2"><button class="btn btn-primary" type="submit">保存草稿</button><a class="btn btn-outline-secondary" href="{% url 'supplies:count-task-list' %}">取消</a></div>
 </form>
 {% endblock %}

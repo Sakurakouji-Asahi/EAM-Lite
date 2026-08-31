@@ -8,6 +8,7 @@ from decimal import Decimal
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.paginator import Paginator
 from django.db.models import Q, Sum
 from django.http import Http404, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
@@ -578,13 +579,17 @@ def finance_settings(request):
 @login_required
 def batch_list(request):
     require_view_finance(request.user)
+    queryset = DepreciationBatch.objects.filter(company=_company()).order_by(
+        "-period_start", "-generation_no"
+    )
+    page_obj = Paginator(queryset, 25).get_page(request.GET.get("page"))
     return render(
         request,
         "finance/batch_list.html",
         {
-            "batches": DepreciationBatch.objects.filter(company=_company()).order_by(
-                "-period_start", "-generation_no"
-            ),
+            "batches": page_obj,
+            "page_obj": page_obj,
+            "pagination_query": "",
             "can_manage": can_manage_finance(request.user),
         },
     )

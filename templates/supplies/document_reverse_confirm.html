@@ -7,6 +7,7 @@
   {% csrf_token %}{{ form.idempotency_key }}
   {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
   <div class="mb-3"><label class="form-label" for="{{ form.reason.id_for_label }}">{{ form.reason.label }}<span class="required-mark">*</span></label>{{ form.reason }}{% for error in form.reason.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>
+  <div class="form-check mb-3">{{ form.confirm }}<label class="form-check-label" for="{{ form.confirm.id_for_label }}">{{ form.confirm.label }}</label>{% for error in form.confirm.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>
   <button class="btn btn-danger" type="submit">生成并立即过账完整冲销</button>
 </div></form>
 {% endblock %}

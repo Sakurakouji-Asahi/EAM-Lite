@@ -7,6 +7,7 @@ from django.contrib.auth.decorators import login_required
 from django import forms
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.storage import default_storage
+from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Q
 from django.http import FileResponse, Http404, HttpResponseNotAllowed
@@ -55,6 +56,13 @@ from apps.maintenance.services import (
 )
 from apps.masterdata.models import InitializationSetting
 from apps.masterdata.permissions import current_company
+
+
+def _paginate(request, rows, *, per_page=25):
+    page_obj = Paginator(rows, per_page).get_page(request.GET.get("page"))
+    params = request.GET.copy()
+    params.pop("page", None)
+    return page_obj, params.urlencode()
 
 
 def _company():
@@ -166,11 +174,16 @@ def plan_list(request):
         )
     if status in MaintenancePlan.Status.values:
         plans = plans.filter(status=status)
+    page_obj, pagination_query = _paginate(
+        request, plans.order_by("next_maintenance_date", "asset__asset_code")
+    )
     return render(
         request,
         "maintenance/plan_list.html",
         {
-            "plans": plans,
+            "plans": page_obj,
+            "page_obj": page_obj,
+            "pagination_query": pagination_query,
             "status_choices": MaintenancePlan.Status.choices,
             "filters": {"q": query, "status": status},
             "can_manage": _can_manage_any_plan(request.user, company),
@@ -275,8 +288,16 @@ def due_list(request):
                     "can_complete": can_complete_maintenance(request.user, plan),
                 }
             )
+    page_obj, pagination_query = _paginate(request, items)
     return render(
-        request, "maintenance/due_list.html", {"items": items, "counts": counts}
+        request,
+        "maintenance/due_list.html",
+        {
+            "items": page_obj,
+            "counts": counts,
+            "page_obj": page_obj,
+            "pagination_query": pagination_query,
+        },
     )
 
 
@@ -363,7 +384,18 @@ def record_list(request):
     records = MaintenanceRecord.objects.filter(
         maintenance_plan__in=plans
     ).select_related("maintenance_plan", "asset", "completed_by")
-    return render(request, "maintenance/record_list.html", {"records": records})
+    page_obj, pagination_query = _paginate(
+        request, records.order_by("-completed_date", "-created_at")
+    )
+    return render(
+        request,
+        "maintenance/record_list.html",
+        {
+            "records": page_obj,
+            "page_obj": page_obj,
+            "pagination_query": pagination_query,
+        },
+    )
 
 
 @login_required
@@ -474,11 +506,22 @@ def problem_list(request):
     ).select_related(
         "maintenance_record__maintenance_plan", "asset__department"
     )
+    page_obj, pagination_query = _paginate(
+        request, problems.order_by("status", "-created_at")
+    )
     items = [
         {"problem": problem, "can_close": problem.status == "open" and can_close_maintenance_problem(request.user, problem)}
-        for problem in problems
+        for problem in page_obj.object_list
     ]
-    return render(request, "maintenance/problem_list.html", {"items": items})
+    return render(
+        request,
+        "maintenance/problem_list.html",
+        {
+            "items": items,
+            "page_obj": page_obj,
+            "pagination_query": pagination_query,
+        },
+    )
 
 
 @login_required

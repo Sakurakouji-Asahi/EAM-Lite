@@ -51,6 +51,7 @@ def test_issue_and_transfer_forms_do_not_expose_cost_and_http_issue_posts(client
             "employee": str(employee.pk),
             "remark": "HTTP 领用",
             "idempotency_key": "s15-http-issue",
+            "next_action": "post",
             "lines-TOTAL_FORMS": "1",
             "lines-INITIAL_FORMS": "0",
             "lines-MIN_NUM_FORMS": "0",
@@ -63,13 +64,30 @@ def test_issue_and_transfer_forms_do_not_expose_cost_and_http_issue_posts(client
     )
     assert response.status_code == 302
     document = SupplyDocument.objects.get(idempotency_key="s15-http-issue")
+    assert response.url == reverse("supplies:document-post", args=[document.pk])
     assert document.lines.get().entered_unit_cost is None
+    searched = client.get(reverse("supplies:document-list"), {"q": item.name})
+    assert document.document_no.encode() in searched.content
     post_response = client.post(
         reverse("supplies:document-post", args=[document.pk]),
         {"confirm": "on", "idempotency_key": document.idempotency_key},
     )
     assert post_response.status_code == 302
     assert SupplyStockBalance.objects.get(warehouse=warehouse, item=item).quantity_on_hand == Decimal("8.0000")
+    reverse_url = reverse("supplies:document-reverse", args=[document.pk])
+    reverse_payload = {
+        "reason": "录入错误",
+        "idempotency_key": "s15-http-reverse-confirm",
+    }
+    missing_confirmation = client.post(reverse_url, reverse_payload)
+    assert missing_confirmation.status_code == 200
+    document.refresh_from_db()
+    assert document.status == "posted"
+    reverse_payload["confirm"] = "on"
+    reversed_response = client.post(reverse_url, reverse_payload)
+    assert reversed_response.status_code == 302
+    document.refresh_from_db()
+    assert document.status == "reversed"
     assert target.company_id == company.pk
 
 
@@ -106,6 +124,12 @@ def test_consumable_return_starts_from_posted_issue_line(client):
     assert returned.department_id == issue.department_id
     assert returned.lines.get().source_issue_line_id == line.pk
     assert returned.lines.get().entered_unit_cost is None
+    guided = client.get(
+        reverse("supplies:document-list"), {"intent": "consumable_return"}
+    )
+    assert guided.status_code == 200
+    assert "请选择原领用单".encode() in guided.content
+    assert issue.document_no.encode() in guided.content
 
 
 def test_custody_scope_navigation_and_cost_field_isolation(client):

@@ -11,6 +11,7 @@ from django.contrib.auth.decorators import login_required
 from django.core import signing
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.storage import default_storage
+from django.core.paginator import Paginator
 from django.db.models import Q
 from django.http import FileResponse, Http404, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
@@ -91,6 +92,8 @@ INVENTORY_VIEW_ROLES = frozenset(
 )
 ASSET_STATUS_LABELS = dict(Asset.AssetStatus.choices)
 SCAN_CONTEXT_SESSION_PREFIX = "inventory_scan_context:"
+QR_SCAN_BRIDGE_SALT = "eam-lite.inventory.qr-scan-bridge.v1"
+QR_SCAN_BRIDGE_MAX_AGE_SECONDS = 10 * 60
 
 
 def _protect_scan_response(response):
@@ -109,6 +112,66 @@ def _render_scan(request, template_name, context, *, status=200):
 
 def _scan_context_session_key(task):
     return f"{SCAN_CONTEXT_SESSION_PREFIX}{task.pk}"
+
+
+def build_qr_scan_bridge(*, user, task, qr_identity):
+    """Create a short-lived QR-to-inventory handoff without embedding the Token."""
+
+    return signing.dumps(
+        {
+            "user_id": str(user.pk),
+            "task_id": str(task.pk),
+            "identity_id": str(qr_identity.pk),
+        },
+        salt=QR_SCAN_BRIDGE_SALT,
+        compress=True,
+    )
+
+
+def _identity_and_row_from_bridge(request, task, value):
+    try:
+        payload = signing.loads(
+            str(value or ""),
+            salt=QR_SCAN_BRIDGE_SALT,
+            max_age=QR_SCAN_BRIDGE_MAX_AGE_SECONDS,
+        )
+    except signing.BadSignature:
+        return None, None, "盘点入口已失效，请重新扫描资产二维码。", "invalid"
+    if not isinstance(payload, dict) or any(
+        payload.get(key) != expected
+        for key, expected in (
+            ("user_id", str(request.user.pk)),
+            ("task_id", str(task.pk)),
+        )
+    ):
+        return None, None, "盘点入口已失效，请重新扫描资产二维码。", "invalid"
+    identity = AssetQrIdentity.objects.select_related("asset").filter(
+        pk=payload.get("identity_id"),
+        company=task.company,
+        status="active",
+        label_status="attached",
+        asset__company=task.company,
+    ).first()
+    if identity is None:
+        return None, None, "二维码无效、已失效或标签尚未启用，本次扫码不会计入进度。", "invalid"
+    row = task.task_assets.filter(asset=identity.asset).first()
+    if row is None:
+        return identity, None, "此二维码有效，但对应资产不在本次盘点范围内（非本任务资产）。", "non_task"
+    return identity, row, None, None
+
+
+def _begin_scan_context(request, task, identity):
+    context_key = uuid.uuid4().hex
+    request.session[_scan_context_session_key(task)] = {
+        "key": context_key,
+        "identity_id": str(identity.pk),
+    }
+    response = redirect(
+        "inventory:task-scan-context",
+        pk=task.pk,
+        context_key=context_key,
+    )
+    return _protect_scan_response(response)
 
 
 def _submitted_qr_token(value):
@@ -274,6 +337,11 @@ def task_list(request):
     query = (request.GET.get("q") or "").strip()
     if query:
         queryset = queryset.filter(Q(task_code__icontains=query) | Q(name__icontains=query))
+    page_obj = Paginator(queryset.order_by("-created_at"), 25).get_page(
+        request.GET.get("page")
+    )
+    pagination_params = request.GET.copy()
+    pagination_params.pop("page", None)
     can_create = bool(roles.intersection({"finance", "equipment"})) or bool(
         "department_manager" in roles
         and resolve_department_ids(request.user, company)
@@ -282,7 +350,9 @@ def task_list(request):
         request,
         "inventory/task_list.html",
         {
-            "tasks": queryset.order_by("-created_at"),
+            "tasks": page_obj,
+            "page_obj": page_obj,
+            "pagination_query": pagination_params.urlencode(),
             "status": status,
             "query": query,
             "status_choices": InventoryTask.Status.choices,
@@ -452,17 +522,23 @@ def task_detail(request, pk):
     for row in rows:
         scans = list(row.scans.all())
         resolutions = list(row.resolutions.all())
+        effective_scan = next((item for item in scans if item.is_effective), None)
+        active_resolution = next(
+            (item for item in resolutions if item.status == "active"), None
+        )
         row_items.append(
             {
                 "row": row,
-                "scan": next((item for item in scans if item.is_effective), None),
+                "scan": effective_scan,
                 "scan_history": scans,
-                "resolution": next(
-                    (item for item in resolutions if item.status == "active"), None
-                ),
+                "resolution": active_resolution,
                 "resolution_history": resolutions,
                 "expected_status_label": ASSET_STATUS_LABELS.get(
                     row.expected_asset_status, row.expected_asset_status
+                ),
+                "actual_status_label": ASSET_STATUS_LABELS.get(
+                    effective_scan.actual_status if effective_scan else "",
+                    effective_scan.actual_status if effective_scan else "",
                 ),
                 "can_upload_scan": any(
                     item.is_effective
@@ -565,45 +641,56 @@ def task_scan_entry(request, pk):
     if not can_scan_inventory_task(request.user, task):
         raise PermissionDenied("您不是此任务的有效执行人，或任务已停止扫码。")
     if request.method == "POST":
-        token = _submitted_qr_token(request.POST.get("token"))
-        if not token:
-            return _render_scan(
-                request,
-                "inventory/scan_entry.html",
-                {"task": task, "summary": inventory_task_summary(task), "error": "请扫描或输入二维码 Token。"},
+        bridge = request.POST.get("scan_bridge")
+        if bridge:
+            identity, row, error, error_kind = _identity_and_row_from_bridge(
+                request, task, bridge
             )
-        identity = AssetQrIdentity.objects.select_related("asset").filter(
-            company=task.company,
-            public_token=token,
-            status="active",
-            label_status="attached",
-            asset__company=task.company,
-        ).first()
-        row = None
-        if identity is not None:
-            row = task.task_assets.filter(asset=identity.asset).first()
-        if identity is None or row is None:
+        else:
+            token = _submitted_qr_token(request.POST.get("token"))
+            if not token:
+                return _render_scan(
+                    request,
+                    "inventory/scan_entry.html",
+                    {
+                        "task": task,
+                        "summary": inventory_task_summary(task),
+                        "error": "请扫描标签上的完整二维码，或从资产二维码页面点击“录入本次盘点”。",
+                        "error_kind": "invalid",
+                    },
+                )
+            identity = AssetQrIdentity.objects.select_related("asset").filter(
+                company=task.company,
+                public_token=token,
+                status="active",
+                label_status="attached",
+                asset__company=task.company,
+            ).first()
+            if identity is None:
+                row = None
+                error = "二维码无效、已失效或标签尚未启用，本次扫码不会计入进度。"
+                error_kind = "invalid"
+            else:
+                row = task.task_assets.filter(asset=identity.asset).first()
+                if row is None:
+                    error = "此二维码有效，但对应资产不在本次盘点范围内（非本任务资产）。"
+                    error_kind = "non_task"
+                else:
+                    error = None
+                    error_kind = None
+        if error:
             return _render_scan(
                 request,
                 "inventory/scan_entry.html",
                 {
                     "task": task,
                     "summary": inventory_task_summary(task),
-                    "error": "二维码无效或为非本任务资产，本次扫码不会计入进度。",
+                    "error": error,
+                    "error_kind": error_kind,
                 },
                 status=403,
             )
-        context_key = uuid.uuid4().hex
-        request.session[_scan_context_session_key(task)] = {
-            "key": context_key,
-            "identity_id": str(identity.pk),
-        }
-        response = redirect(
-            "inventory:task-scan-context",
-            pk=task.pk,
-            context_key=context_key,
-        )
-        return _protect_scan_response(response)
+        return _begin_scan_context(request, task, identity)
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET", "POST"])
     return _render_scan(
@@ -637,10 +724,18 @@ def task_scan_context(request, pk, context_key):
     row = None
     if identity is not None:
         row = task.task_assets.filter(asset=identity.asset).first()
-    if identity is None or row is None:
+    if identity is None:
         request.session.pop(_scan_context_session_key(task), None)
-        raise PermissionDenied("二维码无效或为非本任务资产，本次扫码不会计入进度。")
-    form = InventoryScanForm(request.POST or None, actor=request.user, task=task)
+        raise PermissionDenied("二维码无效、已失效或标签尚未启用，请重新扫描。")
+    if row is None:
+        request.session.pop(_scan_context_session_key(task), None)
+        raise PermissionDenied("此二维码有效，但对应资产是非本任务资产。")
+    form = InventoryScanForm(
+        request.POST or None,
+        actor=request.user,
+        task=task,
+        task_asset=row,
+    )
     if request.method == "POST" and form.is_valid():
         try:
             scan = scan_inventory_asset(
@@ -666,7 +761,15 @@ def task_scan_context(request, pk, context_key):
     return _render_scan(
         request,
         "inventory/scan_form.html",
-        {"task": task, "row": row, "form": form, "supplemental": False},
+        {
+            "task": task,
+            "row": row,
+            "form": form,
+            "supplemental": False,
+            "expected_status_label": ASSET_STATUS_LABELS.get(
+                row.expected_asset_status, row.expected_asset_status
+            ),
+        },
     )
 
 
@@ -798,7 +901,10 @@ def task_supplement(request, task_pk, pk):
     ).exists():
         raise PermissionDenied("已有有效处理结论的行不得再执行受控补盘。")
     form = SupplementalInventoryScanForm(
-        request.POST or None, actor=request.user, task=task
+        request.POST or None,
+        actor=request.user,
+        task=task,
+        task_asset=row,
     )
     token = _submitted_qr_token(request.POST.get("public_token"))
     if request.method == "POST" and form.is_valid():
@@ -832,6 +938,9 @@ def task_supplement(request, task_pk, pk):
             "row": row,
             "form": form,
             "supplemental": True,
+            "expected_status_label": ASSET_STATUS_LABELS.get(
+                row.expected_asset_status, row.expected_asset_status
+            ),
         },
     )
 

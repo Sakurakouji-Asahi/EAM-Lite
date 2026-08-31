@@ -172,8 +172,8 @@ def asset_transfer(request, pk):
     asset = _asset(request, pk)
     return _action_form(
         request, asset=asset, action="transfer", form_class=AssetTransferForm,
-        title="调拨 / 责任人 / 位置变更",
-        description="保存后会追加完整 from/to 变动历史；页面旧值若已变化将拒绝覆盖。",
+        title="资产调拨 / 转交",
+        description="当前部门、责任人和位置已预填。只修改实际变化的项目，保存后系统会保留完整变动记录。",
         callback=lambda data: transfer_asset(
             actor=request.user, asset=asset,
             to_department=data["to_department"],

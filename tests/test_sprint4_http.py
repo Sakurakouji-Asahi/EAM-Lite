@@ -162,6 +162,23 @@ def test_non_finance_roles_cannot_read_or_write_f1_pages(client, role):
     assert not AssetFinance.objects.filter(asset=context["asset"]).exists()
 
 
+def test_management_sees_pending_finance_summary_without_mutating_confirmation_button(client):
+    context = _context()
+    confirm_url = reverse("finance:finance-confirm", args=[context["asset"].pk])
+
+    client.force_login(context["management"])
+    readonly = client.get(reverse("assets:asset-detail", args=[context["asset"].pk]))
+    assert readonly.status_code == 200
+    assert "财务资料尚未确认".encode() in readonly.content
+    assert confirm_url.encode() not in readonly.content
+    assert client.get(confirm_url).status_code == 403
+
+    client.force_login(context["finance"])
+    writable = client.get(reverse("assets:asset-detail", args=[context["asset"].pk]))
+    assert writable.status_code == 200
+    assert confirm_url.encode() in writable.content
+
+
 def test_finance_can_write_and_management_is_strictly_read_only(client):
     context = _context()
     pending_url = reverse("finance:pending-list")

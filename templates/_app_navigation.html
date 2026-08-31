@@ -3,11 +3,11 @@
 
   {% if app_navigation.show_assets %}
     <details class="app-nav-group{% if app_navigation.active_section == 'assets' %} is-current{% endif %}" data-nav-section="assets"{% if app_navigation.active_section == 'assets' %} open{% endif %}>
-      <summary>资产</summary>
+      <summary>资产管理</summary>
       <div class="app-nav-items">
         <a class="app-nav-link{% if app_navigation.active_item == 'asset_ledger' %} active{% endif %}" href="{% url 'assets:asset-list' %}" data-nav-item="asset_ledger"{% if app_navigation.active_item == 'asset_ledger' %} aria-current="page"{% endif %}>资产台账</a>
         {% if app_navigation.asset.can_create %}<a class="app-nav-link{% if app_navigation.active_item == 'asset_create' %} active{% endif %}" href="{% url 'assets:asset-create' %}" data-nav-item="asset_create"{% if app_navigation.active_item == 'asset_create' %} aria-current="page"{% endif %}>新增资产</a>{% endif %}
-        <a class="app-nav-link" href="{% url 'supplies:individual-durable-list' %}" data-nav-item="individual_durables">逐件低值资产</a>
+        <a class="app-nav-link{% if app_navigation.active_item == 'individual_durables' %} active{% endif %}" href="{% url 'supplies:individual-durable-list' %}" data-nav-item="individual_durables"{% if app_navigation.active_item == 'individual_durables' %} aria-current="page"{% endif %}>逐件低值耐用品</a>
         {% if app_navigation.asset.can_manage_labels %}<a class="app-nav-link{% if app_navigation.active_item == 'asset_labels' %} active{% endif %}" href="{% url 'assets:label-queue' %}" data-nav-item="asset_labels"{% if app_navigation.active_item == 'asset_labels' %} aria-current="page"{% endif %}>标签与二维码</a>{% endif %}
         {% if app_navigation.asset.can_view_maintenance_plans %}<a class="app-nav-link{% if app_navigation.active_item == 'maintenance_plans' %} active{% endif %}" href="{% url 'maintenance:plan-list' %}" data-nav-item="maintenance_plans"{% if app_navigation.active_item == 'maintenance_plans' %} aria-current="page"{% endif %}>保养计划</a>{% endif %}
       </div>
@@ -21,7 +21,7 @@
         <a class="app-nav-link{% if app_navigation.active_item == 'supply_overview' %} active{% endif %}" href="{% url 'supplies:dashboard' %}" data-nav-item="supply_overview"{% if app_navigation.active_item == 'supply_overview' %} aria-current="page"{% endif %}>库存总览</a>
         {% if app_navigation.supplies.can_view_stock %}<a class="app-nav-link{% if app_navigation.active_item == 'supply_stock' %} active{% endif %}" href="{% url 'supplies:stock-balance-list' %}" data-nav-item="supply_stock"{% if app_navigation.active_item == 'supply_stock' %} aria-current="page"{% endif %}>当前库存</a>{% endif %}
         {% if app_navigation.supplies.can_view_documents %}<a class="app-nav-link{% if app_navigation.active_item == 'supply_documents' %} active{% endif %}" href="{% url 'supplies:document-list' %}" data-nav-item="supply_documents"{% if app_navigation.active_item == 'supply_documents' %} aria-current="page"{% endif %}>入库、领用与调拨</a>{% endif %}
-        {% if app_navigation.supplies.can_view_custodies %}<a class="app-nav-link{% if app_navigation.active_item == 'supply_custodies' %} active{% endif %}" href="{% url 'supplies:custody-list' %}" data-nav-item="supply_custodies"{% if app_navigation.active_item == 'supply_custodies' %} aria-current="page"{% endif %}>员工／部门保管</a>{% endif %}
+        {% if app_navigation.supplies.can_view_custodies %}<a class="app-nav-link{% if app_navigation.active_item == 'supply_custodies' %} active{% endif %}" href="{% url 'supplies:custody-list' %}" data-nav-item="supply_custodies"{% if app_navigation.active_item == 'supply_custodies' %} aria-current="page"{% endif %}>耐用品保管</a>{% endif %}
         {% if app_navigation.supplies.can_view_items %}<a class="app-nav-link{% if app_navigation.active_item == 'supply_items' %} active{% endif %}" href="{% url 'supplies:item-list' %}" data-nav-item="supply_items"{% if app_navigation.active_item == 'supply_items' %} aria-current="page"{% endif %}>物品档案</a>{% endif %}
       </div>
     </details>
@@ -29,7 +29,7 @@
 
   {% if app_navigation.show_tasks %}
     <details class="app-nav-group{% if app_navigation.active_section == 'tasks' %} is-current{% endif %}" data-nav-section="tasks"{% if app_navigation.active_section == 'tasks' %} open{% endif %}>
-      <summary>任务中心</summary>
+      <summary>我的工作</summary>
       <div class="app-nav-items">
         <a class="app-nav-link{% if app_navigation.active_item == 'task_center' %} active{% endif %}" href="{% url 'task-center' %}" data-nav-item="task_center"{% if app_navigation.active_item == 'task_center' %} aria-current="page"{% endif %}>我的待办</a>
         {% if app_navigation.tasks.can_view_my_assets %}<a class="app-nav-link{% if app_navigation.active_item == 'my_assets' %} active{% endif %}" href="{% url 'assets:asset-list' %}" data-nav-item="my_assets"{% if app_navigation.active_item == 'my_assets' %} aria-current="page"{% endif %}>我的资产</a>{% endif %}
@@ -45,7 +45,7 @@
 
   {% if app_navigation.show_finance_reports %}
     <details class="app-nav-group{% if app_navigation.active_section == 'finance_reports' %} is-current{% endif %}" data-nav-section="finance_reports"{% if app_navigation.active_section == 'finance_reports' %} open{% endif %}>
-      <summary>财务与报表</summary>
+      <summary>报表与财务</summary>
       <div class="app-nav-items">
         {% if app_navigation.finance_reports.can_manage_finance %}<a class="app-nav-link{% if app_navigation.active_item == 'pending_finance' %} active{% endif %}" href="{% url 'finance:pending-list' %}" data-nav-item="pending_finance"{% if app_navigation.active_item == 'pending_finance' %} aria-current="page"{% endif %}>待财务确认</a>
         <a class="app-nav-link{% if app_navigation.active_item == 'depreciation' %} active{% endif %}" href="{% url 'finance:batch-list' %}" data-nav-item="depreciation"{% if app_navigation.active_item == 'depreciation' %} aria-current="page"{% endif %}>固定资产折旧</a>{% endif %}
@@ -57,20 +57,20 @@
 
   {% if app_navigation.show_settings %}
     <details class="app-nav-group{% if app_navigation.active_section == 'settings' %} is-current{% endif %}" data-nav-section="settings"{% if app_navigation.active_section == 'settings' %} open{% endif %}>
-      <summary>系统设置</summary>
+      <summary>基础资料与设置</summary>
       <div class="app-nav-items">
         <a class="app-nav-link{% if app_navigation.active_item == 'settings_center' %} active{% endif %}" href="{% url 'settings-center' %}" data-nav-item="settings_center"{% if app_navigation.active_item == 'settings_center' %} aria-current="page"{% endif %}>设置首页</a>
         {% if app_navigation.settings.can_manage_employee %}<a class="app-nav-link{% if app_navigation.active_item == 'employee' %} active{% endif %}" href="{% url 'masterdata:employee-list' %}" data-nav-item="employee"{% if app_navigation.active_item == 'employee' %} aria-current="page"{% endif %}>人员</a>{% endif %}
         {% if app_navigation.settings.can_view_asset_category and 'equipment' in app_navigation.roles %}<a class="app-nav-link{% if app_navigation.active_item == 'asset_category' %} active{% endif %}" href="{% url 'masterdata:category-list' %}" data-nav-item="asset_category"{% if app_navigation.active_item == 'asset_category' %} aria-current="page"{% endif %}>资产分类</a>{% endif %}
         {% if app_navigation.settings.can_view_location and 'equipment' in app_navigation.roles %}<a class="app-nav-link{% if app_navigation.active_item == 'location' %} active{% endif %}" href="{% url 'masterdata:location-list' %}" data-nav-item="location"{% if app_navigation.active_item == 'location' %} aria-current="page"{% endif %}>位置</a>{% endif %}
-        {% if app_navigation.settings.can_manage_supply_categories and 'warehouse' in app_navigation.roles %}<a class="app-nav-link{% if app_navigation.active_item == 'supply_category' %} active{% endif %}" href="{% url 'supplies:category-list' %}" data-nav-item="supply_category"{% if app_navigation.active_item == 'supply_category' %} aria-current="page"{% endif %}>物品分类</a>{% endif %}
-        {% if app_navigation.settings.can_manage_supply_warehouses and 'warehouse' in app_navigation.roles %}<a class="app-nav-link{% if app_navigation.active_item == 'supply_warehouse' %} active{% endif %}" href="{% url 'supplies:warehouse-list' %}" data-nav-item="supply_warehouse"{% if app_navigation.active_item == 'supply_warehouse' %} aria-current="page"{% endif %}>仓库档案</a>{% endif %}
+        {% if app_navigation.settings.can_manage_supply_categories %}<a class="app-nav-link{% if app_navigation.active_item == 'supply_category' %} active{% endif %}" href="{% url 'supplies:category-list' %}" data-nav-item="supply_category"{% if app_navigation.active_item == 'supply_category' %} aria-current="page"{% endif %}>物品分类</a>{% endif %}
+        {% if app_navigation.settings.can_manage_supply_warehouses %}<a class="app-nav-link{% if app_navigation.active_item == 'supply_warehouse' %} active{% endif %}" href="{% url 'supplies:warehouse-list' %}" data-nav-item="supply_warehouse"{% if app_navigation.active_item == 'supply_warehouse' %} aria-current="page"{% endif %}>仓库档案</a>{% endif %}
         {% if app_navigation.settings.can_manage_supply_items and not app_navigation.show_supplies %}<a class="app-nav-link{% if app_navigation.active_item == 'supply_item' %} active{% endif %}" href="{% url 'supplies:item-list' %}" data-nav-item="supply_item"{% if app_navigation.active_item == 'supply_item' %} aria-current="page"{% endif %}>物品档案</a>{% endif %}
         {% if app_navigation.settings.can_manage_finance %}<a class="app-nav-link{% if app_navigation.active_item == 'finance_policy' or app_navigation.active_item == 'fixed_asset_category' or app_navigation.active_item == 'finance_settings' %} active{% endif %}" href="{% url 'finance:policy-list' %}" data-nav-item="finance_policy"{% if app_navigation.active_item == 'finance_policy' or app_navigation.active_item == 'fixed_asset_category' or app_navigation.active_item == 'finance_settings' %} aria-current="page"{% endif %}>财务政策</a>{% endif %}
         {% if app_navigation.settings.can_view_coding_scheme and 'system_admin' in app_navigation.roles %}<a class="app-nav-link{% if app_navigation.active_item == 'coding_scheme' %} active{% endif %}" href="{% url 'masterdata:coding-scheme-list' %}" data-nav-item="coding_scheme"{% if app_navigation.active_item == 'coding_scheme' %} aria-current="page"{% endif %}>编码规则</a>{% endif %}
         {% if app_navigation.settings.can_view_user_permissions %}<a class="app-nav-link{% if app_navigation.active_item == 'user_permissions' %} active{% endif %}" href="{% url 'masterdata:user-permissions-list' %}" data-nav-item="user_permissions"{% if app_navigation.active_item == 'user_permissions' %} aria-current="page"{% endif %}>用户与权限</a>{% endif %}
         {% if app_navigation.settings.can_access_imports %}<a class="app-nav-link{% if app_navigation.active_item == 'imports' %} active{% endif %}" href="{% url 'imports:home' %}" data-nav-item="imports"{% if app_navigation.active_item == 'imports' %} aria-current="page"{% endif %}>初始化与 Excel 导入</a>{% endif %}
-        {% if app_navigation.settings.can_view_audit %}<a class="app-nav-link{% if app_navigation.active_item == 'audit' %} active{% endif %}" href="{% url 'audit:log-list' %}" data-nav-item="audit"{% if app_navigation.active_item == 'audit' %} aria-current="page"{% endif %}>操作审计</a>{% endif %}
+        {% if app_navigation.settings.can_view_audit %}<a class="app-nav-link{% if app_navigation.active_item == 'audit' %} active{% endif %}" href="{% url 'audit:log-list' %}" data-nav-item="audit"{% if app_navigation.active_item == 'audit' %} aria-current="page"{% endif %}>操作日志</a>{% endif %}
         {% if app_navigation.settings.can_manage_backups %}<a class="app-nav-link{% if app_navigation.active_item == 'backup' %} active{% endif %}" href="{% url 'operations:backup-list' %}" data-nav-item="backup"{% if app_navigation.active_item == 'backup' %} aria-current="page"{% endif %}>数据备份</a>{% endif %}
       </div>
     </details>

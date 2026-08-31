@@ -694,11 +694,22 @@ def document_list(request):
     item_value = request.GET.get("item", "").strip()
     date_from_value = request.GET.get("date_from", "").strip()
     date_to_value = request.GET.get("date_to", "").strip()
+    return_intent = request.GET.get("intent", "").strip() == "consumable_return"
     if query:
         queryset = queryset.filter(
             Q(document_no__icontains=query)
             | Q(external_reference__icontains=query)
             | Q(counterparty_name__icontains=query)
+            | Q(lines__item__item_code__icontains=query)
+            | Q(lines__item__name__icontains=query)
+        )
+    if return_intent:
+        document_type = SupplyDocumentType.ISSUE
+        status = SupplyDocumentStatus.POSTED
+        queryset = queryset.filter(
+            document_type=SupplyDocumentType.ISSUE,
+            status=SupplyDocumentStatus.POSTED,
+            lines__item__item_type=SupplyItemType.CONSUMABLE,
         )
     if document_type in SPRINT15_DOCUMENT_TYPES:
         queryset = queryset.filter(document_type=document_type)
@@ -729,11 +740,31 @@ def document_list(request):
     if date_to_value:
         queryset = queryset.filter(business_date__lte=date_to) if date_to else queryset.none()
     queryset = queryset.distinct().order_by("-business_date", "-document_no")
+    page_obj = _page(queryset, request)
+    editable_types = {
+        SupplyDocumentType.OPENING,
+        SupplyDocumentType.RECEIPT,
+        SupplyDocumentType.ISSUE,
+        SupplyDocumentType.TRANSFER,
+    }
+    for document in page_obj.object_list:
+        document.ui_can_manage = can_create_supply_document(
+            request.user, document=document
+        )
+        document.ui_can_edit = bool(
+            document.ui_can_manage
+            and document.status == SupplyDocumentStatus.DRAFT
+            and document.document_type in editable_types
+        )
+        document.ui_can_post = bool(
+            document.status == SupplyDocumentStatus.DRAFT
+            and can_post_supply_document(request.user, document=document)
+        )
     return render(
         request,
         "supplies/document_list.html",
         {
-            "page_obj": _page(queryset, request),
+            "page_obj": page_obj,
             "pagination_query": _pagination_query(request),
             "query": query,
             "selected_document_type": document_type,
@@ -742,13 +773,13 @@ def document_list(request):
             "selected_item": item_value,
             "date_from": date_from_value,
             "date_to": date_to_value,
+            "return_intent": return_intent,
             "document_types": SPRINT15_DOCUMENT_TYPE_CHOICES,
             "statuses": SPRINT15_STATUS_CHOICES,
             "warehouses": scoped_supply_warehouses(request.user, company).order_by(
                 "normalized_code"
             ),
             "can_manage": can_create_supply_document(request.user),
-            "can_post": can_post_supply_document(request.user),
         },
     )
 
@@ -787,6 +818,11 @@ def document_create(request, document_type):
             _service_error(form, exc)
         else:
             messages.success(request, "库存单据草稿已创建，尚未影响库存。")
+            if (
+                request.POST.get("next_action") == "post"
+                and can_post_supply_document(request.user, document=document)
+            ):
+                return redirect("supplies:document-post", pk=document.pk)
             return redirect("supplies:document-detail", pk=document.pk)
     return render(
         request,
@@ -803,6 +839,7 @@ def document_create(request, document_type):
                 SupplyDocumentType.ISSUE: "新建领用单",
                 SupplyDocumentType.TRANSFER: "新建仓库调拨单",
             }[document_type],
+            "can_continue_to_post": can_post_supply_document(request.user),
         },
     )
 
@@ -864,6 +901,11 @@ def document_edit(request, pk):
             _service_error(form, exc)
         else:
             messages.success(request, "库存单据草稿已更新，库存仍未变化。")
+            if (
+                request.POST.get("next_action") == "post"
+                and can_post_supply_document(request.user, document=document)
+            ):
+                return redirect("supplies:document-post", pk=document.pk)
             return redirect("supplies:document-detail", pk=document.pk)
     return render(
         request,
@@ -876,6 +918,9 @@ def document_edit(request, pk):
             "show_entered_cost": document.document_type
             in {SupplyDocumentType.OPENING, SupplyDocumentType.RECEIPT},
             "title": f"编辑草稿 {document.document_no}",
+            "can_continue_to_post": can_post_supply_document(
+                request.user, document=document
+            ),
         },
     )
 
@@ -1220,14 +1265,14 @@ def custody_list(request):
         queryset = queryset.filter(
             item__normalized_item_code=normalize_identifier(item_value)
         )
-    department_id = _uuid_or_none(department_value)
+    department_id = _int_or_none(department_value)
     if department_value:
         queryset = (
             queryset.filter(department_id=department_id)
             if department_id
             else queryset.none()
         )
-    employee_id = _uuid_or_none(employee_value)
+    employee_id = _int_or_none(employee_value)
     if employee_value:
         queryset = (
             queryset.filter(employee_id=employee_id)
@@ -1278,11 +1323,30 @@ def custody_list(request):
         queryset = queryset.filter(parent_custody__isnull=False)
     else:
         source_type = ""
+    page_obj = _page(queryset.order_by("-started_on", "-created_at"), request)
+    for custody in page_obj.object_list:
+        custody.ui_can_return = bool(
+            custody.status == "open"
+            and custody.item.is_active
+            and can_manage_supply_custody(
+                request.user, custody, action="return_draft"
+            )
+        )
+        custody.ui_can_transfer = bool(
+            custody.status == "open"
+            and can_manage_supply_custody(
+                request.user, custody, action="transfer"
+            )
+        )
+        custody.ui_can_write_off = bool(
+            custody.status == "open"
+            and can_manage_supply_custody(request.user, custody, action="loss")
+        )
     return render(
         request,
         "supplies/custody_list.html",
         {
-            "page_obj": _page(queryset.order_by("-started_on", "-created_at"), request),
+            "page_obj": page_obj,
             "pagination_query": _pagination_query(request),
             "query": query,
             "selected_item": item_value,
@@ -1475,6 +1539,7 @@ def durable_return_create(request, pk):
             "submit_label": "创建归还草稿",
             "warning": "归还将在库存单据过账时原子减少保管并增加目标仓库库存。",
             "show_cost": can_view_supply_cost(request.user),
+            "button_class": "primary",
         },
     )
 
@@ -1517,6 +1582,7 @@ def custody_transfer(request, pk):
             "submit_label": "确认转交",
             "warning": "每次转交新建目标保管，不与其他来源或成本批次自动合并。",
             "show_cost": can_view_supply_cost(request.user),
+            "button_class": "primary",
         },
     )
 
@@ -1562,6 +1628,7 @@ def custody_write_off(request, pk, action):
             "submit_label": f"确认{title[-2:]}",
             "warning": "该动作会减少当前在管数量和管理金额，且本 Sprint 不提供撤销。",
             "show_cost": can_view_supply_cost(request.user),
+            "button_class": "danger",
         },
     )
 
@@ -1605,7 +1672,7 @@ def individual_durable_create(request):
 @login_required
 def individual_durable_list(request):
     return redirect(
-        f"{reverse('assets:asset-list')}?accounting_treatment=controlled_non_fixed"
+        f"{reverse('assets:asset-list')}?view=individual_durable"
     )
 
 
@@ -1906,13 +1973,16 @@ def _count_confirm_action(request, *, task, title, warning, service, success):
     require_execute_supply_count_task(request.user, task)
     error = None
     if request.method == "POST":
-        try:
-            service(task=task, actor=request.user, request=request)
-        except ValidationError as exc:
-            error = "；".join(getattr(exc, "messages", [str(exc)]))
+        if request.POST.get("confirm") != "on":
+            error = "请先勾选确认，核对本次操作影响后再提交。"
         else:
-            messages.success(request, success)
-            return redirect("supplies:count-task-detail", pk=task.pk)
+            try:
+                service(task=task, actor=request.user, request=request)
+            except ValidationError as exc:
+                error = "；".join(getattr(exc, "messages", [str(exc)]))
+            else:
+                messages.success(request, success)
+                return redirect("supplies:count-task-detail", pk=task.pk)
     return render(
         request,
         "supplies/count_action_confirm.html",

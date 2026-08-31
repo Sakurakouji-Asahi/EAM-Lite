@@ -5,6 +5,7 @@ from __future__ import annotations
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.paginator import Paginator
 from django.core.files.storage import default_storage
 from django.db.models import F, IntegerField, Q
 from django.db.models.expressions import ExpressionWrapper
@@ -267,11 +268,17 @@ def clearance_list(request):
             output_field=IntegerField(),
         ),
     )
+    clearances = clearances.order_by("-initiated_at", "id")
+    page_obj = Paginator(clearances, 25).get_page(request.GET.get("page"))
+    pagination_params = request.GET.copy()
+    pagination_params.pop("page", None)
     return render(
         request,
         "offboarding/clearance_list.html",
         {
-            "clearances": clearances,
+            "clearances": page_obj,
+            "page_obj": page_obj,
+            "pagination_query": pagination_params.urlencode(),
             "status_choices": EmployeeAssetClearance.Status.choices,
             "filters": {"q": query, "status": status},
             "can_initiate": "hr" in role_names_for(request.user),
