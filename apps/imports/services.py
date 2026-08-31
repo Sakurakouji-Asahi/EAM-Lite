@@ -14,6 +14,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from pathlib import PurePosixPath
 
 from defusedxml import ElementTree as DefusedElementTree
 
@@ -727,6 +728,19 @@ def _validate_xlsx_container(data):
             members = archive.infolist()
             if len(members) > MAX_ARCHIVE_MEMBERS:
                 raise ValidationError("XLSX 内部文件数量异常。")
+            normalized_member_names = []
+            for item in members:
+                raw_name = item.filename.replace("\\", "/")
+                member_path = PurePosixPath(raw_name)
+                if (
+                    not raw_name
+                    or member_path.is_absolute()
+                    or ".." in member_path.parts
+                ):
+                    raise ValidationError("XLSX 包含不安全的内部路径。")
+                normalized_member_names.append(raw_name.casefold())
+            if len(set(normalized_member_names)) != len(normalized_member_names):
+                raise ValidationError("XLSX 包含重复的内部文件名，已拒绝。")
             total_uncompressed = 0
             for item in members:
                 if item.file_size < 0 or item.compress_size < 0:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from django.core.exceptions import ValidationError
@@ -32,7 +32,13 @@ def business_date(value=None) -> date:
 
     if value is None:
         return timezone.localdate(timezone=SHANGHAI)
-    if not isinstance(value, date):
+    if isinstance(value, datetime):
+        if timezone.is_naive(value):
+            raise ValidationError(
+                {"termination_date": "日期时间必须包含时区。"}
+            )
+        return value.astimezone(SHANGHAI).date()
+    if type(value) is not date:
         raise ValidationError({"termination_date": "必须是有效日期。"})
     return value
 

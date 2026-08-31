@@ -789,6 +789,24 @@ def save_asset_finance_draft(*, actor, asset, data, request=None):
         values["original_cost"] = _money(values["original_cost"], field_name="original_cost", allow_none=True)
         if values["original_cost"] is not None and values["original_cost"] < 0:
             raise ValidationError({"original_cost": "原值不得为负数。"})
+    if values.get("fixed_asset_category") is not None:
+        FixedAssetCategory = models["FixedAssetCategory"]
+        category_id = getattr(
+            values["fixed_asset_category"],
+            "pk",
+            values["fixed_asset_category"],
+        )
+        try:
+            category = FixedAssetCategory.objects.select_for_update().get(
+                pk=category_id,
+                company=asset.company,
+                is_active=True,
+            )
+        except FixedAssetCategory.DoesNotExist as exc:
+            raise ValidationError(
+                {"fixed_asset_category": "固定资产类别不存在、已停用或不属于当前公司。"}
+            ) from exc
+        values["fixed_asset_category"] = category
     finance, _ = Finance.objects.select_for_update().get_or_create(company=asset.company, asset=asset)
     if finance.finance_confirmed_at is not None:
         raise ValidationError("已确认财务资料不可原地修改。")
@@ -1110,19 +1128,32 @@ def _issue_code(*, actor, asset, effective_date, reason, idempotency_key):
             )
     counter.current_value = next_value
     counter.save(update_fields=["current_value", "updated_at"])
-    issued = IssuedCode.objects.create(
-        company=asset.company,
-        coding_scheme=scheme,
-        scope_key=scope_key,
-        sequence_value=next_value,
-        display_code=display,
-        normalized_code=normalize_code(display),
-        effective_date=effective_date,
-        effective_date_reason=reason,
-        status="active",
-        idempotency_key=idempotency_key,
-        issued_by=actor,
-    )
+    try:
+        issued = IssuedCode.objects.create(
+            company=asset.company,
+            coding_scheme=scheme,
+            scope_key=scope_key,
+            sequence_value=next_value,
+            display_code=display,
+            normalized_code=normalize_code(display),
+            effective_date=effective_date,
+            effective_date_reason=reason,
+            status="active",
+            idempotency_key=idempotency_key,
+            issued_by=actor,
+        )
+    except IntegrityError as exc:
+        if connection.vendor == "postgresql" and getattr(
+            exc.__cause__, "sqlstate", None
+        ) != "23505":
+            raise
+        # A different scheme/version can legitimately render a code that was
+        # issued in the past.  The permanent registry must keep rejecting that
+        # value, but the controlled workflow should return a business error
+        # and roll back the counter instead of leaking a database 500 response.
+        raise ValidationError(
+            {"asset_code": "生成的正式编号已被永久占用，请检查编码方案后重试。"}
+        ) from exc
     History.objects.create(
         company=asset.company,
         asset=asset,
@@ -1704,8 +1735,21 @@ def confirm_asset_finance(
     values["original_cost"] = original
     threshold = _get_warning_amount(company)
     fixed_category = values.get("fixed_asset_category")
-    if fixed_category is None and values.get("fixed_asset_category_id"):
-        fixed_category = models["FixedAssetCategory"].objects.select_for_update().get(pk=values["fixed_asset_category_id"])
+    fixed_category_id = (
+        getattr(fixed_category, "pk", fixed_category)
+        or values.get("fixed_asset_category_id")
+    )
+    if fixed_category_id:
+        FixedAssetCategory = models["FixedAssetCategory"]
+        try:
+            fixed_category = FixedAssetCategory.objects.select_for_update().get(
+                pk=fixed_category_id,
+                company=company,
+            )
+        except FixedAssetCategory.DoesNotExist as exc:
+            raise ValidationError(
+                {"fixed_asset_category": "固定资产类别不存在或不属于当前公司。"}
+            ) from exc
         values["fixed_asset_category"] = fixed_category
         values.pop("fixed_asset_category_id", None)
     policy = result = resolved = None
@@ -2121,6 +2165,16 @@ def _profile_events_snapshot(profile, *, lock=False):
             "id": str(event.pk),
             "event_type": event.event_type,
             "effective_date": event.effective_date.isoformat(),
+            "source_disposal_id": (
+                str(event.source_disposal_id)
+                if event.source_disposal_id is not None
+                else None
+            ),
+            "reverses_event_id": (
+                str(event.reverses_event_id)
+                if event.reverses_event_id is not None
+                else None
+            ),
         }
         for event in queryset
     ]
@@ -2132,7 +2186,34 @@ def _event_eligibility(profile, events, *, through_date):
     domain = _domain()
     suspensions = []
     suspended_from = None
-    stop_date = None
+    manual_stop_date = None
+    disposal_stops = {
+        event["id"]: {
+            "effective_date": date.fromisoformat(event["effective_date"]),
+            "source_disposal_id": event.get("source_disposal_id"),
+        }
+        for event in events
+        if event["event_type"] == "disposal_stop"
+    }
+    restored_stop_ids = set()
+    for event in events:
+        if event["event_type"] != "disposal_restore":
+            continue
+        reversed_id = event.get("reverses_event_id")
+        if not reversed_id or reversed_id not in disposal_stops:
+            raise ValidationError("Profile 处置停止/恢复事件链无效。")
+        if reversed_id in restored_stop_ids:
+            raise ValidationError("同一处置停止事件存在重复恢复记录。")
+        reversed_stop = disposal_stops[reversed_id]
+        if (
+            date.fromisoformat(event["effective_date"])
+            != reversed_stop["effective_date"]
+            or event.get("source_disposal_id")
+            != reversed_stop["source_disposal_id"]
+        ):
+            raise ValidationError("处置恢复事件必须与原停止事件及来源处置完全一致。")
+        restored_stop_ids.add(reversed_id)
+
     for event in events:
         effective = date.fromisoformat(event["effective_date"])
         if event["event_type"] == "suspend":
@@ -2145,10 +2226,27 @@ def _event_eligibility(profile, events, *, through_date):
             suspensions.append(domain.Period(suspended_from, effective))
             suspended_from = None
         elif event["event_type"] == "stop":
-            stop_date = domain.resolve_stop_date(
+            manual_stop_date = domain.resolve_stop_date(
                 event_date=effective, stop_rule=profile.stop_rule
             )
-            break
+        elif event["event_type"] not in {
+            "disposal_stop",
+            "disposal_restore",
+        }:
+            raise ValidationError("Profile 包含无法识别的折旧事件类型。")
+
+    active_disposal_stops = [
+        stop["effective_date"]
+        for event_id, stop in disposal_stops.items()
+        if event_id not in restored_stop_ids
+    ]
+    if len(active_disposal_stops) > 1:
+        raise ValidationError("Profile 同时存在多个未恢复的处置停止事件。")
+    if manual_stop_date is not None and active_disposal_stops:
+        raise ValidationError("Profile 同时存在人工停止和处置停止事件。")
+    stop_date = manual_stop_date
+    if stop_date is None and active_disposal_stops:
+        stop_date = active_disposal_stops[0]
     if suspended_from is not None:
         suspension_end = max(through_date, suspended_from + timedelta(days=1))
         suspensions.append(domain.Period(suspended_from, suspension_end))

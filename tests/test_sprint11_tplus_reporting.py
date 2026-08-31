@@ -342,7 +342,9 @@ def test_sqlite_reports_exclude_entry_from_draft_batch():
     assert tplus.entry_rows == ()
 
 def test_completed_disposal_uses_locked_snapshot_and_tplus_registered_totals():
-    context, asset, _qr = active_fixed_asset_context("S11DISPSNAP")[:3]
+    context, asset, _qr = active_fixed_asset_context(
+        "S11DISPSNAP", stop_rule="next_month"
+    )[:3]
     disposal = _initiate(
         context,
         asset,
@@ -401,7 +403,9 @@ def test_completed_disposal_uses_locked_snapshot_and_tplus_registered_totals():
 
 
 def test_dashboard_and_monthly_report_exclude_current_month_disposed_fixed_asset():
-    context, asset, _qr = active_fixed_asset_context("S11DASHDISP")[:3]
+    context, asset, _qr = active_fixed_asset_context(
+        "S11DASHDISP", stop_rule="next_month"
+    )[:3]
     period_start = timezone.localdate().replace(day=1)
     period_end = (period_start.replace(day=28) + timedelta(days=4)).replace(day=1)
     batch = generate_depreciation_batch(

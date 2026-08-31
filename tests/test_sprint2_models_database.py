@@ -342,12 +342,12 @@ def test_issued_code_model_delete_is_always_forbidden():
         row.delete()
 
 
-def test_postgresql_18_4_and_sprint2_guard_triggers_are_installed():
+def test_postgresql_18_6_and_sprint2_guard_triggers_are_installed():
     if connection.vendor != "postgresql":
         pytest.skip("Sprint 2 PostgreSQL acceptance requires PostgreSQL")
     with connection.cursor() as cursor:
         cursor.execute("SHOW server_version")
-        assert cursor.fetchone()[0].startswith("18.4")
+        assert cursor.fetchone()[0].startswith("18.6")
         expected_names = {
             "trg_coding_scheme_validate",
             "trg_coding_scheme_delete",

@@ -27,7 +27,7 @@ def test_acceptance_database_is_postgresql_with_integrity_triggers():
     assert connection.settings_dict["ENGINE"] == "django.db.backends.postgresql"
     with connection.cursor() as cursor:
         cursor.execute("SHOW server_version")
-        assert cursor.fetchone()[0].startswith("18.4")
+        assert cursor.fetchone()[0].startswith("18.6")
         cursor.execute(
             "SELECT count(*) FROM pg_trigger "
             "WHERE tgname LIKE 'trg_%' AND NOT tgisinternal"

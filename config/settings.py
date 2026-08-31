@@ -317,7 +317,8 @@ SESSION_EXPIRE_AT_BROWSER_CLOSE = read_bool_env(
 SECURE_SSL_REDIRECT = read_bool_env("SECURE_SSL_REDIRECT", "false")
 SESSION_COOKIE_SECURE = read_bool_env("SESSION_COOKIE_SECURE", "false")
 CSRF_COOKIE_SECURE = read_bool_env("CSRF_COOKIE_SECURE", "false")
-if read_bool_env("TRUST_PROXY_SSL_HEADER", "false"):
+TRUST_PROXY_SSL_HEADER = read_bool_env("TRUST_PROXY_SSL_HEADER", "false")
+if TRUST_PROXY_SSL_HEADER:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 TRUST_PROXY_CLIENT_IP = read_bool_env("TRUST_PROXY_CLIENT_IP", "false")
 TRUSTED_PROXY_NETWORKS = read_list_env(
@@ -344,29 +345,55 @@ if EAM_ENVIRONMENT == "production":
             "production QR_BASE_URL 必须是无端口的固定内网 DNS HTTPS 根地址；"
             "不得使用 IP、localhost 或临时主机名"
         )
-    if "*" in ALLOWED_HOSTS or _qr_hostname not in {
-        host.casefold() for host in ALLOWED_HOSTS
-    }:
+    if (
+        any("*" in host or host.startswith(".") for host in ALLOWED_HOSTS)
+        or _qr_hostname not in {host.casefold() for host in ALLOWED_HOSTS}
+    ):
         raise ImproperlyConfigured(
-            "production QR_BASE_URL 主机名必须精确列入 ALLOWED_HOSTS，且不得使用通配符"
+            "production QR_BASE_URL 主机名必须精确列入 ALLOWED_HOSTS，"
+            "且不得使用 * 或前导点通配配置"
         )
     if QR_BASE_URL not in {origin.rstrip("/") for origin in CSRF_TRUSTED_ORIGINS}:
         raise ImproperlyConfigured(
             "production QR_BASE_URL 必须精确列入 CSRF_TRUSTED_ORIGINS"
         )
-    if not (SECURE_SSL_REDIRECT and SESSION_COOKIE_SECURE and CSRF_COOKIE_SECURE):
+    if not (
+        SECURE_SSL_REDIRECT
+        and SESSION_COOKIE_SECURE
+        and CSRF_COOKIE_SECURE
+        and TRUST_PROXY_SSL_HEADER
+    ):
         raise ImproperlyConfigured(
-            "production 环境必须启用 SSL 重定向和 Secure Session/CSRF Cookie"
+            "production 环境必须启用 SSL 重定向、Secure Session/CSRF Cookie "
+            "和 TRUST_PROXY_SSL_HEADER"
         )
     if not TRUST_PROXY_CLIENT_IP or not TRUSTED_PROXY_NETWORKS:
         raise ImproperlyConfigured(
             "production 环境必须配置受信任反向代理网络以记录真实客户端 IP"
         )
+    def _is_exact_https_origin(origin):
+        parsed = urlsplit(origin)
+        try:
+            parsed_port = parsed.port
+        except ValueError:
+            return False
+        return bool(
+            parsed.scheme.casefold() == "https"
+            and parsed.hostname
+            and "*" not in origin
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.query == ""
+            and parsed.fragment == ""
+            and parsed.path in {"", "/"}
+            and parsed_port in {None, 443}
+        )
+
     if not CSRF_TRUSTED_ORIGINS or any(
-        not origin.startswith("https://") for origin in CSRF_TRUSTED_ORIGINS
+        not _is_exact_https_origin(origin) for origin in CSRF_TRUSTED_ORIGINS
     ):
         raise ImproperlyConfigured(
-            "production 环境必须配置准确的 HTTPS CSRF_TRUSTED_ORIGINS"
+            "production 环境必须配置无通配符、无路径的准确 HTTPS CSRF_TRUSTED_ORIGINS"
         )
     if SECURE_HSTS_SECONDS <= 0:
         raise ImproperlyConfigured("production 环境必须显式配置 SECURE_HSTS_SECONDS")

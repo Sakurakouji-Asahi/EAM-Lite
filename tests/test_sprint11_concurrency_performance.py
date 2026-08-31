@@ -30,7 +30,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 def _postgresql_only():
     if connection.vendor != "postgresql":
-        pytest.skip("Sprint11 concurrency requires PostgreSQL 18.4")
+        pytest.skip("Sprint11 concurrency requires PostgreSQL 18.6")
 
 
 def test_postgresql_concurrent_same_key_export_returns_one_completed_version(

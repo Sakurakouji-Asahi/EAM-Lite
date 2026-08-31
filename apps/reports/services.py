@@ -82,6 +82,16 @@ def _stored_export_filters(*, actor, company, report_key, filters):
     )
     if "department_manager" in roles and not roles.intersection(global_roles):
         result["_authorized_department_ids"] = sorted(resolve_department_ids(actor, company))
+    if definition.supply and "employee" in roles and not roles.intersection(global_roles):
+        from apps.masterdata.models import Employee
+
+        result["_authorized_employee_ids"] = sorted(
+            str(employee_id)
+            for employee_id in Employee.objects.filter(
+                company=company,
+                user=actor,
+            ).values_list("pk", flat=True)
+        )
     if definition.hr_clearance and "warehouse" in roles and not roles.intersection(global_roles):
         from apps.offboarding.domain import UNRESOLVED_ITEM_RESOLUTIONS
         from apps.offboarding.permissions import scoped_clearance_items

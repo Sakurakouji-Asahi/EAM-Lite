@@ -13,7 +13,7 @@ v0.2.0 已累计整合 Sprint 0–18 的代码范围。现有功能包括身份�
 库存、保管、盘点、清退和正式报表。T+ 仍是正式会计系统；本应用
 不调用 T+ API、不写 T+ 数据库，也不自动入账。
 
-仓库已包含 Gunicorn/Caddy/PostgreSQL 18 Compose、生产 fail-closed 配置、加密数据库+附件
+仓库已包含 Gunicorn 26.1.0、Caddy 2.11.4、PostgreSQL 18.6 Compose、生产 fail-closed 配置、加密数据库+附件
 备份、30 日保留、system_admin 一次性下载授权和隔离恢复命令。当前本地恢复演练已通过，
 但真实固定 DNS/受信任 HTTPS、独立 NAS、完整性能场景和多角色人工签字仍是外部上线门槛，
 因此当前可用于本地业务验收，仍不得声明为生产上线完成。
@@ -61,7 +61,7 @@ python manage.py rebuild_supply_custodies --company <公司编码> --actor <用�
 
 - Python：>=3.14.7,<3.15（本 Sprint 验证版本 3.14.7；不使用 3.15 预览版）
 - Django：5.2 LTS，项目范围 >=5.2,<5.3，精确锁定 5.2.17
-- PostgreSQL：支持 16–18，本 Sprint PostgreSQL 验证版本 18.4
+- PostgreSQL：支持 16–18，生产镜像与客户端精确固定为安全修复版 18.6
 - psycopg：3.3 系列，精确锁定 3.3.4
 - pytest：9.1 系列，精确锁定 9.1.1
 - pytest-django：4.14 系列，精确锁定 4.14.0
@@ -72,6 +72,7 @@ python manage.py rebuild_supply_custodies --company <公司编码> --actor <用�
 - Pillow：12.3.0，用于附件图片真实解码、格式确认和像素上限保护
 - qrcode：8.2，用于本地生成带安静区的 SVG 二维码，不调用外网二维码服务
 - gunicorn：26.1.0，生产 Docker 容器中的 WSGI 服务
+- Caddy：2.11.4，生产 LAN HTTPS 反向代理
 - cryptography：50.0.0，用于 AES-256-GCM 加密备份包
 
 requirements/production.in 和 requirements/development.in 记录直接依赖的兼容范围；
@@ -214,6 +215,9 @@ docker compose --env-file /etc/eam-lite/compose.env -f deploy/compose.yaml --pro
 system_admin 也可从“系统设置 → 数据备份”生成手动加密备份。备份口令不会保存；浏览器
 下载使用当前密码复核和一次性短时授权。隔离恢复只允许目标名称含 restore/uat/test 的全新
 数据库及空附件目录，命令见运维手册。
+下载进入 `started` 后会持有文件租约；租约有效到授权 `expires_at` 再加一个
+`BACKUP_DOWNLOAD_GRANT_MINUTES` 宽限期。到期任务跳过有效租约，超过该边界的僵死
+`started` 授权会原子标记失败后再回收备份。
 
 ## 迁移与检查
 

@@ -42,11 +42,11 @@ def context():
     return actor, company, department, employee, category, site, area, leaf
 
 
-def test_postgresql_18_4_and_sprint3_guard_triggers_are_installed():
+def test_postgresql_18_6_and_sprint3_guard_triggers_are_installed():
     require_postgresql()
     with connection.cursor() as cursor:
         cursor.execute("SHOW server_version")
-        assert cursor.fetchone()[0].startswith("18.4")
+        assert cursor.fetchone()[0].startswith("18.6")
         expected = {
             "trg_asset_references",
             "trg_asset_commit",

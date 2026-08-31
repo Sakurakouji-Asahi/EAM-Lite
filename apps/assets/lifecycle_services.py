@@ -277,6 +277,52 @@ def _lock_employee_targets(asset, **targets):
     }
 
 
+def _lock_assignment_master_targets(asset, *, department, location):
+    """Reload mutable master-data targets after the authoritative asset lock.
+
+    A form can retain a Department/Location instance while another committed
+    request disables or reparents it.  Trusting that stale instance would let
+    a formal asset move into an inactive target even though the company/asset
+    transaction itself is correctly serialized.
+    """
+
+    from apps.masterdata.models import Department, Location
+
+    errors = {}
+    department_id = getattr(department, "pk", department)
+    location_id = getattr(location, "pk", location)
+    if not department_id:
+        errors["to_department"] = "必须填写有效部门。"
+    if not location_id:
+        errors["to_location"] = "必须填写有效位置。"
+    if errors:
+        raise ValidationError(errors)
+
+    department_qs = Department.objects.select_for_update()
+    location_qs = Location.objects.select_for_update()
+    try:
+        current_department = department_qs.get(
+            pk=department_id, company_id=asset.company_id
+        )
+    except Department.DoesNotExist:
+        errors["to_department"] = "部门不存在或不属于当前公司。"
+        current_department = None
+    try:
+        current_location = location_qs.get(
+            pk=location_id, company_id=asset.company_id
+        )
+    except Location.DoesNotExist:
+        errors["to_location"] = "位置不存在或不属于当前公司。"
+        current_location = None
+    if current_department is not None and not current_department.is_active:
+        errors["to_department"] = "部门已停用，不能用于新业务。"
+    if current_location is not None and not current_location.is_active:
+        errors["to_location"] = "位置已停用，不能用于新业务。"
+    if errors:
+        raise ValidationError(errors)
+    return current_department, current_location
+
+
 def _validate_target(
     asset, *, department, employee, location, employee_is_locked=False,
 ):
@@ -379,12 +425,15 @@ def change_asset_assignment(
     if movement_type not in {"assignment", "assignment_return", "transfer"}:
         raise ValidationError({"movement_type": "不支持的责任归属变动类型。"})
     asset = _lock_asset(asset)
-    require_lifecycle_action(
-        actor, asset, movement_type, target_department=to_department
-    )
     to_responsible_employee = _lock_employee_targets(
         asset, to_responsible_employee=to_responsible_employee
     )["to_responsible_employee"]
+    to_department, to_location = _lock_assignment_master_targets(
+        asset, department=to_department, location=to_location
+    )
+    require_lifecycle_action(
+        actor, asset, movement_type, target_department=to_department
+    )
     target_status = asset.asset_status if to_status is None else to_status
     if target_status not in {"in_use", "idle"}:
         raise ValidationError(
@@ -695,9 +744,6 @@ def return_loan(
     from apps.assets.models import Asset, AssetLoan, AssetMovement
 
     asset = _lock_asset(loan.asset_id)
-    require_lifecycle_action(
-        actor, asset, "loan_return", target_department=return_department
-    )
     target_employees = _lock_employee_targets(
         asset,
         received_by_employee=received_by_employee,
@@ -707,6 +753,12 @@ def return_loan(
     return_responsible_employee = target_employees[
         "return_responsible_employee"
     ]
+    return_department, return_location = _lock_assignment_master_targets(
+        asset, department=return_department, location=return_location
+    )
+    require_lifecycle_action(
+        actor, asset, "loan_return", target_department=return_department
+    )
     loan = AssetLoan.objects.select_for_update().get(
         pk=loan.pk, company=asset.company, asset=asset
     )
@@ -1082,6 +1134,17 @@ def _required_depreciation_cutoff(*, asset, actual_date):
     cutoff = actual_date
     missing = []
     for profile in profiles:
+        if profile.method != "no_depreciation":
+            if profile.posting_period == "yearly":
+                raise ValidationError(
+                    "年度折旧 Profile 的处置截止额当前无法由自然月批次准确对齐；"
+                    "请先采用经批准的折旧调整或政策处理，再锁定处置快照。"
+                )
+            if profile.stop_rule == "event_date" and actual_date.day != 1:
+                raise ValidationError(
+                    "按事件日停止的月中处置无法由当前自然月批次准确表达部分月折旧；"
+                    "请先采用经批准的折旧调整或政策处理，再锁定处置快照。"
+                )
         stop_date = resolve_stop_date(
             event_date=actual_date, stop_rule=profile.stop_rule
         )
@@ -1515,6 +1578,15 @@ def reverse_disposal(
         ):
             raise ValidationError("保养计划责任人已失效，不能猜测恢复处置前计划状态。")
 
+    if asset.department is None or not asset.department.is_active:
+        raise ValidationError("资产原部门已停用，恢复处置前必须先处理部门主数据。")
+    if (
+        asset.location is None
+        or not asset.location.is_active
+        or asset.location.children.exists()
+    ):
+        raise ValidationError("资产原位置已停用或不再是叶级位置，不能恢复处置。")
+
     responsible = asset.responsible_employee
     responsible_valid = bool(
         responsible is not None
@@ -1522,6 +1594,7 @@ def reverse_disposal(
         and responsible.employment_status == "active"
         and responsible.is_active
         and responsible.department_id == asset.department_id
+        and responsible.department.is_active
     )
     if not responsible_valid:
         replacement = replacement_responsible_employee
@@ -1531,6 +1604,7 @@ def reverse_disposal(
             or replacement.employment_status != "active"
             or not replacement.is_active
             or replacement.department_id != asset.department_id
+            or not replacement.department.is_active
         ):
             raise ValidationError({
                 "replacement_responsible_employee": (
@@ -1544,6 +1618,7 @@ def reverse_disposal(
             or replacement_responsible_employee.employment_status != "active"
             or not replacement_responsible_employee.is_active
             or replacement_responsible_employee.department_id != asset.department_id
+            or not replacement_responsible_employee.department.is_active
         ):
             raise ValidationError({
                 "replacement_responsible_employee": "替代责任人不满足同公司同部门在职要求。"

@@ -65,5 +65,22 @@
   </tbody>
 </table>
 </div>
+{% if page_obj.paginator.num_pages > 1 %}
+<nav aria-label="导入预览分页">
+  <ul class="pagination justify-content-center">
+    {% if page_obj.has_previous %}
+    <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}">上一页</a></li>
+    {% else %}
+    <li class="page-item disabled"><span class="page-link">上一页</span></li>
+    {% endif %}
+    <li class="page-item disabled"><span class="page-link">第 {{ page_obj.number }} / {{ page_obj.paginator.num_pages }} 页</span></li>
+    {% if page_obj.has_next %}
+    <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}">下一页</a></li>
+    {% else %}
+    <li class="page-item disabled"><span class="page-link">下一页</span></li>
+    {% endif %}
+  </ul>
+</nav>
+{% endif %}
 <a class="btn btn-link" href="{% url 'imports:home' %}">返回导入中心</a>
 {% endblock %}

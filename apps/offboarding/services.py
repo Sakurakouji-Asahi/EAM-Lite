@@ -125,7 +125,14 @@ def _selected_company(company_id, *, serialize_manager_write=False):
         from apps.masterdata.services import _lock_manager_write
 
         _lock_manager_write(company_id)
-    return Company.objects.select_for_update().get(pk=company_id)
+    company_queryset = Company.objects.select_for_update()
+    if connection.vendor == "postgresql":
+        # We serialize business-state changes but never update the Company key.
+        # NO KEY UPDATE still conflicts with other writers while remaining
+        # compatible with FK KEY SHARE locks created later in supply/asset
+        # transactions, avoiding Company -> Employee -> Company deadlocks.
+        company_queryset = Company.objects.select_for_update(no_key=True)
+    return company_queryset.get(pk=company_id)
 
 
 def _lock_employee(employee):
@@ -139,7 +146,9 @@ def _lock_employee(employee):
     except (Employee.DoesNotExist, TypeError, ValueError) as exc:
         raise PermissionDenied("目标员工不存在。") from exc
     company = _selected_company(company_id, serialize_manager_write=True)
-    queryset = _locked_self(Employee.objects.all())
+    queryset = Employee.objects.select_for_update()
+    if connection.vendor == "postgresql":
+        queryset = Employee.objects.select_for_update(of=("self",), no_key=True)
     return queryset.select_related(
         "company", "department", "user"
     ).get(pk=employee_id, company=company)
@@ -166,9 +175,10 @@ def _lock_clearance(clearance, *, serialize_initial_employee_write=False):
     # Company is the common serialization root used by lifecycle services.
     from apps.masterdata.models import Employee
 
-    Employee.objects.select_for_update().get(
-        pk=raw["employee_id"], company=company
-    )
+    employee_queryset = Employee.objects.select_for_update()
+    if connection.vendor == "postgresql":
+        employee_queryset = Employee.objects.select_for_update(no_key=True)
+    employee_queryset.get(pk=raw["employee_id"], company=company)
     queryset = _locked_self(EmployeeAssetClearance.objects.all())
     return queryset.select_related(
         "company", "employee__department", "supplements_clearance"

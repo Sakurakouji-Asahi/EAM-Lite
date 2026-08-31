@@ -107,7 +107,7 @@ def _force_deferred_constraints():
         cursor.execute("SET CONSTRAINTS ALL DEFERRED")
 
 
-def test_postgresql_18_4_and_sprint4_constraint_triggers_are_installed():
+def test_postgresql_18_6_and_sprint4_constraint_triggers_are_installed():
     require_postgresql()
     expected = {
         "trg_sprint4_formal_asset_commit",
@@ -124,7 +124,7 @@ def test_postgresql_18_4_and_sprint4_constraint_triggers_are_installed():
     }
     with connection.cursor() as cursor:
         cursor.execute("SHOW server_version")
-        assert cursor.fetchone()[0].startswith("18.4")
+        assert cursor.fetchone()[0].startswith("18.6")
         cursor.execute(
             """
             SELECT tgname, tgdeferrable, tginitdeferred

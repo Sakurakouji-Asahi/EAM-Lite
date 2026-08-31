@@ -107,6 +107,9 @@ def _finance_row(context, *, fixed=False):
             "fixed_asset" if fixed else "controlled_non_fixed"
         ),
         "original_cost": Decimal("12345.67"),
+        "recognition_threshold_snapshot": Decimal("5000.00"),
+        "finance_confirmed_by": context["finance"],
+        "finance_confirmed_at": timezone.now(),
     }
     if fixed:
         today = timezone.localdate()
@@ -124,11 +127,10 @@ def _finance_row(context, *, fixed=False):
                     },
                 ),
                 "capitalization_date": today,
-                "recognition_threshold_snapshot": Decimal("5000.00"),
-                "finance_confirmed_by": context["finance"],
-                "finance_confirmed_at": timezone.now(),
             }
         )
+    else:
+        values["accounting_treatment_reason"] = "高于提示阈值但明确认定为受控非固定资产"
     AssetFinance.objects.create(**values)
     return asset
 

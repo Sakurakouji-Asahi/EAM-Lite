@@ -281,7 +281,7 @@ def test_reversal_requires_replacement_if_original_responsible_employee_invalid(
 
 def test_reversal_blocks_later_business_and_rolls_back_all_partial_changes():
     context, asset, _qr, profile, _policy = active_fixed_asset_context(
-        "S7REVBLK", stop_rule="event_date"
+        "S7REVBLK", stop_rule="next_month"
     )
     disposal = _completed_disposal(context, asset, "S7REVBLK")
     stop = DepreciationProfileEvent.objects.get(
