@@ -12,8 +12,10 @@ staticfiles
 *.db
 *.dump
 *.backup
+*.eambak
 *.log
 *.zip
+dist
 tests
 tasks
 docs

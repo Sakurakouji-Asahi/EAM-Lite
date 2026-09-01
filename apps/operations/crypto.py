@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import os
 import struct
@@ -38,23 +39,62 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def encrypt_file(source: Path, destination: Path, *, passphrase: str) -> None:
+def encrypt_file(
+    source: Path,
+    destination: Path,
+    *,
+    passphrase: str,
+    salt: bytes | None = None,
+    iterations: int = KDF_ITERATIONS,
+) -> dict:
     source = Path(source)
     destination = Path(destination)
-    salt = os.urandom(SALT_SIZE)
+    salt = os.urandom(SALT_SIZE) if salt is None else bytes(salt)
+    if len(salt) != SALT_SIZE:
+        raise ValueError("备份加密盐长度非法。")
+    if iterations < 100_000 or iterations > 5_000_000:
+        raise ValueError("备份 KDF 迭代参数非法。")
     nonce = os.urandom(NONCE_SIZE)
-    key = _derive_key(passphrase, salt, KDF_ITERATIONS)
+    key = _derive_key(passphrase, salt, iterations)
     encryptor = Cipher(algorithms.AES(key), modes.GCM(nonce)).encryptor()
     destination.parent.mkdir(parents=True, exist_ok=True)
     with source.open("rb") as input_file, destination.open("wb") as output_file:
         output_file.write(MAGIC)
-        output_file.write(struct.pack(">I", KDF_ITERATIONS))
+        output_file.write(struct.pack(">I", iterations))
         output_file.write(salt)
         output_file.write(nonce)
         for chunk in iter(lambda: input_file.read(CHUNK_SIZE), b""):
             output_file.write(encryptor.update(chunk))
         output_file.write(encryptor.finalize())
         output_file.write(encryptor.tag)
+    return {
+        "format": MAGIC.decode("ascii"),
+        "cipher": "AES-256-GCM",
+        "kdf": "PBKDF2-HMAC-SHA256",
+        "iterations": iterations,
+        "salt": base64.b64encode(salt).decode("ascii"),
+        "salt_bytes": SALT_SIZE,
+    }
+
+
+def encryption_metadata(source: Path) -> dict:
+    source = Path(source)
+    minimum = len(MAGIC) + 4 + SALT_SIZE + NONCE_SIZE + TAG_SIZE
+    if not source.is_file() or source.stat().st_size < minimum:
+        raise ValueError("备份包过短或已损坏。")
+    with source.open("rb") as input_file:
+        if input_file.read(len(MAGIC)) != MAGIC:
+            raise ValueError("不是受支持的 EAM-Lite 加密备份包。")
+        iterations = struct.unpack(">I", input_file.read(4))[0]
+        salt = input_file.read(SALT_SIZE)
+    return {
+        "format": MAGIC.decode("ascii"),
+        "cipher": "AES-256-GCM",
+        "kdf": "PBKDF2-HMAC-SHA256",
+        "iterations": iterations,
+        "salt": base64.b64encode(salt).decode("ascii"),
+        "salt_bytes": SALT_SIZE,
+    }
 
 
 def decrypt_file(source: Path, destination: Path, *, passphrase: str) -> None:

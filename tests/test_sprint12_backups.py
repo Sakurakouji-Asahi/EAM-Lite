@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 import io
+import json
+from pathlib import Path
 
 import pytest
 from django.contrib.auth.models import Group
@@ -13,13 +15,15 @@ from django.utils import timezone
 from django.test import Client
 
 from apps.audit.models import AuditLog
-from apps.operations.crypto import decrypt_file, encrypt_file
+from apps.operations.crypto import decrypt_file, encrypt_file, encryption_metadata
 from apps.operations.models import BackupDownloadGrant, BackupSet
 from apps.operations.services import (
     create_backup_set,
     expire_due_backups,
     issue_download_grant,
     start_download_grant,
+    current_database_name,
+    restore_backup_package_to_isolated,
     verify_backup_set,
 )
 from tests.test_sprint1_services import PASSWORD, make_user
@@ -68,7 +72,8 @@ def test_backup_crypto_round_trip_and_wrong_passphrase_fails(tmp_path):
     encrypted = tmp_path / "backup.eambak"
     restored = tmp_path / "restored.bin"
     source.write_bytes(b"EAM-Lite\x00backup" * 1000)
-    encrypt_file(source, encrypted, passphrase="correct-backup-passphrase")
+    metadata = encrypt_file(source, encrypted, passphrase="correct-backup-passphrase")
+    assert encryption_metadata(encrypted) == metadata
     decrypt_file(encrypted, restored, passphrase="correct-backup-passphrase")
     assert restored.read_bytes() == source.read_bytes()
     with pytest.raises(Exception):
@@ -107,7 +112,12 @@ def test_manual_backup_is_encrypted_mirrored_verified_idempotent_and_expired(
         backup, passphrase="manual-backup-passphrase"
     )
     assert manifest["media"]["file_count"] == 1
+    assert manifest["package_format_version"] == 1
+    assert manifest["application_version"]
     assert manifest["application_commit"] == "test-commit"
+    assert manifest["encryption"] == encryption_metadata(primary)
+    assert manifest["record_counts"]["companies"] == 1
+    assert manifest["record_counts"]["assets"] == 0
     repeated = create_backup_set(
         actor=context["admin"],
         company=context["company"],
@@ -182,6 +192,73 @@ def test_automatic_backup_missing_key_fails_closed_and_is_audited(
     assert AuditLog.objects.filter(
         action="backup.failed", object_id=str(backup.pk)
     ).exists()
+
+
+@requires_postgresql_backup
+def test_portable_console_command_exports_verified_file_without_actor_password(
+    settings, tmp_path, monkeypatch
+):
+    _base_context("S12PORTABLE")
+    _configure_backup_settings(settings, tmp_path)
+    _fake_external_tools(monkeypatch)
+    settings.EAM_ENVIRONMENT = "local"
+    settings.APP_VERSION = "0.2.1-test"
+    settings.BUILD_TIME = "2026-09-01T00:00:00Z"
+    passphrase_file = tmp_path / "migration-passphrase.txt"
+    passphrase_file.write_text("portable-migration-passphrase", encoding="utf-8")
+    output_dir = tmp_path / "便携 输出"
+    stdout = io.StringIO()
+
+    call_command(
+        "create_eam_backup",
+        portable_output_dir=str(output_dir),
+        passphrase_file=str(passphrase_file),
+        stdout=stdout,
+    )
+
+    line = next(
+        row for row in stdout.getvalue().splitlines() if "PORTABLE_BACKUP_JSON=" in row
+    )
+    summary = json.loads(line.split("PORTABLE_BACKUP_JSON=", 1)[1])
+    package = Path(summary["path"])
+    assert package.is_file()
+    assert package.parent == output_dir.resolve()
+    assert package.suffix == ".eambak"
+    assert summary["version"] == "0.2.1-test"
+    backup = BackupSet.objects.get(backup_set_id=summary["backup_set_id"])
+    assert verify_backup_set(
+        backup, passphrase="portable-migration-passphrase"
+    )["record_counts"] == summary["record_counts"]
+
+
+@requires_postgresql_backup
+def test_current_local_restore_refuses_nonempty_database_without_overwrite(
+    settings, tmp_path, monkeypatch
+):
+    context = _base_context("S12RESTOREEMPTY")
+    _mark_recently_authenticated(context["admin"])
+    _configure_backup_settings(settings, tmp_path)
+    _fake_external_tools(monkeypatch)
+    settings.EAM_ENVIRONMENT = "local"
+    backup = create_backup_set(
+        actor=context["admin"],
+        company=context["company"],
+        kind=BackupSet.Kind.MANUAL,
+        idempotency_key="S12RESTOREEMPTY-backup",
+        passphrase="portable-migration-passphrase",
+    )
+
+    with pytest.raises(ValidationError, match="目标数据库不是空库"):
+        restore_backup_package_to_isolated(
+            package_path=settings.BACKUP_ROOT / backup.storage_key,
+            passphrase="portable-migration-passphrase",
+            target_database=current_database_name(),
+            target_media_root=settings.MEDIA_ROOT,
+            expected_sha256=backup.package_sha256,
+            allow_current_empty=True,
+        )
+
+    assert BackupSet.objects.filter(pk=backup.pk).exists()
 
 
 @requires_postgresql_backup
@@ -383,6 +460,29 @@ def test_pending_backup_freezes_http_writes_and_stale_recovery_unfreezes(
     assert pending.status == BackupSet.Status.FAILED
     unfrozen = client.post(reverse("operations:backup-create"), {})
     assert unfrozen.status_code != 503
+    assert AuditLog.objects.filter(
+        action="backup.stale_failed", object_id=str(pending.pk)
+    ).exists()
+
+
+def test_restored_snapshot_closes_its_recent_pending_backup(settings):
+    context = _base_context("S12RESTOREDPENDING")
+    settings.EAM_ENVIRONMENT = "local"
+    pending = BackupSet.objects.create(
+        company=context["company"],
+        backup_set_id="BKP-S12RESTOREDPENDING",
+        kind=BackupSet.Kind.MANUAL,
+        status=BackupSet.Status.PENDING,
+        request_hash="c" * 64,
+        idempotency_key="S12RESTOREDPENDING-pending",
+        started_at=timezone.now(),
+    )
+
+    call_command("fail_stale_eam_backups", restored_snapshot=True, verbosity=0)
+
+    pending.refresh_from_db()
+    assert pending.status == BackupSet.Status.FAILED
+    assert "已恢复备份" in pending.error_summary
     assert AuditLog.objects.filter(
         action="backup.stale_failed", object_id=str(pending.pk)
     ).exists()
