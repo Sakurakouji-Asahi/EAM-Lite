@@ -61,12 +61,21 @@ try {
     Write-Host "正在验证加密包并恢复到空 PostgreSQL 与空附件卷……" -ForegroundColor Cyan
     $restoreResult = Invoke-EamCompose -Context $context -Arguments @("--profile", "restore", "run", "--rm", "restore")
     $restoreResult.Output | ForEach-Object { Write-Host $_ }
+    $restoreJsonLine = $restoreResult.Output | Where-Object { $_ -match '"company_code"' } | Select-Object -Last 1
+    if (-not $restoreJsonLine) {
+        throw "恢复命令未返回公司编码，无法执行后续一致性核对。"
+    }
+    $restoreSummary = $restoreJsonLine | ConvertFrom-Json
+    $companyCode = [string]$restoreSummary.company_code
+    if ([string]::IsNullOrWhiteSpace($companyCode)) {
+        throw "恢复后的公司编码为空，已停止启动。"
+    }
 
     Write-Host "正在应用当前版本迁移并执行库存/保管重算核对……" -ForegroundColor Cyan
     Invoke-EamCompose -Context $context -Arguments @("--profile", "release", "run", "--rm", "release") | Out-Null
     Invoke-EamCompose -Context $context -Arguments @("--profile", "release", "run", "--rm", "release", "python", "manage.py", "fail_stale_eam_backups", "--restored-snapshot") | Out-Null
-    Invoke-EamCompose -Context $context -Arguments @("--profile", "release", "run", "--rm", "release", "python", "manage.py", "reconcile_supply_balances") | Out-Null
-    Invoke-EamCompose -Context $context -Arguments @("--profile", "release", "run", "--rm", "release", "python", "manage.py", "reconcile_supply_custodies") | Out-Null
+    Invoke-EamCompose -Context $context -Arguments @("--profile", "release", "run", "--rm", "release", "python", "manage.py", "reconcile_supply_balances", "--company", $companyCode) | Out-Null
+    Invoke-EamCompose -Context $context -Arguments @("--profile", "release", "run", "--rm", "release", "python", "manage.py", "reconcile_supply_custodies", "--company", $companyCode) | Out-Null
     Invoke-EamCompose -Context $context -Arguments @("up", "--detach", "--wait", "app", "caddy") | Out-Null
     $version = Wait-EamHealth -Url $context.Url -ExpectedCommit $identity.Commit
     $login = Invoke-WebRequest -Uri ($context.Url + "/login/") -UseBasicParsing -TimeoutSec 5

@@ -490,6 +490,7 @@ def create_backup_set(
             "package_format_version": 1,
             "backup_set_id": backup.backup_set_id,
             "company_id": str(company.pk),
+            "company_code": company.code,
             "created_at": snapshot_at.isoformat(),
             "business_timezone": "Asia/Shanghai",
             "application_version": str(settings.APP_VERSION),

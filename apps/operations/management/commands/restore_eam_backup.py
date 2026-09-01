@@ -3,6 +3,7 @@ import json
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
+from apps.masterdata.models import Company
 from apps.operations.management.commands.verify_eam_backup import _read_passphrase
 from apps.operations.models import BackupSet
 from apps.operations.services import (
@@ -84,6 +85,13 @@ class Command(BaseCommand):
                 )
         except Exception as exc:
             raise CommandError(str(exc)) from exc
+        company_code = result["manifest"].get("company_code")
+        if not company_code:
+            company_code = Company.objects.filter(is_active=True).values_list(
+                "code", flat=True
+            ).first()
+        if not company_code:
+            raise CommandError("恢复后未找到活动公司，无法执行后续一致性核对。")
         summary = {
             "target_database": result["target_database"],
             "target_media_root": result["target_media_root"],
@@ -93,6 +101,7 @@ class Command(BaseCommand):
             "media_file_count": result["media_file_count"],
             "record_counts": result["record_counts"],
             "backup_set_id": result["manifest"].get("backup_set_id"),
+            "company_code": company_code,
         }
         self.stdout.write(
             self.style.SUCCESS(json.dumps(summary, ensure_ascii=False, default=str))

@@ -3,9 +3,14 @@ from __future__ import annotations
 from datetime import timedelta
 import io
 import json
+import os
 from pathlib import Path
+import re
+import subprocess
+import uuid
 
 import pytest
+from django.contrib.auth.hashers import check_password
 from django.contrib.auth.models import Group
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.management import call_command
@@ -15,6 +20,7 @@ from django.utils import timezone
 from django.test import Client
 
 from apps.audit.models import AuditLog
+from apps.assets.models import Asset
 from apps.operations.crypto import decrypt_file, encrypt_file, encryption_metadata
 from apps.operations.models import BackupDownloadGrant, BackupSet
 from apps.operations.services import (
@@ -259,6 +265,141 @@ def test_current_local_restore_refuses_nonempty_database_without_overwrite(
         )
 
     assert BackupSet.objects.filter(pk=backup.pk).exists()
+
+
+@requires_postgresql_backup
+def test_real_encrypted_backup_restores_to_fresh_database_and_reconciles(
+    settings, tmp_path
+):
+    context = _base_context("S12REALRESTORE")
+    _mark_recently_authenticated(context["admin"])
+    _configure_backup_settings(settings, tmp_path)
+    settings.EAM_ENVIRONMENT = "local"
+    Asset.objects.create(
+        company=context["company"],
+        asset_name="恢复测试资产",
+        category=context["category"],
+        unit="台",
+        created_by=context["admin"],
+    )
+    media_file = settings.MEDIA_ROOT / "restore-test" / "中文 附件.txt"
+    media_file.parent.mkdir(parents=True)
+    media_file.write_bytes("portable-restore-evidence".encode())
+    source_password_hash = context["admin"].password
+    backup = create_backup_set(
+        actor=context["admin"],
+        company=context["company"],
+        kind=BackupSet.Kind.MANUAL,
+        idempotency_key="S12REALRESTORE-backup",
+        passphrase="real-portable-restore-passphrase",
+    )
+    target_database = "eam_lite_restore_test_" + uuid.uuid4().hex[:12]
+    target_media = tmp_path / "restored-media"
+    assert re.fullmatch(r"eam_lite_restore_test_[0-9a-f]{12}", target_database)
+
+    try:
+        result = restore_backup_package_to_isolated(
+            package_path=settings.BACKUP_ROOT / backup.storage_key,
+            passphrase="real-portable-restore-passphrase",
+            target_database=target_database,
+            target_media_root=target_media,
+            expected_sha256=backup.package_sha256,
+        )
+        assert result["record_counts"] == result["manifest"]["record_counts"]
+        assert result["record_counts"]["assets"] == 1
+        assert result["media_file_count"] == 1
+        restored_media = target_media / "restore-test" / "中文 附件.txt"
+        assert restored_media.read_bytes() == media_file.read_bytes()
+
+        import psycopg
+
+        db = settings.DATABASES["default"]
+        restored = psycopg.connect(
+            dbname=target_database,
+            user=db["USER"],
+            password=db["PASSWORD"],
+            host=db["HOST"],
+            port=db["PORT"],
+        )
+        try:
+            with restored.cursor() as cursor:
+                cursor.execute(
+                    "SELECT password FROM accounts_user WHERE username=%s",
+                    (context["admin"].username,),
+                )
+                restored_hash = cursor.fetchone()[0]
+        finally:
+            restored.close()
+        assert restored_hash == source_password_hash
+        assert check_password(PASSWORD, restored_hash)
+
+        command_env = os.environ.copy()
+        command_env.update(
+            {
+                "EAM_ENVIRONMENT": "development",
+                "DEBUG": "true",
+                "DB_NAME": target_database,
+                "ALLOWED_HOSTS": "localhost,127.0.0.1",
+                "QR_BASE_URL": "http://127.0.0.1:8766",
+            }
+        )
+        for command in (
+            ("fail_stale_eam_backups", "--restored-snapshot"),
+            (
+                "reconcile_supply_balances",
+                "--company",
+                context["company"].code,
+            ),
+            (
+                "reconcile_supply_custodies",
+                "--company",
+                context["company"].code,
+            ),
+        ):
+            completed = subprocess.run(
+                [
+                    str(Path(".venv/Scripts/python.exe")),
+                    "manage.py",
+                    *command,
+                ],
+                cwd=Path.cwd(),
+                env=command_env,
+                capture_output=True,
+                text=True,
+            )
+            assert completed.returncode == 0, completed.stderr
+
+        restored = psycopg.connect(
+            dbname=target_database,
+            user=db["USER"],
+            password=db["PASSWORD"],
+            host=db["HOST"],
+            port=db["PORT"],
+        )
+        try:
+            with restored.cursor() as cursor:
+                cursor.execute(
+                    "SELECT count(*) FROM operations_backupset WHERE status='pending'"
+                )
+                assert cursor.fetchone()[0] == 0
+        finally:
+            restored.close()
+    finally:
+        subprocess.run(
+            [
+                str(settings.BACKUP_DOCKER_BIN),
+                "exec",
+                settings.BACKUP_POSTGRES_CONTAINER,
+                "dropdb",
+                "-U",
+                str(settings.DATABASES["default"]["USER"]),
+                "--if-exists",
+                "--force",
+                target_database,
+            ],
+            check=False,
+            capture_output=True,
+        )
 
 
 @requires_postgresql_backup
