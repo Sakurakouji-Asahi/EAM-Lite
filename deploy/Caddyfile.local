@@ -1,0 +1,24 @@
+{
+	auto_https off
+}
+
+:8080 {
+	encode zstd gzip
+
+	handle_path /static/* {
+		root * /srv/static
+		file_server
+		header Cache-Control "public, max-age=604800, immutable"
+	}
+
+	handle {
+		reverse_proxy app:8000
+	}
+
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+		X-Frame-Options DENY
+	}
+}

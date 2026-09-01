@@ -58,6 +58,18 @@ SAFE_ATTACHMENT_EXTENSIONS = frozenset(
     {"jpg", "jpeg", "png", "webp", "pdf", "xlsx", "docx"}
 )
 
+CURRENT_LOCATION_LEAF_ASSET_STATUSES = frozenset(
+    {
+        "pending_finance",
+        "pending_label",
+        "in_use",
+        "idle",
+        "loaned",
+        "under_repair",
+        "pending_disposal",
+    }
+)
+
 
 def _snapshot(instance, fields) -> dict:
     data = {}
@@ -184,6 +196,23 @@ def _apply(instance, data: Mapping, allowed_fields: Iterable[str]):
         if field in data:
             setattr(instance, field, data[field])
     return instance
+
+
+def _validate_location_parent_is_available(model, parent):
+    """Keep every current formal asset assigned to a leaf Location."""
+
+    if parent is None or model._meta.label_lower != "masterdata.location":
+        return
+    from apps.assets.models import Asset
+
+    if Asset._base_manager.filter(
+        location_id=parent.pk,
+        record_status="active",
+        asset_status__in=CURRENT_LOCATION_LEAF_ASSET_STATUSES,
+    ).exists():
+        raise ValidationError(
+            {"parent": "该位置仍是当前正式资产的位置，不能在其下新增节点。"}
+        )
 
 
 @transaction.atomic
@@ -390,14 +419,23 @@ def create_employee(*, actor, company, data, request=None):
 
     require_manage_masterdata(actor, "employee")
     _require_current_company(company)
-    require_application_user_target(data.get("user"))
-    if data.get("user") is not None and not actor.groups.filter(
+    values = dict(data)
+    requested_user = values.get("user")
+    require_application_user_target(requested_user)
+    if requested_user is not None and not actor.groups.filter(
         name="system_admin"
     ).exists():
         raise PermissionDenied("人员登录账号只能由 system_admin 进行技术关联。")
+    if requested_user is not None:
+        # A User is global to Django while every business relation is scoped
+        # to one Company.  Lock and validate the existing employee/scope edges
+        # before creating the reverse edge, otherwise SQLite and a crafted
+        # Service call could bind one login identity across two companies (and
+        # PostgreSQL would surface only a deferred IntegrityError at commit).
+        values["user"] = _lock_user_company_links(company, requested_user)
     employee = _apply(
         Employee(company=company),
-        data,
+        values,
         {
             "employee_no",
             "name",
@@ -653,6 +691,7 @@ def _create_tree_master(
     if instance.parent_id:
         instance.parent = model.objects.select_for_update().get(pk=instance.parent_id)
     _validate_same_company(company, parent=instance.parent)
+    _validate_location_parent_is_available(model, instance.parent)
     if level_field:
         setattr(instance, level_field, (getattr(instance.parent, level_field) + 1) if instance.parent else 1)
     _save(instance)
@@ -726,6 +765,8 @@ def _update_tree_master(
     if instance.parent_id:
         instance.parent = model.objects.select_for_update().get(pk=instance.parent_id)
     _validate_same_company(company, parent=instance.parent)
+    if instance.parent_id != old["parent"]:
+        _validate_location_parent_is_available(model, instance.parent)
     setattr(instance, level_field, (getattr(instance.parent, level_field) + 1) if instance.parent else 1)
     _save(instance)
     # Reparenting changes the materialized level of every descendant.  Lock and

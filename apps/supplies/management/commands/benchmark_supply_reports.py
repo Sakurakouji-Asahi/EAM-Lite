@@ -73,10 +73,10 @@ class Command(BaseCommand):
     def _preflight(self, options):
         database_name = str(connection.settings_dict.get("NAME") or "")
         lowered = database_name.casefold()
-        if connection.vendor != "postgresql":
-            raise CommandError("性能验证只允许使用 PostgreSQL。")
         if not options["confirm_non_production"]:
             raise CommandError("默认不写入；必须显式提供 --confirm-non-production。")
+        if connection.vendor != "postgresql":
+            raise CommandError("性能验证只允许使用 PostgreSQL。")
         if lowered in FORBIDDEN_DATABASES or not any(
             marker in lowered for marker in SAFE_DATABASE_MARKERS
         ):

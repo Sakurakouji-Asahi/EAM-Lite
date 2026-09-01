@@ -1,7 +1,8 @@
 @echo off
 setlocal
+chcp 65001 >nul
 
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\start_eam_lite_local.ps1"
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\local\start.ps1"
 set "EAM_EXIT_CODE=%ERRORLEVEL%"
 
 if not "%EAM_EXIT_CODE%"=="0" (

@@ -19,8 +19,10 @@ media/
 *.db
 *.dump
 *.backup
+*.eambak
 *.log
 *.zip
+/dist/
 .idea/
 .vscode/
 ~$*

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}我的待办 | EAM-Lite{% endblock %}
+
+{% block content %}
+<header class="app-page-header">
+  <div>
+    <h1 class="h3 mb-1">我的待办</h1>
+    <p class="text-secondary mb-0">这里只汇总当前账号可以查看或处理的事项，进入业务页后仍按原权限和数据范围执行。</p>
+  </div>
+</header>
+
+<section aria-labelledby="task-summary-heading">
+  <div class="section-heading-row">
+    <div><h2 class="h5 mb-1" id="task-summary-heading">需要关注</h2><p class="text-secondary small mb-0">数据按当前公司和账号范围统计。</p></div>
+  </div>
+  <div class="task-card-grid">
+    {% if app_navigation.finance_reports.can_manage_finance %}
+      <a class="task-card" href="{% url 'finance:pending-list' %}" data-task-card="pending_finance"><span>待财务确认</span><strong>{{ dashboard.pending.pending_finance|default:0 }}</strong><small>核对会计认定和财务资料</small></a>
+    {% endif %}
+    {% if app_navigation.tasks.can_manage_labels %}
+      <a class="task-card" href="{% url 'assets:label-queue' %}" data-task-card="pending_labels"><span>待贴标签</span><strong>{{ dashboard.pending.pending_label|default:0 }}</strong><small>打印二维码并逐项确认贴标</small></a>
+    {% endif %}
+    {% if app_navigation.tasks.can_view_asset_inventory %}
+      <a class="task-card" href="{% url 'inventory:task-list' %}" data-task-card="asset_inventory"><span>待资产盘点</span><strong>{{ dashboard.pending.inventory_pending|default:0 }}</strong><small>查看指派任务和执行进度</small></a>
+      <a class="task-card" href="{% url 'inventory:task-list' %}" data-task-card="asset_exceptions"><span>资产盘点异常</span><strong>{{ dashboard.pending.inventory_exceptions|default:0 }}</strong><small>核对差异并形成处理结论</small></a>
+    {% endif %}
+    {% if app_navigation.tasks.can_view_supply_inventory and supply_dashboard %}
+      <a class="task-card" href="{% url 'supplies:count-task-list' %}" data-task-card="supply_inventory"><span>未关闭物品盘点</span><strong>{{ supply_dashboard.open_count_task_count|default:0 }}</strong><small>处理仓库库存和保管盘点</small></a>
+    {% endif %}
+    {% if app_navigation.tasks.can_view_maintenance %}
+      <a class="task-card" href="{% url 'maintenance:due-list' %}" data-task-card="maintenance"><span>待保养</span><strong>{{ dashboard.pending.maintenance_upcoming|default:0 }}</strong><small>逾期 {{ dashboard.pending.maintenance_overdue|default:0 }} 项</small></a>
+    {% endif %}
+    {% if app_navigation.tasks.can_view_offboarding %}
+      <a class="task-card" href="{% url 'offboarding:clearance-list' %}" data-task-card="offboarding"><span>离职未清事项</span><strong>{{ dashboard.pending.offboarding_unresolved|default:0 }}</strong><small>{% if supply_dashboard %}另有数量耐用品待处理 {{ supply_dashboard.pending_clearance_count|default:0 }} 项{% else %}查看清退进度和处理证据{% endif %}</small></a>
+    {% endif %}
+    {% if supply_dashboard and app_navigation.supplies.can_view_stock %}
+      <a class="task-card" href="{% url 'reports:supply-report-detail' 'supply_low_stock' %}" data-task-card="low_stock"><span>低库存预警</span><strong>{{ supply_dashboard.low_stock_count|default:0 }}</strong><small>查看当前数量与最低库存缺口</small></a>
+    {% endif %}
+    {% if supply_dashboard and app_navigation.supplies.can_manage_documents %}
+      <a class="task-card" href="{% url 'supplies:document-list' %}?status=draft" data-task-card="supply_drafts"><span>待处理库存单据</span><strong>{{ supply_dashboard.draft_document_count|default:0 }}</strong><small>核对草稿后过账或取消</small></a>
+    {% endif %}
+  </div>
+</section>
+
+<section class="mt-4" aria-labelledby="common-actions-heading">
+  <div class="section-heading-row"><div><h2 class="h5 mb-1" id="common-actions-heading">常用操作</h2><p class="text-secondary small mb-0">入口随角色变化，不显示无权操作。</p></div></div>
+  <div class="action-link-grid">
+    {% if app_navigation.tasks.can_view_my_assets %}<a href="{% url 'assets:asset-list' %}"><strong>我的资产</strong><span>查看本人负责的逐件资产</span></a>{% endif %}
+    {% if app_navigation.tasks.can_view_my_custodies %}<a href="{% url 'supplies:my-custodies' %}"><strong>我的领用与保管</strong><span>查看本人或授权部门的数量耐用品</span></a>{% endif %}
+    {% if asset_nav.can_create %}<a href="{% url 'assets:asset-create' %}"><strong>新增资产</strong><span>建立一件资产草稿</span></a>{% endif %}
+    {% if app_navigation.tasks.can_manage_labels %}<a href="{% url 'assets:label-queue' %}"><strong>标签与二维码</strong><span>进入打印和贴标队列</span></a>{% endif %}
+    {% if app_navigation.supplies.can_manage_documents %}<a href="{% url 'supplies:document-create' 'receipt' %}"><strong>办理入库</strong><span>建立日常入库单</span></a>{% endif %}
+    {% if app_navigation.supplies.can_view_custodies %}<a href="{% url 'supplies:custody-list' %}"><strong>员工／部门保管</strong><span>办理归还、转交和处置</span></a>{% endif %}
+    {% if app_navigation.settings.can_manage_employee %}<a href="{% url 'masterdata:employee-list' %}"><strong>人员资料</strong><span>维护任职状态并发起清退</span></a>{% endif %}
+  </div>
+</section>
+{% endblock %}

@@ -209,3 +209,62 @@ def test_department_manager_scope_and_management_readonly(client):
     assert client.get(
         reverse("supplies:custody-write-off", args=[values["custody_a"].pk, "scrap"])
     ).status_code == 403
+
+
+def test_custody_filters_use_integer_master_ids_and_actions_are_direct(client):
+    values = http_custodies()
+    client.force_login(values["warehouse_actor"])
+
+    by_department = client.get(
+        reverse("supplies:custody-list"),
+        {"department": values["department_a"].pk},
+    )
+    assert by_department.status_code == 200
+    assert str(values["custody_a"].pk).encode() in by_department.content
+    assert str(values["custody_b"].pk).encode() not in by_department.content
+
+    by_employee = client.get(
+        reverse("supplies:custody-list"),
+        {"employee": values["custody_a"].employee_id},
+    )
+    assert str(values["custody_a"].pk).encode() in by_employee.content
+    assert str(values["custody_b"].pk).encode() not in by_employee.content
+    assert "归还".encode() in by_employee.content
+    assert "转交".encode() in by_employee.content
+
+
+def test_writeoff_requires_explicit_confirmation_and_does_not_prefill_full_quantity(client):
+    values = http_custodies()
+    custody = values["custody_a"]
+    equipment = make_user("s16-http-writeoff-equipment", "equipment")
+    client.force_login(equipment)
+
+    form_page = client.get(
+        reverse("supplies:custody-write-off", args=[custody.pk, "loss"])
+    )
+    assert form_page.status_code == 200
+    assert "确认本次操作会减少在管数量".encode() in form_page.content
+    assert b'name="quantity" value="1.0000"' not in form_page.content
+
+    payload = {
+        "quantity": "0.5000",
+        "business_date": "2026-08-26",
+        "reason": "现场损坏",
+        "idempotency_key": "s16-http-writeoff-confirm",
+    }
+    denied = client.post(
+        reverse("supplies:custody-write-off", args=[custody.pk, "loss"]),
+        payload,
+    )
+    assert denied.status_code == 200
+    custody.refresh_from_db()
+    assert custody.current_quantity == Decimal("1.0000")
+
+    payload["confirm"] = "on"
+    completed = client.post(
+        reverse("supplies:custody-write-off", args=[custody.pk, "loss"]),
+        payload,
+    )
+    assert completed.status_code == 302
+    custody.refresh_from_db()
+    assert custody.current_quantity == Decimal("0.5000")

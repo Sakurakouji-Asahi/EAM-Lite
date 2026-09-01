@@ -3,6 +3,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import PermissionDenied
 from django.db import connection
 from django.http import JsonResponse
 from django.shortcuts import render
@@ -13,6 +14,8 @@ from django.views.decorators.http import require_GET
 from apps.masterdata.models import InitializationSetting
 from apps.masterdata.permissions import current_company
 from apps.reports.queries import build_dashboard
+
+from .context_processors import build_application_navigation
 
 
 @never_cache
@@ -33,6 +36,22 @@ def healthz(request):
         status = 503
         payload = {"status": "unavailable"}
     response = JsonResponse(payload, status=status)
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+@never_cache
+@require_GET
+def version_info(request):
+    response = JsonResponse(
+        {
+            "version": settings.APP_VERSION,
+            "commit": settings.APP_COMMIT_SHA,
+            "environment": settings.EAM_ENVIRONMENT,
+            "database_vendor": connection.vendor,
+            "build_time": settings.BUILD_TIME,
+        }
+    )
     response["Cache-Control"] = "no-store"
     return response
 
@@ -78,7 +97,9 @@ def home(request):
             initialization_completed=True,
         ).exists()
     )
+    navigation = build_application_navigation(request)
     dashboard = None
+    supply_dashboard = None
     dashboard_filters = None
     if initialized:
         dashboard = build_dashboard(actor=request.user, company=company)
@@ -93,13 +114,22 @@ def home(request):
             "month_start": month_start.isoformat(),
             "month_end": (next_month - timedelta(days=1)).isoformat(),
         }
+        if navigation.get("home", {}).get("show_supply_overview"):
+            from apps.reports.supply_queries import build_supply_dashboard
+
+            supply_dashboard = build_supply_dashboard(
+                actor=request.user,
+                company=company,
+            )
     response = render(
         request,
         "core/home.html",
         {
             "initialized": initialized,
             "dashboard": dashboard,
+            "supply_dashboard": supply_dashboard,
             "dashboard_filters": dashboard_filters,
+            "app_navigation": navigation,
             # Backward-compatible home context aliases. Values come from the
             # Dashboard DTO, so there remains a single calculation source.
             "maintenance_counts": (
@@ -116,6 +146,55 @@ def home(request):
                 else 0
             ),
         },
+    )
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+@never_cache
+@login_required
+@require_GET
+def task_center(request):
+    navigation = build_application_navigation(request)
+    if not navigation.get("show_tasks"):
+        raise PermissionDenied("您没有可处理的任务中心事项。")
+    company = current_company()
+    if company is None or not navigation.get("initialized"):
+        raise PermissionDenied("系统初始化完成后才可进入任务中心。")
+
+    dashboard = build_dashboard(actor=request.user, company=company)
+    supply_dashboard = None
+    if navigation.get("home", {}).get("show_supply_overview"):
+        from apps.reports.supply_queries import build_supply_dashboard
+
+        supply_dashboard = build_supply_dashboard(
+            actor=request.user,
+            company=company,
+        )
+    response = render(
+        request,
+        "core/task_center.html",
+        {
+            "app_navigation": navigation,
+            "dashboard": dashboard,
+            "supply_dashboard": supply_dashboard,
+        },
+    )
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+@never_cache
+@login_required
+@require_GET
+def settings_center(request):
+    navigation = build_application_navigation(request)
+    if not navigation.get("show_settings"):
+        raise PermissionDenied("您没有可访问的系统设置项目。")
+    response = render(
+        request,
+        "core/settings_center.html",
+        {"app_navigation": navigation},
     )
     response["Cache-Control"] = "private, no-store"
     return response

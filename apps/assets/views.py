@@ -62,6 +62,7 @@ from apps.assets.services import (
     withdraw_asset_to_draft,
 )
 from apps.audit.services import request_audit_context, write_business_audit_log
+from apps.finance.permissions import can_manage_finance
 from apps.masterdata.models import (
     AssetCategory,
     Attachment,
@@ -75,6 +76,7 @@ from apps.masterdata.permissions import (
     resolve_department_ids,
     role_names_for,
 )
+from apps.reports.permissions import can_export_report
 
 
 FORBIDDEN_DRAFT_POST_FIELDS = FINANCIAL_FIELD_NAMES | frozenset(
@@ -293,6 +295,8 @@ def asset_list(request):
         )
     )
     roles = role_names_for(request.user)
+    can_financial_filters = can_view_financial_fields(request.user)
+    individual_durable_view = request.GET.get("view", "") == "individual_durable"
     p1_asset_ids = scoped_assets_p1(request.user, company).values("pk")
     list_has_p1 = not base_queryset.exclude(pk__in=p1_asset_ids).exists()
     queryset = base_queryset
@@ -324,7 +328,11 @@ def asset_list(request):
         "location": request.GET.get("location", ""),
         "asset_status": request.GET.get("asset_status", ""),
         "record_status": request.GET.get("record_status", ""),
-        "accounting_treatment": request.GET.get("accounting_treatment", ""),
+        "accounting_treatment": (
+            request.GET.get("accounting_treatment", "")
+            if can_financial_filters
+            else ""
+        ),
     }
     queryset = _safe_filter(
         queryset,
@@ -362,7 +370,12 @@ def asset_list(request):
             else queryset.none()
         )
     treatment = filters["accounting_treatment"]
-    if treatment in {"fixed_asset", "controlled_non_fixed"}:
+    if individual_durable_view:
+        queryset = queryset.filter(
+            finance__accounting_treatment="controlled_non_fixed",
+            finance__finance_confirmed_at__isnull=False,
+        )
+    elif treatment in {"fixed_asset", "controlled_non_fixed"}:
         queryset = queryset.filter(
             finance__accounting_treatment=treatment,
             finance__finance_confirmed_at__isnull=False,
@@ -412,8 +425,18 @@ def asset_list(request):
             ),
             "list_has_p1": list_has_p1,
             "can_create": can_create,
-            "individual_durable_hint": request.GET.get("source")
-            == "individual_durable",
+            "can_financial_filters": can_financial_filters,
+            "individual_durable_view": individual_durable_view,
+            "individual_durable_hint": individual_durable_view,
+            "can_open_imports": bool(
+                roles.intersection(
+                    {"system_admin", "finance", "equipment", "warehouse", "hr"}
+                )
+            ),
+            "can_open_reports": can_export_report(request.user, "asset_ledger"),
+            "can_open_label_queue": bool(
+                roles.intersection({"finance", "equipment", "warehouse"})
+            ),
         },
     )
 
@@ -461,6 +484,11 @@ def _render_asset_form(request, *, company, asset=None):
         except ValidationError as exc:
             _service_error(form, exc)
         else:
+            if (
+                request.POST.get("next_step") == "attachments"
+                and can_create_attachment_link(request.user, saved, "A0")
+            ):
+                return redirect("assets:attachment-upload", pk=saved.pk)
             return redirect("assets:asset-detail", pk=saved.pk)
     elif request.method == "POST" and category is None:
         form.add_error("category", "请选择当前公司的启用实物分类。")
@@ -514,6 +542,7 @@ def asset_detail(request, pk):
     can_p1 = can_view_asset_p1(request.user, asset)
     can_summary_fields = can_view_asset_summary_fields(request.user, asset)
     can_financial = can_view_financial_fields(request.user)
+    can_manage_financial = can_manage_finance(request.user)
     roles = role_names_for(request.user)
     current_qr = asset.qr_identities.filter(status="active").first()
     can_manage_label_actions = can_manage_labels(request.user, asset)
@@ -598,6 +627,7 @@ def asset_detail(request, pk):
             "can_p1": can_p1,
             "can_summary_fields": can_summary_fields,
             "can_financial": can_financial,
+            "can_manage_financial": can_manage_financial,
             "location_path": _tree_path(asset.location),
             "category_path": _tree_path(asset.category),
             "custom_values": [
@@ -676,7 +706,7 @@ def asset_submit(request, pk):
         else:
             messages.success(
                 request,
-                "资产已提交至待财务确认；正式编号和财务确认尚未启用。",
+                "资产已提交财务确认。财务确认完成后，系统才会生成正式编号和二维码。",
             )
             return redirect("assets:asset-detail", pk=asset.pk)
     return render(

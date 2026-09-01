@@ -80,6 +80,11 @@ class AssetTransferForm(ReasonedLifecycleForm):
             )
             self.initial.setdefault("expected_location_id", self.asset.location_id)
             self.initial.setdefault("expected_status", self.asset.asset_status)
+            self.initial.setdefault("to_department", self.asset.department_id)
+            self.initial.setdefault(
+                "to_responsible_employee", self.asset.responsible_employee_id
+            )
+            self.initial.setdefault("to_location", self.asset.location_id)
         self.fields["to_department"].queryset = Department.objects.filter(
             company=company, is_active=True
         )
@@ -90,6 +95,11 @@ class AssetTransferForm(ReasonedLifecycleForm):
         self.fields["to_location"].queryset = Location.objects.filter(
             company=company, is_active=True, children__isnull=True
         ).distinct()
+        self.fields["to_department"].help_text = "默认带入当前部门；仅在需要调拨时修改。"
+        self.fields["to_responsible_employee"].help_text = (
+            "默认带入当前责任人；转交时选择目标部门内的在职员工。"
+        )
+        self.fields["to_location"].help_text = "默认带入当前位置；仅在实物位置变化时修改。"
 
     def clean(self):
         cleaned = super().clean()
@@ -129,6 +139,9 @@ class AssetLoanForm(LifecycleActionForm):
             is_active=True,
             department__is_active=True,
         )
+        if not self.is_bound:
+            self.initial.setdefault("borrower_type", "internal_employee")
+            self.initial.setdefault("loan_date", timezone.localdate())
 
     def clean(self):
         cleaned = super().clean()
@@ -170,6 +183,26 @@ class AssetLoanReturnForm(LifecycleActionForm):
         self.fields["return_location"].queryset = Location.objects.filter(
             company=company, is_active=True, children__isnull=True
         ).distinct()
+        if not self.is_bound:
+            active_loan = self.asset.loans.filter(status="active").first()
+            self.initial.setdefault("returned_at", timezone.localdate())
+            self.initial.setdefault("return_department", self.asset.department_id)
+            self.initial.setdefault(
+                "return_responsible_employee", self.asset.responsible_employee_id
+            )
+            self.initial.setdefault("return_location", self.asset.location_id)
+            if active_loan is not None:
+                self.initial.setdefault(
+                    "return_asset_status", active_loan.previous_asset_status
+                )
+            actor_employee = employees.filter(user=self.actor).first()
+            if actor_employee is not None:
+                self.initial.setdefault("received_by_employee", actor_employee.pk)
+        self.fields["return_department"].help_text = "默认带入借出前的责任部门。"
+        self.fields["return_responsible_employee"].help_text = (
+            "默认带入原责任人；如同时转交，可在此修改。"
+        )
+        self.fields["return_location"].help_text = "请核对实物实际归还位置。"
 
     def clean(self):
         cleaned = super().clean()
@@ -189,6 +222,11 @@ class DisposalInitiateForm(LifecycleActionForm):
     reason = forms.CharField(label="原因", max_length=1000, widget=forms.Textarea)
     description = forms.CharField(label="说明", required=False, widget=forms.Textarea)
     recipient_name = forms.CharField(label="接收方/去向", required=False, max_length=200)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not self.is_bound:
+            self.initial.setdefault("application_date", timezone.localdate())
 
     def clean(self):
         cleaned = super().clean()

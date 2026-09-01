@@ -176,6 +176,25 @@ def _dataset_context(dataset):
     }
 
 
+def _report_center_navigation(actor):
+    supply_definitions = tuple(
+        definition
+        for key, definition in SUPPLY_REPORT_REGISTRY.items()
+        if can_view_report(actor, key)
+    )
+    return {
+        "can_view_asset_reports": can_view_report(actor, "asset_ledger"),
+        "can_view_financial_reports": can_view_report(actor, "fixed_asset_detail"),
+        "can_view_inventory_reports": can_view_report(actor, "inventory_results"),
+        "can_view_offboarding_reports": can_view_report(
+            actor, "offboarding_unresolved"
+        ),
+        "can_view_tplus_report": can_view_report(actor, "tplus_reconciliation"),
+        "supply_report_definitions": supply_definitions,
+        "supply_report_count": len(supply_definitions),
+    }
+
+
 @never_cache
 @login_required
 @require_GET
@@ -195,7 +214,11 @@ def report_center(request):
             )
         },
     )
-    context = {"form": form, "dataset": None}
+    context = {
+        "form": form,
+        "dataset": None,
+        **_report_center_navigation(request.user),
+    }
     if request.GET:
         if form.is_valid():
             report_key = form.cleaned_data["report_type"]

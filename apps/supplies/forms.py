@@ -215,6 +215,7 @@ class SupplyDeactivateForm(forms.Form):
 class SupplyDocumentForm(forms.Form):
     business_date = forms.DateField(
         label="业务日期",
+        help_text="默认为今天；补录时请选择实际发生日期。",
         widget=forms.DateInput(
             format="%Y-%m-%d",
             attrs={"type": "date", "class": "form-control"},
@@ -222,36 +223,42 @@ class SupplyDocumentForm(forms.Form):
     )
     source_warehouse = forms.ModelChoiceField(
         label="来源仓库",
+        help_text="领用或调拨实际出库的仓库。",
         queryset=SupplyWarehouse.objects.none(),
         required=False,
         widget=forms.Select(attrs={"class": "form-select"}),
     )
     target_warehouse = forms.ModelChoiceField(
         label="目标仓库",
+        help_text="入库、退回或调拨实际进入的仓库。",
         queryset=SupplyWarehouse.objects.none(),
         required=False,
         widget=forms.Select(attrs={"class": "form-select"}),
     )
     department = forms.ModelChoiceField(
         label="领用部门",
+        help_text="耐用品领用后将以此部门建立保管责任。",
         queryset=Department.objects.none(),
         required=False,
         widget=forms.Select(attrs={"class": "form-select"}),
     )
     employee = forms.ModelChoiceField(
         label="领用员工",
+        help_text="可留空表示部门领用；选择员工时必须属于领用部门。",
         queryset=Employee.objects.none(),
         required=False,
         widget=forms.Select(attrs={"class": "form-select"}),
     )
     external_reference = forms.CharField(
         label="外部参考号",
+        help_text="可填写送货单号、采购单号等外部凭据编号。",
         max_length=200,
         required=False,
         widget=forms.TextInput(attrs={"class": "form-control"}),
     )
     counterparty_name = forms.CharField(
         label="来源单位",
+        help_text="可填写供应商或交付单位名称，无需另建供应商档案。",
         max_length=200,
         required=False,
         widget=forms.TextInput(attrs={"class": "form-control"}),
@@ -330,6 +337,22 @@ class SupplyDocumentForm(forms.Form):
             is_active=True,
             department__is_active=True,
         ).select_related("department").order_by("normalized_employee_no")
+
+        for name in ("source_warehouse", "target_warehouse"):
+            self.fields[name].empty_label = "请选择仓库"
+        self.fields["department"].empty_label = "请选择领用部门"
+        self.fields["employee"].empty_label = "部门领用（不指定员工）"
+
+        if instance is None and not self.is_bound and warehouses.count() == 1:
+            only_warehouse = warehouses.first()
+            if document_type in {
+                SupplyDocumentType.OPENING,
+                SupplyDocumentType.RECEIPT,
+                SupplyDocumentType.RETURN,
+            }:
+                self.initial.setdefault("target_warehouse", only_warehouse.pk)
+            elif document_type == SupplyDocumentType.ISSUE:
+                self.initial.setdefault("source_warehouse", only_warehouse.pk)
 
         if document_type in {
             SupplyDocumentType.OPENING,
@@ -422,6 +445,7 @@ class SupplyDocumentLineEntryForm(forms.Form):
     )
     quantity = forms.DecimalField(
         label="数量",
+        help_text="按物品档案中的计量单位填写。",
         max_digits=18,
         decimal_places=4,
         min_value=Decimal("0.0001"),
@@ -462,8 +486,10 @@ class SupplyDocumentLineEntryForm(forms.Form):
             SupplyDocumentType.RECEIPT,
         }:
             self.fields["entered_unit_cost"].required = True
+            self.fields["line_remark"].label = "明细备注（0 成本时必填原因）"
         else:
             self.fields.pop("entered_unit_cost")
+            self.fields["line_remark"].label = "明细备注"
 
     def clean(self):
         cleaned = super().clean()
@@ -600,6 +626,7 @@ class _CustodyActionBaseForm(forms.Form):
     idempotency_key = forms.CharField(widget=forms.HiddenInput())
 
     action = None
+    prefill_full_quantity = True
 
     def __init__(self, *args, actor=None, company=None, custody=None, **kwargs):
         if actor is None or company is None or custody is None:
@@ -610,9 +637,13 @@ class _CustodyActionBaseForm(forms.Form):
         require_manage_supply_custody(actor, custody, action=self.action)
         initial = dict(kwargs.pop("initial", {}) or {})
         initial.setdefault("business_date", timezone.localdate())
-        initial.setdefault("quantity", custody.current_quantity)
+        if self.prefill_full_quantity:
+            initial.setdefault("quantity", custody.current_quantity)
         initial.setdefault("idempotency_key", str(uuid.uuid4()))
         super().__init__(*args, initial=initial, **kwargs)
+        self.fields["quantity"].help_text = (
+            f"当前最多可处理 {custody.current_quantity} {custody.item.unit}。"
+        )
 
     def clean_quantity(self):
         quantity = quantize_quantity(self.cleaned_data["quantity"])
@@ -669,21 +700,29 @@ class SupplyCustodyTransferForm(_CustodyActionBaseForm):
         departments = Department.objects.filter(
             company=self.company, is_active=True
         )
-        if "department_manager" in role_names_for(self.actor) and not role_names_for(
-            self.actor
-        ).intersection({"system_admin", "finance", "warehouse", "equipment"}):
+        roles = role_names_for(self.actor)
+        department_ids = None
+        if "department_manager" in roles and not roles.intersection(
+            {"system_admin", "finance", "warehouse", "equipment"}
+        ):
+            department_ids = resolve_department_ids(self.actor, self.company)
             departments = departments.filter(
-                pk__in=resolve_department_ids(self.actor, self.company)
+                pk__in=department_ids
             )
         self.fields["target_department"].queryset = departments.order_by(
             "normalized_code"
         )
-        self.fields["target_employee"].queryset = Employee.objects.filter(
+        employees = Employee.objects.filter(
             company=self.company,
             employment_status="active",
             is_active=True,
             department__is_active=True,
-        ).select_related("department").order_by("normalized_employee_no")
+        )
+        if department_ids is not None:
+            employees = employees.filter(department_id__in=department_ids)
+        self.fields["target_employee"].queryset = employees.select_related(
+            "department"
+        ).order_by("normalized_employee_no")
 
     def clean(self):
         cleaned = super().clean()
@@ -707,6 +746,12 @@ class SupplyCustodyTransferForm(_CustodyActionBaseForm):
 
 
 class SupplyCustodyWriteOffForm(_CustodyActionBaseForm):
+    prefill_full_quantity = False
+    confirm = forms.BooleanField(
+        label="我已核对物品、数量和原因，确认本次操作会减少在管数量且不能在本页撤销。",
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
+    )
+
     def __init__(self, *args, action=None, **kwargs):
         if action not in {SupplyCustodyAction.LOSS, SupplyCustodyAction.SCRAP}:
             raise ValidationError("保管核销表单只支持报损或报废。")
@@ -721,6 +766,10 @@ class SupplyDocumentReverseForm(forms.Form):
         widget=forms.Textarea(attrs={"rows": 3, "class": "form-control"}),
     )
     idempotency_key = forms.CharField(widget=forms.HiddenInput())
+    confirm = forms.BooleanField(
+        label="我已核对原单及影响，确认生成并立即过账完整冲销。",
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
+    )
 
     def __init__(self, *args, actor=None, document=None, **kwargs):
         if actor is None:
@@ -762,7 +811,8 @@ class SupplyDocumentPostForm(forms.Form):
 class SupplyCountTaskForm(forms.Form):
     name = forms.CharField(label="盘点任务名称", max_length=200)
     count_domain = forms.ChoiceField(
-        label="盘点域", choices=SupplyCountDomain.choices
+        label="盘点类型", choices=SupplyCountDomain.choices,
+        help_text="仓库库存盘点核对在库数量；耐用品保管盘点核对部门或员工名下数量。",
     )
     warehouse = forms.ModelChoiceField(
         label="盘点仓库", queryset=SupplyWarehouse.objects.none(), required=False
@@ -1009,21 +1059,28 @@ class SupplyCountCustodyResolutionForm(forms.Form):
         ).order_by("normalized_code")
         departments = Department.objects.filter(company=line.company, is_active=True)
         roles = role_names_for(actor)
+        department_ids = None
         if "department_manager" in roles and not roles.intersection(
             {"system_admin", "finance", "equipment"}
         ):
+            department_ids = resolve_department_ids(actor, line.company)
             departments = departments.filter(
-                pk__in=resolve_department_ids(actor, line.company)
+                pk__in=department_ids
             )
         self.fields["target_department"].queryset = departments.order_by(
             "normalized_code"
         )
-        self.fields["target_employee"].queryset = Employee.objects.filter(
+        employees = Employee.objects.filter(
             company=line.company,
             employment_status="active",
             is_active=True,
             department__is_active=True,
-        ).select_related("department").order_by("normalized_employee_no")
+        )
+        if department_ids is not None:
+            employees = employees.filter(department_id__in=department_ids)
+        self.fields["target_employee"].queryset = employees.select_related(
+            "department"
+        ).order_by("normalized_employee_no")
         _bootstrap_widgets(self)
 
     def clean_idempotency_key(self):

@@ -23,6 +23,19 @@ COPY requirements/production.lock /tmp/production.lock
 RUN python -m pip install --upgrade pip==26.2.1 \
     && python -m pip install -r /tmp/production.lock
 
+ARG APP_VERSION=unknown
+ARG BUILD_COMMIT=unknown
+ARG BUILD_TIME=unknown
+
+ENV APP_VERSION=${APP_VERSION} \
+    BUILD_COMMIT=${BUILD_COMMIT} \
+    BUILD_TIME=${BUILD_TIME}
+
+LABEL org.opencontainers.image.title="EAM-Lite" \
+      org.opencontainers.image.version="${APP_VERSION}" \
+      org.opencontainers.image.revision="${BUILD_COMMIT}" \
+      org.opencontainers.image.created="${BUILD_TIME}"
+
 COPY . /opt/eam-lite/app
 RUN useradd --system --uid 10001 --home /nonexistent --shell /usr/sbin/nologin eam-lite \
     && mkdir -p /srv/static /var/lib/eam-lite/media /var/lib/eam-lite/tmp \

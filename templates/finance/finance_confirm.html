@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}财务确认 {{ asset }} - EAM-Lite{% endblock %}
 {% block content %}
   <nav aria-label="面包屑"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="{% url 'finance:pending-list' %}">待财务确认</a></li><li class="breadcrumb-item active">{{ asset.draft_number }}</li></ol></nav>
@@ -6,7 +7,7 @@
   <div class="row g-4"><div class="col-12 col-xl-5"><div class="card shadow-sm"><div class="card-header">实物资料</div><div class="card-body"><dl class="row mb-0"><dt class="col-sm-5">草稿号</dt><dd class="col-sm-7">{{ asset.draft_number }}</dd><dt class="col-sm-5">实物分类</dt><dd class="col-sm-7">{{ asset.category }}</dd><dt class="col-sm-5">部门</dt><dd class="col-sm-7">{{ asset.department }}</dd><dt class="col-sm-5">责任人</dt><dd class="col-sm-7">{{ asset.responsible_employee }}</dd><dt class="col-sm-5">位置</dt><dd class="col-sm-7">{{ asset.location }}</dd><dt class="col-sm-5">达到可使用状态</dt><dd class="col-sm-7">{{ asset.commissioning_date|default:"未填写" }}</dd></dl></div></div></div>
   <div class="col-12 col-xl-7"><div class="card shadow-sm"><div class="card-header">财务认定与折旧参数</div><div class="card-body">
     <div class="alert alert-warning">正式编号确认后永久占用；预览与保存财务草稿均不会消耗编号或创建二维码。</div>
-    <form method="post" novalidate>{% csrf_token %}
+    <form method="post" novalidate id="finance-confirm-form">{% csrf_token %}
       {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
       {% for field in form %}{% if not field.is_hidden %}<div class="mb-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}{% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>{% else %}{{ field }}{% endif %}{% endfor %}
       {% if not preview_only %}<button class="btn btn-outline-primary" type="submit" name="action" value="save">保存财务资料</button> <button class="btn btn-danger" type="submit" name="action" value="confirm">确认并生成正式编号</button>{% endif %}
@@ -14,4 +15,5 @@
     </form>
   </div></div></div></div>
   {% if preview %}<section class="card shadow-sm mt-4"><div class="card-header">理论试算，不影响账面</div><div class="card-body"><p>原值 {{ preview.original_cost }}；残值 {{ preview.salvage_value }}；可折旧金额 {{ preview.depreciable_amount }}；起算日 {{ preview.start_date }}。</p><div class="table-responsive"><table class="table table-sm"><thead><tr><th>期次</th><th>期间</th><th>期初净值</th><th>计划折旧</th><th>累计计划</th><th>期末净值</th></tr></thead><tbody>{% for line in preview.lines %}<tr><td>{{ line.sequence_no }}</td><td>{{ line.period_start }} 至 {{ line.period_end }}</td><td>{{ line.opening_book_value }}</td><td>{{ line.planned_amount }}</td><td>{{ line.planned_accumulated }}</td><td>{{ line.closing_book_value }}</td></tr>{% endfor %}</tbody></table></div><p class="small text-secondary mb-0">金额按 Decimal 计算、ROUND_HALF_UP 到 2 位；最后一期直接取数据库可见的剩余可折旧金额修正尾差。</p></div></section>{% endif %}
+  <script src="{% static 'js/finance-confirm-form.js' %}" defer></script>
 {% endblock %}

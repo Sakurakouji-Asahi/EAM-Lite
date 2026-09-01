@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
@@ -13,12 +14,27 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--older-minutes", type=int, default=60)
+        parser.add_argument(
+            "--restored-snapshot",
+            action="store_true",
+            help="在本机恢复完成后关闭备份快照中自带的 pending 记录。",
+        )
 
     def handle(self, *args, **options):
         minutes = options["older_minutes"]
-        if minutes < 15:
+        restored_snapshot = options["restored_snapshot"]
+        if restored_snapshot and settings.EAM_ENVIRONMENT not in {
+            "local",
+            "development",
+        }:
+            raise CommandError("--restored-snapshot 只允许本机恢复环境使用。")
+        if not restored_snapshot and minutes < 15:
             raise CommandError("older-minutes 不得小于 15。")
-        cutoff = timezone.now() - timedelta(minutes=minutes)
+        cutoff = (
+            timezone.now() + timedelta(seconds=1)
+            if restored_snapshot
+            else timezone.now() - timedelta(minutes=minutes)
+        )
         changed = 0
         for backup_id in BackupSet.objects.filter(
             status=BackupSet.Status.PENDING, started_at__lt=cutoff
@@ -28,7 +44,12 @@ class Command(BaseCommand):
                 if backup.status != BackupSet.Status.PENDING or backup.started_at >= cutoff:
                     continue
                 finished = timezone.now()
-                reason = "备份进程中断或超时，已由恢复命令关闭 pending 状态。"
+                reason = (
+                    "该 pending 记录来自已恢复备份的数据库快照，"
+                    "恢复完成后已关闭以解除写冻结。"
+                    if restored_snapshot
+                    else "备份进程中断或超时，已由恢复命令关闭 pending 状态。"
+                )
                 BackupSet._base_manager.filter(pk=backup.pk).update(
                     status=BackupSet.Status.FAILED,
                     finished_at=finished,

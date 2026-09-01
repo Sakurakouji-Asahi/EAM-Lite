@@ -57,7 +57,15 @@ def test_warehouse_count_pages_create_publish_record_and_management_is_readonly(
     assert response.status_code == 302
     task = company.supply_count_tasks.get(idempotency_key="s17-http-count-create")
     assert response.url == reverse("supplies:count-task-detail", args=[task.pk])
-    publish = client.post(reverse("supplies:count-task-publish", args=[task.pk]))
+    no_confirmation = client.post(
+        reverse("supplies:count-task-publish", args=[task.pk])
+    )
+    assert no_confirmation.status_code == 200
+    assert "请先勾选确认".encode() in no_confirmation.content
+    publish = client.post(
+        reverse("supplies:count-task-publish", args=[task.pk]),
+        {"confirm": "on"},
+    )
     assert publish.status_code == 302
     line = task.lines.get(item=item)
     entry = client.get(

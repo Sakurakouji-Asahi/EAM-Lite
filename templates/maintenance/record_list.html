@@ -1,1 +1,1 @@
-{% extends "base.html" %}{% block title %}保养记录{% endblock %}{% block content %}<header class="app-page-header"><div><h1 class="h3 mb-1">保养记录</h1><p class="text-secondary mb-0">查看已有保养完成记录和处理结果。</p></div></header>{% include 'maintenance/_record_table.html' %}{% endblock %}
+{% extends "base.html" %}{% block title %}保养记录{% endblock %}{% block content %}<header class="app-page-header"><div><h1 class="h3 mb-1">保养记录</h1><p class="text-secondary mb-0">查看已有保养完成记录和处理结果。</p></div></header>{% include 'maintenance/_record_table.html' %}{% include "_pagination.html" %}{% endblock %}

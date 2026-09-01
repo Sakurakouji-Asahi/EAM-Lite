@@ -48,12 +48,12 @@ PASSWORD = "Valid-Password-2026!"
 
 
 @pytest.fixture(autouse=True)
-def require_postgresql_18_4():
+def require_postgresql_18_6():
     if connection.vendor != "postgresql":
-        pytest.skip("Sprint 1 acceptance evidence requires PostgreSQL 18.4")
+        pytest.skip("Sprint 1 acceptance evidence requires PostgreSQL 18.6")
     with connection.cursor() as cursor:
         cursor.execute("SHOW server_version")
-        assert cursor.fetchone()[0].startswith("18.4")
+        assert cursor.fetchone()[0].startswith("18.6")
 
 
 def make_user(username, *roles, password=PASSWORD):

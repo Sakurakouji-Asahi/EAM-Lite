@@ -8,14 +8,20 @@
   <meta name="theme-color" content="#16324f">
   <title>{% block title %}EAM-Lite{% endblock %}</title>
   <link rel="stylesheet" href="{% static 'vendor/bootstrap/5.3.8/css/bootstrap.min.css' %}">
-  <link rel="stylesheet" href="{% static 'css/app.css' %}?v=20260825-qr-web1">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}?v=20260831-usability1">
   <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
   <script src="{% static 'vendor/htmx/2.0.10/htmx.min.js' %}" defer></script>
   <script src="{% static 'vendor/bootstrap/5.3.8/js/bootstrap.bundle.min.js' %}" defer></script>
-  <script src="{% static 'js/app.js' %}?v=20260824-ux1" defer></script>
+  <script src="{% static 'js/app.js' %}?v=20260831-usability1" defer></script>
 </head>
 <body class="app-body">
   <a class="skip-link" href="#main-content">跳到主要内容</a>
+
+  {% if runtime_metadata.is_development %}
+    <div class="alert alert-warning rounded-0 border-0 text-center fw-semibold mb-0 py-2" role="status" data-development-environment-banner>
+      开发环境 · 数据与稳定使用版完全隔离
+    </div>
+  {% endif %}
 
   <header class="app-topbar">
     <div class="app-topbar-inner">
@@ -34,9 +40,18 @@
       </a>
 
       {% if request.user.is_authenticated %}
+        {% if app_navigation.show_assets or app_navigation.tasks.can_view_my_assets %}
+          <form class="d-none d-lg-flex flex-grow-1 mx-3" method="get" action="{% url 'assets:asset-list' %}" role="search" aria-label="全局资产搜索" data-global-asset-search>
+            <div class="input-group input-group-sm">
+              <label class="visually-hidden" for="global-asset-search">搜索资产</label>
+              <input class="form-control" id="global-asset-search" name="q" value="{{ request.GET.q|default:'' }}" placeholder="资产编号、草稿号或名称" autocomplete="off">
+              <button class="btn btn-light" type="submit">搜索资产</button>
+            </div>
+          </form>
+        {% endif %}
         <div class="app-topbar-actions">
-          {% if asset_nav.initialized and asset_nav.can_create %}
-            <a class="btn app-quick-create d-none d-md-inline-flex" href="{% url 'assets:asset-create' %}">新增资产</a>
+          {% if app_navigation.asset.can_create %}
+            <a class="btn app-quick-create d-none d-md-inline-flex" href="{% url 'assets:asset-create' %}" data-topbar-asset-create>新增资产</a>
           {% endif %}
           <div class="dropdown">
             <button class="app-user-menu dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
@@ -68,7 +83,7 @@
       <aside class="app-sidebar d-none d-xl-flex" aria-label="桌面功能菜单">
         <div class="app-sidebar-heading">
           <span>功能导航</span>
-          <small>按业务模块展开</small>
+          <small>按工作任务展开</small>
         </div>
         {% include "_app_navigation.html" %}
       </aside>
@@ -89,6 +104,15 @@
       <main class="app-main" id="main-content" tabindex="-1">
         <div class="app-content">
           {% include "masterdata/_messages.html" %}
+          {% if app_navigation.active_section and app_navigation.active_section != 'home' %}
+            <nav class="app-breadcrumb" aria-label="面包屑">
+              <ol class="breadcrumb mb-0">
+                <li class="breadcrumb-item"><a href="{% url 'home' %}">首页</a></li>
+                {% if app_navigation.section_label and app_navigation.section_url %}<li class="breadcrumb-item"><a href="{{ app_navigation.section_url }}">{{ app_navigation.section_label }}</a></li>{% endif %}
+                <li class="breadcrumb-item active" aria-current="page">{{ app_navigation.page_label }}</li>
+              </ol>
+            </nav>
+          {% endif %}
           {% block content %}{% endblock %}
         </div>
       </main>
@@ -98,5 +122,8 @@
       {% block anonymous_content %}{% endblock %}
     </main>
   {% endif %}
+  <footer class="border-top bg-body-tertiary py-2 px-3 text-center small text-secondary" data-runtime-version>
+    EAM-Lite {{ runtime_metadata.version }} · commit {{ runtime_metadata.short_commit }}{% if runtime_metadata.is_development %} · 开发环境{% elif runtime_metadata.is_local %} · 本机稳定使用版{% endif %}
+  </footer>
 </body>
 </html>

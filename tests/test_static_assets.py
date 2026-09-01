@@ -29,7 +29,8 @@ def test_home_request_uses_only_local_bootstrap_and_htmx(client):
     assert "/static/vendor/bootstrap/5.3.8/css/bootstrap.min.css" in html
     assert "/static/vendor/bootstrap/5.3.8/js/bootstrap.bundle.min.js" in html
     assert "/static/vendor/htmx/2.0.10/htmx.min.js" in html
-    assert "/static/js/app.js?v=20260824-ux1" in html
+    assert "/static/js/app.js?v=20260831-usability1" in html
+    assert "/static/css/app.css?v=20260831-usability1" in html
     htmx_config = '<meta name="htmx-config" content=\'{"includeIndicatorStyles": false}\'>'
     assert htmx_config in html
     assert html.index(htmx_config) < html.index("/static/vendor/htmx/2.0.10/htmx.min.js")
@@ -112,4 +113,19 @@ def test_application_interaction_script_prevents_repeat_submit_without_disabling
     assert 'form.dataset.eamSubmitting === "true"' in content
     assert 'event.preventDefault()' in content
     assert ".disabled" not in content
+    assert "fetch(" not in content
+
+
+def test_finance_confirmation_script_clears_nonfixed_depreciation_controls():
+    script = Path(finders.find("js/finance-confirm-form.js"))
+    content = script.read_text(encoding="utf-8")
+
+    assert 'treatment.value === "controlled_non_fixed"' in content
+    assert '"id_fixed_asset_category"' in content
+    assert '"id_depreciation_policy"' in content
+    assert '"id_method"' in content
+    assert '"id_opening_actual_accumulated_depreciation"' in content
+    assert 'field.value = ""' in content
+    assert "field.disabled = controlled" in content
+    assert 'field.value = "0.00"' in content
     assert "fetch(" not in content

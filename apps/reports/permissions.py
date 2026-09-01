@@ -211,7 +211,23 @@ def can_view_export(user, export_log):
         exported_scope = export_log.filters_json.get("_authorized_department_ids")
         if exported_scope is None:
             return False
-        return set(exported_scope).issubset(resolve_department_ids(user, company))
+        if not set(exported_scope).issubset(resolve_department_ids(user, company)):
+            return False
+    if definition.supply and "employee" in roles:
+        from apps.masterdata.models import Employee
+
+        exported_scope = export_log.filters_json.get("_authorized_employee_ids")
+        if exported_scope is None:
+            return False
+        current_scope = {
+            str(employee_id)
+            for employee_id in Employee.objects.filter(
+                company=company,
+                user=user,
+            ).values_list("pk", flat=True)
+        }
+        if set(exported_scope) != current_scope:
+            return False
     return True
 
 

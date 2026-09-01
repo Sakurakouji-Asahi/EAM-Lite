@@ -6,7 +6,7 @@ from threading import Event
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.db import close_old_connections, transaction
+from django.db import close_old_connections, connection, transaction
 
 from apps.masterdata.models import Company
 from apps.supplies import reconciliation
@@ -30,6 +30,11 @@ from tests.test_sprint18_rebuild import rebuild_context
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
+def require_postgresql():
+    if connection.vendor != "postgresql":
+        pytest.skip("Sprint 18 余额重建并发锁验收需要 PostgreSQL。")
+
+
 def _thread(callable_):
     close_old_connections()
     try:
@@ -39,6 +44,7 @@ def _thread(callable_):
 
 
 def test_stock_rebuild_serializes_normal_posting_and_remains_consistent(monkeypatch):
+    require_postgresql()
     company, actor = rebuild_context()
     balance = SupplyStockBalance.objects.get(company=company)
     with transaction.atomic():
@@ -107,6 +113,7 @@ def test_stock_rebuild_serializes_normal_posting_and_remains_consistent(monkeypa
 
 
 def test_custody_rebuild_serializes_writeoff_and_remains_consistent(monkeypatch):
+    require_postgresql()
     company, actor = rebuild_context()
     custody = SupplyCustody.objects.get(company=company)
     with transaction.atomic():

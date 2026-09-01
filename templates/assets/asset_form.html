@@ -62,8 +62,9 @@
     <div class="alert alert-info" role="note">
       照片与附件请先保存草稿，再从资产详情页上传。提交财务确认前至少需要一张有效资产照片。
     </div>
-    <div class="app-form-actions">
-      <button class="btn btn-primary" type="submit">保存草稿</button>
+    <div class="app-form-actions mobile-action-bar">
+      <button class="btn btn-outline-primary" type="submit" name="next_step" value="detail">仅保存草稿</button>
+      <button class="btn btn-primary" type="submit" name="next_step" value="attachments">保存并上传照片</button>
       <a class="btn btn-outline-secondary" href="{{ cancel_url }}">取消</a>
     </div>
   </form>

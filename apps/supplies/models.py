@@ -1280,8 +1280,10 @@ class SupplyStockBalance(models.Model):
         expected = calculate_average_unit_cost(
             self.quantity_on_hand, self.amount_on_hand
         )
-        if self.quantity_on_hand == ZERO_QUANTITY and self.average_unit_cost != expected:
-            raise ValidationError("库存数量为 0 时金额和平均成本必须同时为 0。")
+        if self.average_unit_cost != expected:
+            raise ValidationError(
+                "库存移动平均成本必须等于库存金额除以库存数量后的六位舍入值。"
+            )
 
     def save(self, *args, **kwargs):
         if not getattr(self, "_controlled_mutation", False):

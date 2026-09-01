@@ -2,13 +2,13 @@
 {% block title %}低值物品盘点 - EAM-Lite{% endblock %}
 {% block content %}
 <header class="app-page-header">
-  <div><h1 class="h3 mb-1">低值物品盘点</h1><p class="text-secondary mb-0">仓库库存盘点与数量型耐用品保管盘点分域管理。</p></div>
+  <div><h1 class="h3 mb-1">物品盘点</h1><p class="text-secondary mb-0">仓库库存盘点与数量型耐用品保管盘点分开管理。</p></div>
   {% if can_create_warehouse or can_create_custody %}<a class="btn btn-primary" href="{% url 'supplies:count-task-create' %}">新建盘点任务</a>{% endif %}
 </header>
 <form method="get" class="card card-body shadow-sm mb-3">
   <div class="row g-2">
     <div class="col-12 col-lg-3"><label class="form-label" for="q">任务号/名称</label><input class="form-control" id="q" name="q" value="{{ query }}"></div>
-    <div class="col-6 col-lg-2"><label class="form-label" for="domain">盘点域</label><select class="form-select" id="domain" name="count_domain"><option value="">全部</option>{% for value,label in domains %}<option value="{{ value }}"{% if selected_domain == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <div class="col-6 col-lg-2"><label class="form-label" for="domain">盘点类型</label><select class="form-select" id="domain" name="count_domain"><option value="">全部</option>{% for value,label in domains %}<option value="{{ value }}"{% if selected_domain == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
     <div class="col-6 col-lg-2"><label class="form-label" for="status">状态</label><select class="form-select" id="status" name="status"><option value="">全部</option>{% for value,label in statuses %}<option value="{{ value }}"{% if selected_status == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
     <div class="col-6 col-lg-2"><label class="form-label" for="warehouse">仓库</label><select class="form-select" id="warehouse" name="warehouse"><option value="">全部</option>{% for row in warehouses %}<option value="{{ row.pk }}"{% if selected_warehouse == row.pk|stringformat:'s' %} selected{% endif %}>{{ row.code }} / {{ row.name }}</option>{% endfor %}</select></div>
     <div class="col-6 col-lg-3"><label class="form-label" for="department">部门</label><select class="form-select" id="department" name="department"><option value="">全部</option>{% for row in departments %}<option value="{{ row.pk }}"{% if selected_department == row.pk|stringformat:'s' %} selected{% endif %}>{{ row.code }} / {{ row.name }}</option>{% endfor %}</select></div>
@@ -19,7 +19,7 @@
   </div>
 </form>
 <div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover align-middle mb-0">
-  <thead><tr><th>任务号</th><th>名称</th><th>盘点域</th><th>范围</th><th>计划日期</th><th>状态</th><th></th></tr></thead>
+  <thead><tr><th>任务号</th><th>名称</th><th>盘点类型</th><th>范围</th><th>计划日期</th><th>状态</th><th></th></tr></thead>
   <tbody>{% for task in page_obj %}<tr><td class="text-nowrap">{{ task.task_no }}</td><td>{{ task.name }}</td><td>{{ task.get_count_domain_display }}</td><td>{% if task.warehouse %}{{ task.warehouse.code }} / {{ task.warehouse.name }}{% else %}{{ task.department.name }}{% if task.employee %} · {{ task.employee.name }}{% else %} · 全部门{% endif %}{% endif %}</td><td class="text-nowrap">{{ task.planned_start }} 至 {{ task.planned_end }}</td><td><span class="badge text-bg-{% if task.status == 'closed' %}success{% elif task.status == 'cancelled' %}secondary{% elif task.status == 'reconciliation' %}warning{% else %}primary{% endif %}">{{ task.get_status_display }}</span></td><td><a class="btn btn-sm btn-outline-primary" href="{% url 'supplies:count-task-detail' task.pk %}">查看</a></td></tr>{% empty %}<tr><td colspan="7" class="text-center text-secondary py-4">没有符合条件的盘点任务。</td></tr>{% endfor %}</tbody>
 </table></div></div>
 {% include "supplies/_pagination.html" %}

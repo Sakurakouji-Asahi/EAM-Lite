@@ -3,17 +3,18 @@
 EAM-Lite 是公司局域网内使用的轻量级企业资产管理系统。本仓库根目录就是包含
 AGENTS.md、docs/、tasks/ 和 manage.py 的当前目录，不存在第二层项目仓库。
 
-当前软件版本为 **v0.2.0**，采用已批准的 **Requirements V1.1** 基线及 **V1.2 低值物品有限扩展**。
-软件版本号与需求文档修订号相互独立：v0.2.0 表示 Sprint 0–18 的当前功能基线，Requirements
+当前软件版本为 **v0.2.1**，采用已批准的 **Requirements V1.1** 基线及 **V1.2 低值物品有限扩展**。
+软件版本号与需求文档修订号相互独立：v0.2.1 表示 Sprint 0–18 功能基线完成生产加固、
+库存核算不变量和小型制造企业易用性整合后的候选版本，Requirements
 V1.1/V1.2 表示对应业务需求修订。
 
-v0.2.0 已累计整合 Sprint 0–18 的代码范围。现有功能包括身份与审计、
+v0.2.1 已累计整合 Sprint 0–18 的代码范围。现有功能包括身份与审计、
 基础资料、导入、资产编码与主档、财务确认与折旧、二维码标签、调拨借用与处置、盘点、
 保养、离职清退、Dashboard、固定报表、T+ 人工对账导出，以及公司内部数量型低值物品的
 库存、保管、盘点、清退和正式报表。T+ 仍是正式会计系统；本应用
 不调用 T+ API、不写 T+ 数据库，也不自动入账。
 
-仓库已包含 Gunicorn/Caddy/PostgreSQL 18 Compose、生产 fail-closed 配置、加密数据库+附件
+仓库已包含 Gunicorn 26.1.0、Caddy 2.11.4、PostgreSQL 18.6 Compose、生产 fail-closed 配置、加密数据库+附件
 备份、30 日保留、system_admin 一次性下载授权和隔离恢复命令。当前本地恢复演练已通过，
 但真实固定 DNS/受信任 HTTPS、独立 NAS、完整性能场景和多角色人工签字仍是外部上线门槛，
 因此当前可用于本地业务验收，仍不得声明为生产上线完成。
@@ -61,7 +62,7 @@ python manage.py rebuild_supply_custodies --company <公司编码> --actor <用�
 
 - Python：>=3.14.7,<3.15（本 Sprint 验证版本 3.14.7；不使用 3.15 预览版）
 - Django：5.2 LTS，项目范围 >=5.2,<5.3，精确锁定 5.2.17
-- PostgreSQL：支持 16–18，本 Sprint PostgreSQL 验证版本 18.4
+- PostgreSQL：支持 16–18，生产镜像与客户端精确固定为安全修复版 18.6
 - psycopg：3.3 系列，精确锁定 3.3.4
 - pytest：9.1 系列，精确锁定 9.1.1
 - pytest-django：4.14 系列，精确锁定 4.14.0
@@ -72,6 +73,7 @@ python manage.py rebuild_supply_custodies --company <公司编码> --actor <用�
 - Pillow：12.3.0，用于附件图片真实解码、格式确认和像素上限保护
 - qrcode：8.2，用于本地生成带安静区的 SVG 二维码，不调用外网二维码服务
 - gunicorn：26.1.0，生产 Docker 容器中的 WSGI 服务
+- Caddy：2.11.4，生产 LAN HTTPS 反向代理
 - cryptography：50.0.0，用于 AES-256-GCM 加密备份包
 
 requirements/production.in 和 requirements/development.in 记录直接依赖的兼容范围；
@@ -182,19 +184,17 @@ CREATEDB；不要把这项权限授予生产 runtime 账号。
 且严格授权的 `SECURITY DEFINER` 入口完成。当前 Compose 已完成身份分离但尚未把全部关键
 写操作收敛为 SECURITY DEFINER；此项仍记录为正式上线阻断，不影响本地验收使用。
 
-## 一键本地启动
+## Windows 本机稳定版与开发环境
 
-Windows 本地验收可双击仓库根目录 `启动EAM-Lite.cmd`。启动器会等待 Docker Desktop、
-启动 PostgreSQL、执行迁移、检测局域网 IP、设置本地 QR 地址并打开浏览器。重复双击时，
-若健康的 EAM-Lite 已在运行则直接打开页面；若精确识别到本仓库旧服务失去响应，则只停止
-该旧进程并自动重启；无法识别的其他端口占用程序只报告进程名称和 PID，不会自动终止。
-若 Docker Desktop 因 Windows 遗留的 `dockerInference` 或 Secrets Engine AF_UNIX 套接字
-崩溃，启动器只在最近后端日志精确命中该错误时，把对应运行目录改名留存、备份 Docker
-设置、关闭未使用的 Docker AI/Inference，并自动重试一次；不会恢复出厂设置，也不会修改
-Docker 的 WSL 数据盘、镜像、卷或数据库容器。
-Secret 和自动
-备份密钥只写入被 Git 忽略的 `var/local/`，不会写入源码。黑色服务窗口必须保持打开，
-`Ctrl+C` 停止。该方式使用 DEBUG 和 HTTP，仅限本地验收，不是生产部署。
+Windows 用户可双击仓库根目录或 GitHub Release 中的 `启动EAM-Lite.cmd`。稳定版固定使用
+`eam-lite-local`、`127.0.0.1:8765`、PostgreSQL、Gunicorn 和 `DEBUG=false`；只接受干净且与
+`origin/main` 精确一致的 main、正式 tag 或带镜像 digest 的 Release。Secret 位于仓库外的
+`%LOCALAPPDATA%\EAM-Lite\local\`，数据库和附件使用独立 Docker volume。
+
+开发使用 `启动开发环境.cmd`，固定为 `eam-lite-dev` 和 `127.0.0.1:8766`，页面有醒目标识，
+数据库、附件、备份阶段、容器和端口均不与稳定版共享。便携备份/恢复、更新、安全边界和普通
+用户操作步骤见 `README-本机使用版.md`。本机 HTTP 只允许当前电脑浏览器访问，不是公司 LAN
+HTTPS 生产部署。
 
 ## 生产部署、备份与恢复
 
@@ -214,6 +214,9 @@ docker compose --env-file /etc/eam-lite/compose.env -f deploy/compose.yaml --pro
 system_admin 也可从“系统设置 → 数据备份”生成手动加密备份。备份口令不会保存；浏览器
 下载使用当前密码复核和一次性短时授权。隔离恢复只允许目标名称含 restore/uat/test 的全新
 数据库及空附件目录，命令见运维手册。
+下载进入 `started` 后会持有文件租约；租约有效到授权 `expires_at` 再加一个
+`BACKUP_DOWNLOAD_GRANT_MINUTES` 宽限期。到期任务跳过有效租约，超过该边界的僵死
+`started` 授权会原子标记失败后再回收备份。
 
 ## 迁移与检查
 

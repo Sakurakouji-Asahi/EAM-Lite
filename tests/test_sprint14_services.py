@@ -141,11 +141,25 @@ def test_duplicate_post_is_idempotent_and_cancelled_draft_cannot_recover():
     document = make_supply_document(
         actor=actor, company=company, warehouse=warehouse, item=item, key="post-twice"
     )
-    first = post_supply_document(document=document, actor=actor, idempotency_key="one")
-    second = post_supply_document(document=document, actor=actor, idempotency_key="two")
+    first = post_supply_document(
+        document=document,
+        actor=actor,
+        idempotency_key=document.idempotency_key,
+    )
+    second = post_supply_document(
+        document=document,
+        actor=actor,
+        idempotency_key=document.idempotency_key,
+    )
     assert first.pk == second.pk
     assert SupplyStockLedger.objects.count() == 1
     assert SupplyStockBalance.objects.get().quantity_on_hand == Decimal("10.0000")
+    with pytest.raises(ValidationError, match="幂等键与该单据不一致"):
+        post_supply_document(
+            document=document,
+            actor=actor,
+            idempotency_key="different-post-request",
+        )
 
     cancelled = make_supply_document(
         actor=actor, company=company, warehouse=warehouse, item=item, key="cancel-me"

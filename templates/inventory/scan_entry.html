@@ -1,3 +1,28 @@
 {% extends "base.html" %}
 {% block title %}扫码盘点 - {{ task.name }}{% endblock %}
-{% block content %}<article class="mx-auto" style="max-width:36rem"><header class="mb-3"><div class="text-secondary">{{ task.task_code }}</div><h1 class="h3">扫码盘点</h1><p class="mb-0">{{ task.name }}</p></header>{% include "inventory/_summary.html" %}{% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}<form method="post" class="card shadow-sm"><div class="card-body">{% csrf_token %}<label class="form-label" for="token">当前二维码</label><input class="form-control form-control-lg" id="token" name="token" autocomplete="off" autofocus required><div class="form-text">请用设备扫码器扫描标签上的完整二维码；服务端仍会校验登录、任务范围和当前已贴标身份。</div></div><div class="card-footer d-grid gap-2"><button class="btn btn-success btn-lg inventory-mobile-action" type="submit">核对本任务资产</button><a class="btn btn-outline-primary inventory-mobile-action" href="{% url 'inventory:surplus-create' task.pk %}">无二维码 / 系统外实物：登记盘盈</a><a class="btn btn-outline-secondary inventory-mobile-action" href="{% url 'inventory:task-detail' task.pk %}">查看任务进度</a></div></form></article>{% endblock %}
+{% block content %}
+  <article class="app-narrow-page app-narrow-page-sm inventory-scan-page">
+    <header class="mb-3">
+      <div class="text-secondary">{{ task.task_code }}</div>
+      <h1 class="h3">扫码盘点</h1>
+      <p class="mb-0">{{ task.name }}</p>
+    </header>
+    {% include "inventory/_summary.html" %}
+    {% if error %}
+      <div class="alert {% if error_kind == 'non_task' %}alert-warning{% else %}alert-danger{% endif %}" role="alert">{{ error }}</div>
+    {% endif %}
+    <form method="post" class="card shadow-sm inventory-scan-form">
+      <div class="card-body">
+        {% csrf_token %}
+        <label class="form-label" for="token">扫描资产标签</label>
+        <input class="form-control form-control-lg" id="token" name="token" autocomplete="off" autofocus required>
+        <div class="form-text">扫码枪可在此输入完整二维码。手机系统相机请直接打开二维码页面，再点击“录入本次盘点”；系统仍会核验登录、任务范围和当前标签。</div>
+      </div>
+      <div class="card-footer d-grid gap-2 inventory-scan-actions">
+        <button class="btn btn-success btn-lg inventory-mobile-action" type="submit">核对并录入</button>
+        <a class="btn btn-outline-primary inventory-mobile-action" href="{% url 'inventory:surplus-create' task.pk %}">没有系统标签：登记盘盈</a>
+        <a class="btn btn-outline-secondary inventory-mobile-action" href="{% url 'inventory:task-detail' task.pk %}">查看任务进度</a>
+      </div>
+    </form>
+  </article>
+{% endblock %}
