@@ -226,8 +226,15 @@ function Invoke-EamGit {
     if (-not $gitExe) {
         throw "未找到 Git，无法验证当前源码工作树。GitHub Release 解压版不需要 Git。"
     }
-    $output = & $gitExe -C $RepositoryRoot @Arguments 2>&1
-    $exitCode = $LASTEXITCODE
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & $gitExe -C $RepositoryRoot @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     if ($exitCode -ne 0 -and -not $AllowFailure) {
         throw "Git 检查失败：$($output -join [Environment]::NewLine)"
     }
@@ -243,8 +250,15 @@ function Test-EamGitRepository {
         }
         return $false
     }
-    $output = & $gitExe -C $RepositoryRoot rev-parse --is-inside-work-tree 2>&1
-    $exitCode = $LASTEXITCODE
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & $gitExe -C $RepositoryRoot rev-parse --is-inside-work-tree 2>&1
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     $result = [pscustomobject]@{ ExitCode = $exitCode; Output = @($output) }
     return ($result.ExitCode -eq 0 -and ($result.Output -join "").Trim() -eq "true")
 }
@@ -436,8 +450,15 @@ function Invoke-EamCompose {
         "--env-file", $Context.EnvFile,
         "--file", $Context.ComposeFile
     )
-    $output = & docker.exe @base @Arguments 2>&1
-    $exitCode = $LASTEXITCODE
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & docker.exe @base @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     if ($exitCode -ne 0 -and -not $AllowFailure) {
         throw "Docker Compose 操作失败：$($output -join [Environment]::NewLine)"
     }
@@ -456,9 +477,34 @@ function Invoke-EamComposeInteractive {
         "--env-file", $Context.EnvFile,
         "--file", $Context.ComposeFile
     )
-    & docker.exe @base @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "交互式 Docker Compose 操作失败，退出码 $LASTEXITCODE。"
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & docker.exe @base @Arguments
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($exitCode -ne 0) {
+        throw "交互式 Docker Compose 操作失败，退出码 $exitCode。"
+    }
+}
+
+function Pull-EamImage {
+    param([Parameter(Mandatory = $true)][string]$Image)
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & docker.exe pull $Image
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($exitCode -ne 0) {
+        throw "镜像下载失败：$Image"
     }
 }
 
@@ -482,14 +528,22 @@ function Build-EamImage {
         }
     }
     Write-Host "正在构建与 commit $($Identity.Commit.Substring(0, [Math]::Min(12, $Identity.Commit.Length))) 一致的应用镜像……" -ForegroundColor Cyan
-    & docker.exe build `
-        --file (Join-Path $RepositoryRoot "deploy\Dockerfile") `
-        --tag $Identity.AppImage `
-        --build-arg "APP_VERSION=$($Identity.Version)" `
-        --build-arg "BUILD_COMMIT=$($Identity.Commit)" `
-        --build-arg "BUILD_TIME=$($Identity.BuildTime)" `
-        $RepositoryRoot
-    if ($LASTEXITCODE -ne 0) {
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & docker.exe build `
+            --file (Join-Path $RepositoryRoot "deploy\Dockerfile") `
+            --tag $Identity.AppImage `
+            --build-arg "APP_VERSION=$($Identity.Version)" `
+            --build-arg "BUILD_COMMIT=$($Identity.Commit)" `
+            --build-arg "BUILD_TIME=$($Identity.BuildTime)" `
+            $RepositoryRoot
+        $buildExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($buildExitCode -ne 0) {
         throw "应用镜像构建失败。"
     }
 }

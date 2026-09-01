@@ -53,8 +53,7 @@ try {
         Build-EamImage -RepositoryRoot $repositoryRoot -Identity $identity
     }
     else {
-        & docker.exe pull $identity.AppImage
-        if ($LASTEXITCODE -ne 0) { throw "Release 镜像下载失败。" }
+        Pull-EamImage -Image $identity.AppImage
     }
     Invoke-EamCompose -Context $context -Arguments @("stop", "app", "caddy") -AllowFailure | Out-Null
     Invoke-EamCompose -Context $context -Arguments @("up", "--detach", "--wait", "db") | Out-Null

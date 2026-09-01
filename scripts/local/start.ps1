@@ -28,8 +28,7 @@ try {
     }
     else {
         Write-Host "正在获取 Release 精确镜像（含 digest）……" -ForegroundColor Cyan
-        & docker.exe pull $identity.AppImage
-        if ($LASTEXITCODE -ne 0) { throw "Release 镜像下载失败。请检查网络后重试。" }
+        Pull-EamImage -Image $identity.AppImage
     }
 
     Invoke-EamCompose -Context $context -Arguments @("up", "--detach", "--wait", "db") | Out-Null
