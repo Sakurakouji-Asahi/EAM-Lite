@@ -184,19 +184,17 @@ CREATEDB；不要把这项权限授予生产 runtime 账号。
 且严格授权的 `SECURITY DEFINER` 入口完成。当前 Compose 已完成身份分离但尚未把全部关键
 写操作收敛为 SECURITY DEFINER；此项仍记录为正式上线阻断，不影响本地验收使用。
 
-## 一键本地启动
+## Windows 本机稳定版与开发环境
 
-Windows 本地验收可双击仓库根目录 `启动EAM-Lite.cmd`。启动器会等待 Docker Desktop、
-启动 PostgreSQL、执行迁移、检测局域网 IP、设置本地 QR 地址并打开浏览器。重复双击时，
-若健康的 EAM-Lite 已在运行则直接打开页面；若精确识别到本仓库旧服务失去响应，则只停止
-该旧进程并自动重启；无法识别的其他端口占用程序只报告进程名称和 PID，不会自动终止。
-若 Docker Desktop 因 Windows 遗留的 `dockerInference` 或 Secrets Engine AF_UNIX 套接字
-崩溃，启动器只在最近后端日志精确命中该错误时，把对应运行目录改名留存、备份 Docker
-设置、关闭未使用的 Docker AI/Inference，并自动重试一次；不会恢复出厂设置，也不会修改
-Docker 的 WSL 数据盘、镜像、卷或数据库容器。
-Secret 和自动
-备份密钥只写入被 Git 忽略的 `var/local/`，不会写入源码。黑色服务窗口必须保持打开，
-`Ctrl+C` 停止。该方式使用 DEBUG 和 HTTP，仅限本地验收，不是生产部署。
+Windows 用户可双击仓库根目录或 GitHub Release 中的 `启动EAM-Lite.cmd`。稳定版固定使用
+`eam-lite-local`、`127.0.0.1:8765`、PostgreSQL、Gunicorn 和 `DEBUG=false`；只接受干净且与
+`origin/main` 精确一致的 main、正式 tag 或带镜像 digest 的 Release。Secret 位于仓库外的
+`%LOCALAPPDATA%\EAM-Lite\local\`，数据库和附件使用独立 Docker volume。
+
+开发使用 `启动开发环境.cmd`，固定为 `eam-lite-dev` 和 `127.0.0.1:8766`，页面有醒目标识，
+数据库、附件、备份阶段、容器和端口均不与稳定版共享。便携备份/恢复、更新、安全边界和普通
+用户操作步骤见 `README-本机使用版.md`。本机 HTTP 只允许当前电脑浏览器访问，不是公司 LAN
+HTTPS 生产部署。
 
 ## 生产部署、备份与恢复
 
