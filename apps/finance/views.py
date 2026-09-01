@@ -200,6 +200,18 @@ def _finance_form(request, *, asset, confirm=False):
     )
 
 
+def _finance_confirm_context(*, asset, form, preview=None, preview_only=False):
+    return {
+        "asset": asset,
+        "form": form,
+        "preview": preview,
+        "preview_only": preview_only,
+        "has_fixed_asset_categories": form.fields[
+            "fixed_asset_category"
+        ].queryset.exists(),
+    }
+
+
 @login_required
 def finance_preview(request, pk):
     require_manage_finance(request.user)
@@ -225,7 +237,9 @@ def finance_preview(request, pk):
     return render(
         request,
         "finance/finance_confirm.html",
-        {"asset": asset, "form": form, "preview": result, "preview_only": True},
+        _finance_confirm_context(
+            asset=asset, form=form, preview=result, preview_only=True
+        ),
     )
 
 
@@ -274,7 +288,7 @@ def finance_confirm(request, pk):
     return render(
         request,
         "finance/finance_confirm.html",
-        {"asset": asset, "form": form, "preview": None, "preview_only": False},
+        _finance_confirm_context(asset=asset, form=form),
     )
 
 

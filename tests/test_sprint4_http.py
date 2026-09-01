@@ -217,6 +217,38 @@ def test_finance_can_write_and_management_is_strictly_read_only(client):
     assert client.post(reverse("finance:settings"), {"fixed_asset_warning_amount": "1"}).status_code == 403
 
 
+def test_policy_page_links_to_fixed_asset_accounting_categories(client):
+    context = _context()
+    client.force_login(context["finance"])
+
+    response = client.get(reverse("finance:policy-list"))
+
+    assert response.status_code == 200
+    html = response.content.decode()
+    assert "固定资产会计类别" in html
+    assert reverse("finance:fixed-category-list") in html
+
+
+def test_finance_confirmation_explains_missing_category_master_and_commissioning_date(
+    client,
+):
+    context = _context()
+    context["asset"].commissioning_date = None
+    context["asset"].save(update_fields=["commissioning_date", "updated_at"])
+    client.force_login(context["finance"])
+
+    response = client.get(
+        reverse("finance:finance-confirm", args=[context["asset"].pk])
+    )
+
+    assert response.status_code == 200
+    html = response.content.decode()
+    assert "尚未配置固定资产会计类别" in html
+    assert reverse("finance:fixed-category-create") in html
+    assert "尚未填写达到可使用状态日期" in html
+    assert reverse("assets:asset-withdraw", args=[context["asset"].pk]) in html
+
+
 def test_finance_confirmation_uses_local_accounting_treatment_script(client):
     context = _context()
     client.force_login(context["finance"])
