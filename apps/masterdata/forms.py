@@ -453,6 +453,8 @@ class AssetCodingSegmentForm(forms.ModelForm):
         from apps.coding.domain import validate_segment_fields
 
         segment_type = cleaned.get("segment_type")
+        if not segment_type:
+            return cleaned
         fixed_value_types = {
             AssetCodingSegment.SegmentType.FIXED_TEXT,
             AssetCodingSegment.SegmentType.CUSTOM_TEXT,

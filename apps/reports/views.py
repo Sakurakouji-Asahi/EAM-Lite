@@ -21,6 +21,12 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 
 from apps.assets.models import Asset
 from apps.assets.permissions import scoped_assets
+from apps.masterdata.models import (
+    AssetCategory,
+    Department,
+    Employee,
+    FixedAssetCategory,
+)
 from apps.masterdata.permissions import current_company
 from apps.reports.forms import (
     ExternalReferenceForm,
@@ -97,6 +103,12 @@ _TPLUS_TOTAL_LABELS = {
     "ending_book_value": "期末账面净值",
     "disposal_income": "处置收入",
 }
+_MODEL_FILTERS = {
+    "department": Department,
+    "category": AssetCategory,
+    "fixed_asset_category": FixedAssetCategory,
+    "responsible_employee": Employee,
+}
 
 
 def _company_or_400():
@@ -125,25 +137,28 @@ def _require_no_store(check, *args):
 
 
 def _filter_dict(cleaned_data):
-    return {
-        key: value
-        for key, value in cleaned_data.items()
-        if key != "report_type"
-        and value not in (None, "")
-        and (value is not False or key == "include_disposed")
-    }
+    result = {}
+    for key, value in cleaned_data.items():
+        if (
+            key == "report_type"
+            or value in (None, "")
+            or (value is False and key != "include_disposed")
+        ):
+            continue
+        result[key] = value.pk if key in _MODEL_FILTERS else value
+    return result
 
 
-def _display_filters(filters):
+def _display_filters(filters, company):
     result = []
     labels = {
         "as_of_date": "基准日期",
         "period_start": "期间开始",
         "period_end": "期间结束",
-        "department": "部门 ID",
-        "category": "实物分类 ID",
-        "fixed_asset_category": "固定资产类别 ID",
-        "responsible_employee": "责任人 ID",
+        "department": "部门",
+        "category": "实物分类",
+        "fixed_asset_category": "固定资产类别",
+        "responsible_employee": "责任人",
         "asset_status": "资产状态",
         "accounting_treatment": "会计认定",
         "asset_scope": "资产范围",
@@ -154,13 +169,18 @@ def _display_filters(filters):
     }
     for key, value in filters.items():
         if key in labels:
+            if key in _MODEL_FILTERS:
+                instance = _MODEL_FILTERS[key].objects.filter(
+                    company=company, pk=value
+                ).first()
+                value = str(instance) if instance is not None else value
             result.append(
                 (labels[key], "是" if value is True else "否" if value is False else value)
             )
     return result
 
 
-def _dataset_context(dataset):
+def _dataset_context(dataset, company):
     columns = tuple(dataset.definition.columns)
     preview_rows = [
         [(column, row.get(column.key)) for column in columns]
@@ -171,7 +191,7 @@ def _dataset_context(dataset):
         "columns": columns,
         "preview_rows": preview_rows,
         "preview_limit": REPORT_PREVIEW_LIMIT,
-        "display_filters": _display_filters(dataset.filters),
+        "display_filters": _display_filters(dataset.filters, company),
         "generated_at": timezone.now(),
     }
 
@@ -206,6 +226,7 @@ def report_center(request):
     form = ReportFilterForm(
         request.GET or None,
         actor=request.user,
+        company=company,
         initial={
             "report_type": (
                 "offboarding_unresolved"
@@ -236,7 +257,7 @@ def report_center(request):
                 for error in exc.errors:
                     form.add_error(None, error)
             else:
-                context.update(_dataset_context(dataset))
+                context.update(_dataset_context(dataset, company))
                 context["can_export"] = can_export_report(request.user, report_key)
                 context["export_idempotency_key"] = uuid.uuid4().hex
         status = 200 if form.is_valid() else 400
@@ -260,7 +281,7 @@ def report_export(request):
         "idempotency_key",
     }:
         return _no_store(HttpResponseBadRequest("包含不支持的报表导出参数。"))
-    form = ReportFilterForm(request.POST, actor=request.user)
+    form = ReportFilterForm(request.POST, actor=request.user, company=company)
     if not form.is_valid():
         return _render_sensitive(
             request, "reports/report_center.html", {"form": form, "dataset": None}, status=400
@@ -468,17 +489,22 @@ def tplus_export(request):
         return _no_store(HttpResponseBadRequest("T+ 页面动作无效。"))
     data = request.POST if request.method == "POST" else request.GET or None
     initial = {"idempotency_key": uuid.uuid4().hex}
-    form = TplusExportForm(data, initial=initial)
+    form = TplusExportForm(
+        data,
+        actor=request.user,
+        company=company,
+        initial=initial,
+    )
     context = {"form": form, "dataset": None}
     if data and form.is_valid():
         period_start, period_end = _period_bounds(form.cleaned_data["period"])
-        filters = {
-            key: value
-            for key, value in form.cleaned_data.items()
-            if key not in {"period", "idempotency_key"}
-            and value not in (None, "")
-            and (value is not False or key == "include_disposed")
-        }
+        filters = _filter_dict(
+            {
+                key: value
+                for key, value in form.cleaned_data.items()
+                if key not in {"period", "idempotency_key"}
+            }
+        )
         try:
             dataset = build_tplus_dataset(
                 actor=request.user,

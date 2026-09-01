@@ -31,8 +31,9 @@ class NormalizedCodeModel(models.Model):
 
     def clean(self):
         super().clean()
+        raw_code = self.code
         self._normalize_code()
-        if not self.normalized_code:
+        if raw_code not in (None, "") and not self.normalized_code:
             raise ValidationError({"code": "编码不能为空。"})
 
     def save(self, *args, **kwargs):
@@ -297,8 +298,9 @@ class Employee(TimeStampedModel):
 
     def clean(self):
         super().clean()
+        raw_employee_no = self.employee_no
         self._normalize_employee_no()
-        if not self.normalized_employee_no:
+        if raw_employee_no not in (None, "") and not self.normalized_employee_no:
             raise ValidationError({"employee_no": "员工编号不能为空。"})
         if self.department_id and self.department.company_id != self.company_id:
             raise ValidationError({"department": "所属部门必须属于同一公司。"})
@@ -989,6 +991,10 @@ class AssetCodingSegment(models.Model):
         super().clean()
         if self.format_string is not None:
             raise ValidationError({"format_string": "V1 不允许配置格式字符串。"})
+        if self.segment_type not in self.SegmentType.values:
+            # Field/choice validation owns missing or unsupported tokens.  Do
+            # not add a second model-level message to the same form control.
+            return
         fixed_types = {self.SegmentType.FIXED_TEXT, self.SegmentType.CUSTOM_TEXT}
         source_types = {
             self.SegmentType.COMPANY_CODE,

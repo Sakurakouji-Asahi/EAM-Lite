@@ -840,6 +840,14 @@ def document_create(request, document_type):
                 SupplyDocumentType.TRANSFER: "新建仓库调拨单",
             }[document_type],
             "can_continue_to_post": can_post_supply_document(request.user),
+            "has_active_warehouses": any(
+                field.queryset.exists()
+                for name, field in form.fields.items()
+                if name in {"source_warehouse", "target_warehouse"}
+            ),
+            "has_active_items": formset.forms[0].fields[
+                "item"
+            ].queryset.exists(),
         },
     )
 
@@ -921,6 +929,8 @@ def document_edit(request, pk):
             "can_continue_to_post": can_post_supply_document(
                 request.user, document=document
             ),
+            "has_active_warehouses": True,
+            "has_active_items": True,
         },
     )
 

@@ -162,6 +162,25 @@ def test_document_http_create_post_and_posted_edit_rejection(client):
     ).status_code == 403
 
 
+def test_document_create_explains_missing_warehouse_and_item_prerequisites(client):
+    make_company("S14-EMPTY")
+    actor = make_user("s14-empty-warehouse", "warehouse")
+    client.force_login(actor)
+
+    response = client.get(
+        reverse("supplies:document-create", args=["receipt"])
+    )
+
+    assert response.status_code == 200
+    assert response.context["has_active_warehouses"] is False
+    assert response.context["has_active_items"] is False
+    html = response.content.decode()
+    assert "创建库存单据前还需补充基础资料" in html
+    assert reverse("supplies:warehouse-create") in html
+    assert reverse("supplies:item-create") in html
+    assert 'name="next_action" value="detail" disabled' in html
+
+
 def test_company_boundary_returns_404_for_foreign_document_id(client):
     company = make_company()
     actor = make_user("s14-company-http", "finance")

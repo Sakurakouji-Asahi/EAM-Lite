@@ -6,6 +6,7 @@
   <div><h1 class="h3 mb-1">{{ title }}</h1><p class="text-secondary mb-0">草稿不会改变库存；{% if show_entered_cost %}单位成本为 0 时必须写明原因。{% else %}成本由过账服务根据库存快照计算，表单不能录入或覆盖。{% endif %}</p></div>
   <a class="btn btn-outline-secondary" href="{% if document %}{% url 'supplies:document-detail' document.pk %}{% else %}{% url 'supplies:document-list' %}{% endif %}">返回</a>
 </header>
+{% if not has_active_warehouses or not has_active_items %}<div class="alert alert-warning"><strong>创建库存单据前还需补充基础资料。</strong>{% if not has_active_warehouses %}当前没有启用仓库，请先<a class="alert-link" href="{% url 'supplies:warehouse-create' %}">新建仓库</a>。{% endif %}{% if not has_active_items %}当前没有启用物品，请先<a class="alert-link" href="{% url 'supplies:item-create' %}">新建物品</a>。{% endif %}</div>{% endif %}
 <form method="post" novalidate>
   {% csrf_token %}
   {{ form.idempotency_key }}
@@ -43,7 +44,7 @@
       <td><div class="form-check">{{ formset.empty_form.DELETE }}<label class="form-check-label" for="{{ formset.empty_form.DELETE.id_for_label }}">删除</label></div></td>
     </tr></template>
   </div></section>
-  <div class="app-form-actions app-form-actions-contained mobile-action-bar"><button class="btn btn-outline-primary" type="submit" name="next_action" value="detail">仅保存草稿</button>{% if can_continue_to_post %}<button class="btn btn-primary" type="submit" name="next_action" value="post">保存并核对过账</button>{% endif %}<a class="btn btn-outline-secondary" href="{% url 'supplies:document-list' %}">取消</a></div>
+  <div class="app-form-actions app-form-actions-contained mobile-action-bar"><button class="btn btn-outline-primary" type="submit" name="next_action" value="detail"{% if not has_active_warehouses or not has_active_items %} disabled{% endif %}>仅保存草稿</button>{% if can_continue_to_post %}<button class="btn btn-primary" type="submit" name="next_action" value="post"{% if not has_active_warehouses or not has_active_items %} disabled{% endif %}>保存并核对过账</button>{% endif %}<a class="btn btn-outline-secondary" href="{% url 'supplies:document-list' %}">取消</a></div>
 </form>
 <script src="{% static 'js/supply-document-form.js' %}" defer></script>
 {% endblock %}

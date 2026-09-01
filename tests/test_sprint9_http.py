@@ -16,7 +16,13 @@ from apps.maintenance.services import (
     upload_maintenance_attachment,
     void_maintenance_record,
 )
-from tests.test_sprint3_support import JPEG_BYTES, PDF_BYTES, make_user
+from tests.test_sprint3_support import (
+    JPEG_BYTES,
+    PDF_BYTES,
+    complete_initialization,
+    make_company,
+    make_user,
+)
 from tests.test_sprint9_support import maintenance_context
 
 
@@ -69,6 +75,23 @@ def test_equipment_opens_and_submits_plan_form_without_runtime_hour(client):
     assert response.url == reverse("maintenance:plan-detail", args=[plan.pk])
     assert plan.next_maintenance_date == first_due
     assert plan.cycle_unit == "week" and plan.cycle_value == 2
+
+
+def test_empty_maintenance_asset_selector_explains_prerequisites(client):
+    company = make_company("S9HTTPEMPTY")
+    equipment = make_user("s9-http-empty-equipment", "equipment")
+    complete_initialization(company, equipment)
+    client.force_login(equipment)
+
+    response = client.get(reverse("maintenance:plan-create"))
+
+    assert response.status_code == 200
+    assert response.context["has_eligible_assets"] is False
+    html = response.content.decode()
+    assert "当前没有可建立保养计划的资产" in html
+    assert reverse("assets:label-queue") in html
+    assert reverse("assets:asset-list") in html
+    assert '<button class="btn btn-primary" type="submit" disabled>' in html
 
 
 @pytest.mark.django_db(transaction=True)

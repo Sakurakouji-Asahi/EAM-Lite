@@ -22,6 +22,7 @@ from tests.test_sprint3_support import (
     make_user,
 )
 from tests.test_sprint7_database import _complete_disposal
+from tests.test_sprint7_support import active_fixed_asset_context
 
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -264,6 +265,58 @@ def test_report_form_hides_accounting_category_from_nonfinance(
     assert (
         'name="fixed_asset_category"' in response.content.decode()
     ) is fixed_category_visible
+
+
+def test_report_and_tplus_masterdata_filters_are_named_selects(client):
+    context, asset, _qr, _profile, _policy = active_fixed_asset_context(
+        "S11HTTPSELECT"
+    )
+    client.force_login(context["finance"])
+
+    report = client.get(reverse("reports:report-center"))
+    assert report.status_code == 200
+    form = report.context["form"]
+    for field_name in (
+        "department",
+        "category",
+        "fixed_asset_category",
+        "responsible_employee",
+    ):
+        assert form.fields[field_name].widget.input_type == "select"
+    report_html = report.content.decode()
+    for label in (
+        context["department"].name,
+        context["category"].name,
+        context["employee"].name,
+        asset.finance.fixed_asset_category.name,
+    ):
+        assert label in report_html
+
+    filtered = client.get(
+        reverse("reports:report-center"),
+        {
+            "report_type": "fixed_asset_detail",
+            "department": context["department"].pk,
+            "category": context["category"].pk,
+            "fixed_asset_category": asset.finance.fixed_asset_category_id,
+            "responsible_employee": context["employee"].pk,
+        },
+    )
+    assert filtered.status_code == 200
+    assert filtered.context["dataset"].row_count == 1
+    display_filters = dict(filtered.context["display_filters"])
+    assert display_filters["部门"] == str(context["department"])
+    assert display_filters["实物分类"] == str(context["category"])
+    assert display_filters["固定资产类别"] == str(
+        asset.finance.fixed_asset_category
+    )
+    assert display_filters["责任人"] == str(context["employee"])
+
+    tplus = client.get(reverse("reports:tplus-export"))
+    assert tplus.status_code == 200
+    for field_name in ("department", "category", "fixed_asset_category"):
+        assert tplus.context["form"].fields[field_name].widget.input_type == "select"
+    assert context["department"].name in tplus.content.decode()
 
 
 def test_audit_http_scope_exact_registry_and_recursive_redaction(client):

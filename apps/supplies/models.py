@@ -229,12 +229,15 @@ class SupplyCategory(SupplyAuditFields):
 
     def clean(self):
         super().clean()
+        raw_code = self.code
+        raw_name = self.name
         self._normalize_fields()
-        if not self.normalized_code:
+        if raw_code not in (None, "") and not self.normalized_code:
             raise ValidationError({"code": "分类编码不能为空。"})
-        self.name = _clean_required_text(
-            self.name, field_name="name", label="分类名称"
-        )
+        if raw_name not in (None, ""):
+            self.name = _clean_required_text(
+                self.name, field_name="name", label="分类名称"
+            )
         _validate_category_tree(self)
 
     def save(self, *args, **kwargs):
@@ -309,12 +312,15 @@ class SupplyWarehouse(SupplyAuditFields):
 
     def clean(self):
         super().clean()
+        raw_code = self.code
+        raw_name = self.name
         self._normalize_fields()
-        if not self.normalized_code:
+        if raw_code not in (None, "") and not self.normalized_code:
             raise ValidationError({"code": "仓库编码不能为空。"})
-        self.name = _clean_required_text(
-            self.name, field_name="name", label="仓库名称"
-        )
+        if raw_name not in (None, ""):
+            self.name = _clean_required_text(
+                self.name, field_name="name", label="仓库名称"
+            )
         if self.location_id:
             if self.location.company_id != self.company_id:
                 raise ValidationError({"location": "关联位置必须属于同一公司。"})
@@ -434,17 +440,20 @@ class SupplyItem(SupplyAuditFields):
 
     def clean(self):
         super().clean()
+        raw_item_code = self.item_code
+        raw_name = self.name
+        raw_unit = self.unit
         self._normalize_fields()
-        if not self.normalized_item_code:
+        if raw_item_code not in (None, "") and not self.normalized_item_code:
             raise ValidationError({"item_code": "物品编码不能为空。"})
-        self.name = _clean_required_text(
-            self.name, field_name="name", label="物品名称"
-        )
-        self.unit = _clean_required_text(
-            self.unit, field_name="unit", label="计量单位"
-        )
-        if self.item_type not in SupplyItemType.values:
-            raise ValidationError({"item_type": "管理模式不受支持。"})
+        if raw_name not in (None, ""):
+            self.name = _clean_required_text(
+                self.name, field_name="name", label="物品名称"
+            )
+        if raw_unit not in (None, ""):
+            self.unit = _clean_required_text(
+                self.unit, field_name="unit", label="计量单位"
+            )
         try:
             quantity = (
                 self.minimum_stock_quantity

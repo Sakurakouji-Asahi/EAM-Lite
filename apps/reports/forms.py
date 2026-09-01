@@ -6,6 +6,13 @@ from datetime import date
 
 from django import forms
 
+from apps.masterdata.models import (
+    AssetCategory,
+    Department,
+    Employee,
+    FixedAssetCategory,
+)
+from apps.masterdata.permissions import scoped_departments, scoped_employees
 from apps.reports.schemas import report_choices
 
 
@@ -39,10 +46,30 @@ class ReportFilterForm(forms.Form):
     as_of_date = forms.DateField(label="基准日期", required=False, widget=forms.DateInput(attrs={"type": "date"}))
     period_start = forms.DateField(label="期间开始", required=False, widget=forms.DateInput(attrs={"type": "date"}))
     period_end = forms.DateField(label="期间结束", required=False, widget=forms.DateInput(attrs={"type": "date"}))
-    department = forms.IntegerField(label="部门", required=False, min_value=1)
-    category = forms.IntegerField(label="实物分类", required=False, min_value=1)
-    fixed_asset_category = forms.IntegerField(label="固定资产会计类别", required=False, min_value=1)
-    responsible_employee = forms.IntegerField(label="责任人", required=False, min_value=1)
+    department = forms.ModelChoiceField(
+        label="部门",
+        queryset=Department.objects.none(),
+        required=False,
+        empty_label="全部部门",
+    )
+    category = forms.ModelChoiceField(
+        label="实物分类",
+        queryset=AssetCategory.objects.none(),
+        required=False,
+        empty_label="全部实物分类",
+    )
+    fixed_asset_category = forms.ModelChoiceField(
+        label="固定资产会计类别",
+        queryset=FixedAssetCategory.objects.none(),
+        required=False,
+        empty_label="全部固定资产会计类别",
+    )
+    responsible_employee = forms.ModelChoiceField(
+        label="责任人",
+        queryset=Employee.objects.none(),
+        required=False,
+        empty_label="全部责任人",
+    )
     asset_status = forms.ChoiceField(label="资产状态", required=False, choices=ASSET_STATUS_CHOICES)
     accounting_treatment = forms.ChoiceField(
         label="会计认定",
@@ -57,18 +84,51 @@ class ReportFilterForm(forms.Form):
     include_drafts = forms.BooleanField(label="纳入草稿", required=False)
     include_disposed = forms.BooleanField(label="纳入已处置资产", required=False, initial=True)
 
-    def __init__(self, *args, actor=None, **kwargs):
+    def __init__(self, *args, actor=None, company=None, **kwargs):
         super().__init__(*args, **kwargs)
         from apps.assets.permissions import can_view_financial_fields
         from apps.reports.permissions import can_view_report
 
         self.actor = actor
+        self.company = company
         self.fields["report_type"].choices = tuple(
             choice for choice in report_choices(include_tplus=False)
             if actor is None or can_view_report(actor, choice[0])
         )
+        if company is not None:
+            departments = (
+                scoped_departments(actor, company)
+                if actor is not None
+                else Department.objects.filter(company=company)
+            )
+            employees = (
+                scoped_employees(actor, company)
+                if actor is not None
+                else Employee.objects.filter(company=company)
+            )
+            self.fields["department"].queryset = departments.order_by(
+                "normalized_code"
+            )
+            self.fields["category"].queryset = AssetCategory.objects.filter(
+                company=company
+            ).order_by("category_level", "normalized_code")
+            self.fields["responsible_employee"].queryset = employees.select_related(
+                "department"
+            ).order_by("normalized_employee_no")
+            self.fields["fixed_asset_category"].queryset = (
+                FixedAssetCategory.objects.filter(company=company).order_by(
+                    "normalized_code"
+                )
+            )
         if actor is not None and not can_view_financial_fields(actor):
             self.fields.pop("fixed_asset_category", None)
+        for field in self.fields.values():
+            if isinstance(field.widget, (forms.Select, forms.SelectMultiple)):
+                field.widget.attrs.setdefault("class", "form-select")
+            elif isinstance(field.widget, forms.CheckboxInput):
+                field.widget.attrs.setdefault("class", "form-check-input")
+            else:
+                field.widget.attrs.setdefault("class", "form-control")
 
     def clean(self):
         cleaned = super().clean()
@@ -90,11 +150,48 @@ class ReportFilterForm(forms.Form):
 
 class TplusExportForm(forms.Form):
     period = forms.CharField(label="会计期间", max_length=7, help_text="YYYY-MM")
-    department = forms.IntegerField(label="部门", required=False, min_value=1)
-    category = forms.IntegerField(label="实物分类", required=False, min_value=1)
-    fixed_asset_category = forms.IntegerField(label="固定资产会计类别", required=False, min_value=1)
+    department = forms.ModelChoiceField(
+        label="部门",
+        queryset=Department.objects.none(),
+        required=False,
+        empty_label="全部部门",
+    )
+    category = forms.ModelChoiceField(
+        label="实物分类",
+        queryset=AssetCategory.objects.none(),
+        required=False,
+        empty_label="全部实物分类",
+    )
+    fixed_asset_category = forms.ModelChoiceField(
+        label="固定资产会计类别",
+        queryset=FixedAssetCategory.objects.none(),
+        required=False,
+        empty_label="全部固定资产会计类别",
+    )
     include_disposed = forms.BooleanField(label="纳入本期有活动的已处置资产", required=False, initial=True)
     idempotency_key = forms.CharField(widget=forms.HiddenInput, max_length=128)
+
+    def __init__(self, *args, actor=None, company=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if company is not None:
+            self.fields["department"].queryset = Department.objects.filter(
+                company=company
+            ).order_by("normalized_code")
+            self.fields["category"].queryset = AssetCategory.objects.filter(
+                company=company
+            ).order_by("category_level", "normalized_code")
+            self.fields["fixed_asset_category"].queryset = (
+                FixedAssetCategory.objects.filter(company=company).order_by(
+                    "normalized_code"
+                )
+            )
+        for field in self.fields.values():
+            if isinstance(field.widget, (forms.Select, forms.SelectMultiple)):
+                field.widget.attrs.setdefault("class", "form-select")
+            elif isinstance(field.widget, forms.CheckboxInput):
+                field.widget.attrs.setdefault("class", "form-check-input")
+            else:
+                field.widget.attrs.setdefault("class", "form-control")
 
     def clean_period(self):
         raw = self.cleaned_data["period"].strip()

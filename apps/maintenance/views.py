@@ -214,7 +214,13 @@ def plan_create(request):
             messages.success(request, "保养计划已创建。")
             return redirect("maintenance:plan-detail", pk=plan.pk)
     return render(
-        request, "maintenance/plan_form.html", {"form": form, "title": "新建保养计划"}
+        request,
+        "maintenance/plan_form.html",
+        {
+            "form": form,
+            "title": "新建保养计划",
+            "has_eligible_assets": form.fields["asset"].queryset.exists(),
+        },
     )
 
 
@@ -246,7 +252,9 @@ def plan_edit(request, pk):
             messages.success(request, "保养计划已更新。")
             return redirect("maintenance:plan-detail", pk=plan.pk)
     return render(
-        request, "maintenance/plan_form.html", {"form": form, "title": "编辑保养计划"}
+        request,
+        "maintenance/plan_form.html",
+        {"form": form, "title": "编辑保养计划", "has_eligible_assets": True},
     )
 
 
