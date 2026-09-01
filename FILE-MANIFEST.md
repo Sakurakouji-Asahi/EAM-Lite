@@ -8,7 +8,7 @@
 - `FILE-MANIFEST.md` — this file inventory
 - `启动EAM-Lite.cmd`、`停止EAM-Lite.cmd`、`更新EAM-Lite.cmd` — Windows 本机稳定版入口
 - `查看EAM-Lite状态.cmd`、`备份EAM-Lite数据.cmd`、`恢复EAM-Lite数据.cmd` — 状态与便携数据入口
-- `启动开发环境.cmd`、`停止开发环境.cmd` — 与稳定版完全隔离的开发入口
+- `启动开发环境.cmd`、`启动开发环境-局域网扫码测试.cmd`、`停止开发环境.cmd` — 与稳定版完全隔离的本机/局域网开发入口
 - `README-本机使用版.md` — 非技术用户本机使用、更新、备份与迁移说明
 - `scripts/local/` — 可测试的 Windows 本机运行脚本
 - `scripts/release/` — Windows Release 清单与 ZIP 构建器

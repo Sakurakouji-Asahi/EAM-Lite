@@ -34,7 +34,10 @@ def test_stable_and_development_compose_resources_are_explicitly_isolated():
     assert "runserver" not in stable
 
     assert "name: eam-lite-dev" in development
-    assert '"127.0.0.1:8766:8000"' in development
+    assert '"${EAM_DEV_BIND_ADDRESS:-127.0.0.1}:8766:8000"' in development
+    assert "EAM_DEV_ALLOWED_HOSTS:-127.0.0.1,localhost" in development
+    assert "EAM_DEV_CSRF_TRUSTED_ORIGINS:-http://127.0.0.1:8766" in development
+    assert "EAM_DEV_QR_BASE_URL:-http://127.0.0.1:8766" in development
     assert "EAM_DEV_DATABASE_NAME:-eam_lite_dev" in development
     assert "EAM_ENVIRONMENT: development" in development
     assert 'DEBUG: "true"' in development
@@ -56,6 +59,7 @@ def test_one_click_cmd_files_only_dispatch_to_powershell():
         "备份EAM-Lite数据.cmd": "backup.ps1",
         "恢复EAM-Lite数据.cmd": "restore.ps1",
         "启动开发环境.cmd": "start-dev.ps1",
+        "启动开发环境-局域网扫码测试.cmd": "start-dev-lan.ps1",
         "停止开发环境.cmd": "stop-dev.ps1",
     }
     for filename, script in expected.items():
@@ -63,6 +67,25 @@ def test_one_click_cmd_files_only_dispatch_to_powershell():
         assert f"scripts\\local\\{script}" in text
         assert "docker " not in text.lower()
         assert "git " not in text.lower()
+
+
+def test_lan_scan_launcher_keeps_default_dev_safe_and_sets_explicit_network_values():
+    common = (ROOT / "scripts" / "local" / "common.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+    launcher = (ROOT / "scripts" / "local" / "start-dev-lan.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+
+    assert '$developmentBindAddress = "127.0.0.1"' in common
+    assert '$developmentBindAddress = "0.0.0.0"' in common
+    assert "EAM_DEV_ALLOWED_HOSTS" in common
+    assert "EAM_DEV_CSRF_TRUSTED_ORIGINS" in common
+    assert "EAM_DEV_QR_BASE_URL" in common
+    assert "Get-EamPrimaryLanAddress" in launcher
+    assert "Ensure-EamLanFirewallRule" in launcher
+    assert "-DevelopmentLanAddress $lanAddress.IPAddress" in launcher
+    assert "手机访问" in launcher
 
 
 def test_local_scripts_never_delete_volumes_or_kill_unknown_processes():

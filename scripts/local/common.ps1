@@ -383,7 +383,8 @@ function Get-EamDevelopmentIdentity {
 function Write-EamComposeEnvironment {
     param(
         [Parameter(Mandatory = $true)]$State,
-        [Parameter(Mandatory = $true)]$Identity
+        [Parameter(Mandatory = $true)]$Identity,
+        [string]$DevelopmentLanAddress = ""
     )
 
     $isDev = $State.Mode -eq "dev"
@@ -413,9 +414,94 @@ function Write-EamComposeEnvironment {
         "EAM_PORTABLE_OUTPUT_DIR=`"$(ConvertTo-EamComposePath $State.BackupOutput)`"",
         "EAM_PORTABLE_BACKUP_FILE=`"$(ConvertTo-EamComposePath $State.EmptyPackage)`""
     )
+    if ($isDev) {
+        if ([string]::IsNullOrWhiteSpace($DevelopmentLanAddress)) {
+            $developmentBindAddress = "127.0.0.1"
+            $developmentAllowedHosts = "127.0.0.1,localhost"
+            $developmentTrustedOrigins = "http://127.0.0.1:8766"
+            $developmentQrBaseUrl = "http://127.0.0.1:8766"
+        }
+        else {
+            $parsedAddress = $null
+            if (-not [System.Net.IPAddress]::TryParse($DevelopmentLanAddress, [ref]$parsedAddress)) {
+                throw "局域网测试地址不是有效的 IP：$DevelopmentLanAddress"
+            }
+            $developmentBindAddress = "0.0.0.0"
+            $developmentAllowedHosts = "127.0.0.1,localhost,$DevelopmentLanAddress"
+            $developmentTrustedOrigins = "http://127.0.0.1:8766,http://${DevelopmentLanAddress}:8766"
+            $developmentQrBaseUrl = "http://${DevelopmentLanAddress}:8766"
+        }
+        $lines += @(
+            "EAM_DEV_BIND_ADDRESS=`"$developmentBindAddress`"",
+            "EAM_DEV_ALLOWED_HOSTS=`"$developmentAllowedHosts`"",
+            "EAM_DEV_CSRF_TRUSTED_ORIGINS=`"$developmentTrustedOrigins`"",
+            "EAM_DEV_QR_BASE_URL=`"$developmentQrBaseUrl`""
+        )
+    }
     $encoding = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllLines($State.EnvFile, $lines, $encoding)
     Protect-EamFileForCurrentUser -Path $State.EnvFile
+}
+
+function Get-EamPrimaryLanAddress {
+    $defaultRoute = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix "0.0.0.0/0" -ErrorAction Stop |
+        Where-Object { $_.NextHop -ne "0.0.0.0" -and $_.State -ne "Invalid" } |
+        Sort-Object -Property RouteMetric, InterfaceMetric |
+        Select-Object -First 1
+    if (-not $defaultRoute) {
+        throw "未找到可用的 IPv4 默认路由，无法启动局域网扫码测试。"
+    }
+
+    $address = Get-NetIPAddress -AddressFamily IPv4 -InterfaceIndex $defaultRoute.InterfaceIndex -ErrorAction Stop |
+        Where-Object {
+            $_.AddressState -eq "Preferred" -and
+            $_.IPAddress -ne "127.0.0.1" -and
+            $_.IPAddress -notlike "169.254.*"
+        } |
+        Select-Object -First 1
+    if (-not $address -or [string]::IsNullOrWhiteSpace([string]$address.IPAddress)) {
+        throw "未找到当前默认网络接口的局域网 IPv4 地址。"
+    }
+    return [pscustomobject]@{
+        IPAddress = [string]$address.IPAddress
+        PrefixLength = [int]$address.PrefixLength
+        InterfaceIndex = [int]$defaultRoute.InterfaceIndex
+        InterfaceAlias = [string]$defaultRoute.InterfaceAlias
+    }
+}
+
+function Ensure-EamLanFirewallRule {
+    param([int]$Port = 8766)
+
+    $displayName = "EAM-Lite 开发环境局域网扫码 $Port"
+    try {
+        $existing = Get-NetFirewallRule -DisplayName $displayName -ErrorAction SilentlyContinue
+        if (-not $existing) {
+            $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+            $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
+            $isAdministrator = $principal.IsInRole(
+                [System.Security.Principal.WindowsBuiltInRole]::Administrator
+            )
+            if (-not $isAdministrator) {
+                Write-Warning "当前窗口没有管理员权限，未添加专用防火墙规则。Docker Desktop 已允许时手机仍可直接访问；否则请以管理员身份运行本入口。"
+                return $false
+            }
+            New-NetFirewallRule `
+                -DisplayName $displayName `
+                -Direction Inbound `
+                -Action Allow `
+                -Protocol TCP `
+                -LocalPort $Port `
+                -RemoteAddress LocalSubnet `
+                -Profile Any `
+                -ErrorAction Stop | Out-Null
+        }
+        return $true
+    }
+    catch {
+        Write-Warning "无法自动开放 Windows 防火墙端口 $Port。若手机无法访问，请以管理员身份运行本入口，或手工允许 TCP $Port。"
+        return $false
+    }
 }
 
 function Get-EamComposeContext {

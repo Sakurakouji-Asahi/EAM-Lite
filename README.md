@@ -196,6 +196,12 @@ Windows 用户可双击仓库根目录或 GitHub Release 中的 `启动EAM-Lite.
 用户操作步骤见 `README-本机使用版.md`。本机 HTTP 只允许当前电脑浏览器访问，不是公司 LAN
 HTTPS 生产部署。
 
+需要用手机验证二维码时，可改用 `启动开发环境-局域网扫码测试.cmd`。该入口复用同一套
+`eam-lite-dev` 数据，自动识别电脑局域网 IPv4，把开发端口 8766 发布到局域网，并让新生成/
+重新打印的二维码使用 `http://电脑IP:8766`。普通 `启动开发环境.cmd` 仍恢复为仅本机访问。
+局域网 HTTP 适合用手机系统相机扫描并打开页面；网页直接调用摄像头仍可能因浏览器安全策略
+要求受信任 HTTPS。
+
 ## 生产部署、备份与恢复
 
 生产固定使用 `deploy/compose.yaml`、`deploy/Dockerfile`、`deploy/Caddyfile` 和仓库外 Secret；

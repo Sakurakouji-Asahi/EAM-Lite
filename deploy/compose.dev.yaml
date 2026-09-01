@@ -4,10 +4,10 @@ x-dev-environment: &dev-environment
   EAM_ENVIRONMENT: development
   SECRET_KEY_FILE: /run/secrets/secret_key
   DEBUG: "true"
-  ALLOWED_HOSTS: 127.0.0.1,localhost
-  CSRF_TRUSTED_ORIGINS: http://127.0.0.1:8766
+  ALLOWED_HOSTS: ${EAM_DEV_ALLOWED_HOSTS:-127.0.0.1,localhost}
+  CSRF_TRUSTED_ORIGINS: ${EAM_DEV_CSRF_TRUSTED_ORIGINS:-http://127.0.0.1:8766}
   BUSINESS_CURRENCY: CNY
-  QR_BASE_URL: http://127.0.0.1:8766
+  QR_BASE_URL: ${EAM_DEV_QR_BASE_URL:-http://127.0.0.1:8766}
   DB_ENGINE: postgresql
   DB_NAME: ${EAM_DEV_DATABASE_NAME:-eam_lite_dev}
   DB_HOST: db
@@ -87,7 +87,7 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "127.0.0.1:8766:8000"
+      - "${EAM_DEV_BIND_ADDRESS:-127.0.0.1}:8766:8000"
     command: ["python", "manage.py", "runserver", "0.0.0.0:8000", "--noreload"]
 
   release:
