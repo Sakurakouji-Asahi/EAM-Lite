@@ -1,9 +1,10 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}{{ title }} - EAM-Lite{% endblock %}
 {% block content %}
 <h1 class="h3 mb-3">{{ title }}</h1>
 <div class="alert alert-info">本页面只配置和预览规则，不生成正式资产编号，不创建或递增计数器。</div>
-<form method="post" novalidate>{% csrf_token %}
+<form method="post" novalidate data-coding-scheme-form>{% csrf_token %}
   <div class="card shadow-sm mb-3"><div class="card-body">
     {% for field in form %}<div class="mb-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}{% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>{% endfor %}
     {% for error in form.non_field_errors %}<div class="alert alert-danger">{{ error }}</div>{% endfor %}
@@ -11,10 +12,11 @@
   <div class="card shadow-sm mb-3"><div class="card-header"><strong>编码片段</strong></div><div class="card-body">
     {{ formset.management_form }}
     <p class="text-secondary">V1 不提供 <code>format_string</code> 或 <code>custom_field</code>。日期格式固定；每个方案必须且只能有一个顺序号片段。</p>
-    {% for segment_form in formset %}<div class="border rounded p-3 mb-3"><div class="row g-3">{% for field in segment_form.visible_fields %}<div class="col-md-4"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>{% endfor %}</div>{{ segment_form.id }}</div>{% endfor %}
+    {% for segment_form in formset %}<div class="border rounded p-3 mb-3" data-coding-segment-form><div class="row g-3">{% for field in segment_form.visible_fields %}<div class="col-md-4"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}{% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>{% endfor %}</div>{{ segment_form.id }}</div>{% endfor %}
     {% for error in formset.non_form_errors %}<div class="alert alert-danger">{{ error }}</div>{% endfor %}
   </div></div>
   <button class="btn btn-primary" type="submit">保存草稿</button>
   <a class="btn btn-outline-secondary" href="{% url 'masterdata:coding-scheme-list' %}">取消</a>
 </form>
+<script src="{% static 'js/coding-scheme-form.js' %}?v=20260901-formfix1" defer></script>
 {% endblock %}

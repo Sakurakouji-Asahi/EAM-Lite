@@ -824,6 +824,43 @@ class AssetCodingScheme(TimeStampedModel):
                 raise ValidationError({"previous_version": "上一版本必须使用相同方案稳定键。"})
             if previous.version >= self.version:
                 raise ValidationError({"previous_version": "上一版本号必须小于当前版本。"})
+        category_modes = {
+            self.ResetMode.CATEGORY_YEARLY,
+            self.ResetMode.CATEGORY_MONTHLY,
+        }
+        ordinary_modes = {
+            self.ResetMode.NEVER,
+            self.ResetMode.YEARLY,
+            self.ResetMode.MONTHLY,
+        }
+        if self.reset_mode in category_modes and self.category_scope_level not in {
+            self.CategoryScopeLevel.MAJOR,
+            self.CategoryScopeLevel.MINOR,
+            self.CategoryScopeLevel.LEAF,
+        }:
+            raise ValidationError(
+                {
+                    "category_scope_level": (
+                        "按分类重置时必须选择大类、小类或叶级分类。"
+                    )
+                }
+            )
+        if self.reset_mode in ordinary_modes and self.category_scope_level is not None:
+            raise ValidationError(
+                {"category_scope_level": "非分类重置模式不能设置分类作用域层级。"}
+            )
+        if self.sequence_start is not None and self.sequence_start < 0:
+            raise ValidationError({"sequence_start": "首个可签发流水值不得为负数。"})
+        if self.effective_to and not self.effective_from:
+            raise ValidationError(
+                {"effective_from": "填写生效结束日时必须同时填写开始日。"}
+            )
+        if (
+            self.effective_from
+            and self.effective_to
+            and self.effective_to < self.effective_from
+        ):
+            raise ValidationError({"effective_to": "生效结束日不得早于开始日。"})
 
     def __str__(self):
         return f"{self.name} v{self.version}"

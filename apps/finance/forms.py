@@ -86,12 +86,87 @@ class DepreciationPolicyForm(FinanceBoundForm, forms.ModelForm):
             "effective_from": forms.DateInput(attrs={"type": "date"}),
             "effective_to": forms.DateInput(attrs={"type": "date"}),
         }
+        help_texts = {
+            "policy_key": "用于识别同一政策的不同版本，保存后请保持稳定。",
+            "default_salvage_rate": "填写 0 至 1 的小数，例如 5% 填写 0.05。",
+            "default_salvage_amount": "仅选择“固定残值金额”时填写。",
+            "annual_posting_month": "仅年度计提时填写 1 至 12；月度计提请留空。",
+            "work_unit": "仅工作量法必填，例如“小时”或“件”。",
+        }
 
     def __init__(self, *args, actor=None, instance=None, **kwargs):
         super().__init__(*args, actor=actor, instance=instance, **kwargs)
         if instance is not None and instance.pk and instance.status != "draft":
             for field in self.fields.values():
                 field.disabled = True
+
+    def clean(self):
+        cleaned = super().clean()
+
+        salvage_mode = cleaned.get("default_salvage_mode")
+        salvage_rate = cleaned.get("default_salvage_rate")
+        salvage_amount = cleaned.get("default_salvage_amount")
+        if salvage_mode == SalvageMode.RATE:
+            if salvage_rate is None:
+                self.add_error(
+                    "default_salvage_rate",
+                    "残值率模式必须填写默认残值率，例如 5% 填写 0.05。",
+                )
+            elif salvage_rate < Decimal("0") or salvage_rate > Decimal("1"):
+                self.add_error(
+                    "default_salvage_rate",
+                    "默认残值率必须在 0 至 1 之间，例如 5% 填写 0.05。",
+                )
+            cleaned["default_salvage_amount"] = None
+        elif salvage_mode == SalvageMode.AMOUNT:
+            if salvage_amount is None:
+                self.add_error(
+                    "default_salvage_amount", "固定金额模式必须填写默认残值金额。"
+                )
+            elif salvage_amount < Decimal("0"):
+                self.add_error("default_salvage_amount", "默认残值金额不得为负数。")
+            cleaned["default_salvage_rate"] = None
+
+        posting_period = cleaned.get("posting_period")
+        annual_posting_month = cleaned.get("annual_posting_month")
+        useful_life_months = cleaned.get("default_useful_life_months")
+        if posting_period == PostingPeriod.YEARLY:
+            if annual_posting_month is None:
+                self.add_error(
+                    "annual_posting_month", "年度计提必须填写 1 至 12 的计提月。"
+                )
+            elif not 1 <= annual_posting_month <= 12:
+                self.add_error("annual_posting_month", "年度计提月必须在 1 至 12 之间。")
+            if useful_life_months and useful_life_months % 12:
+                self.add_error(
+                    "default_useful_life_months",
+                    "年度计提的默认使用年限必须为 12 的整数倍。",
+                )
+        else:
+            cleaned["annual_posting_month"] = None
+
+        if (
+            cleaned.get("method") == DepreciationMethod.SUM_OF_YEARS_DIGITS
+            and useful_life_months
+            and useful_life_months % 12
+            and posting_period != PostingPeriod.YEARLY
+        ):
+            self.add_error(
+                "default_useful_life_months", "年数总和法的默认使用年限必须为 12 的整数倍。"
+            )
+        if (
+            cleaned.get("method") == DepreciationMethod.UNITS_OF_PRODUCTION
+            and not str(cleaned.get("work_unit") or "").strip()
+        ):
+            self.add_error("work_unit", "工作量法必须填写工作量单位。")
+
+        effective_from = cleaned.get("effective_from")
+        effective_to = cleaned.get("effective_to")
+        if effective_to and not effective_from:
+            self.add_error("effective_from", "填写生效结束日时必须同时填写开始日。")
+        elif effective_from and effective_to and effective_to < effective_from:
+            self.add_error("effective_to", "生效结束日不得早于开始日。")
+        return cleaned
 
 
 class FixedAssetWarningAmountForm(FinanceBoundForm):

@@ -77,6 +77,90 @@ def test_create_endpoint_rejects_hidden_format_and_custom_field_payloads(client)
     assert IssuedCode.objects.count() == 0
 
 
+def test_coding_scheme_form_requires_scope_for_category_reset_without_constraint_name():
+    company = make_company()
+    admin = make_user("scope-admin", "system_admin")
+    form = AssetCodingSchemeForm(
+        data={
+            "scheme_key": "CATEGORY-SCOPE",
+            "name": "分类重置",
+            "description": "",
+            "reset_mode": "category_monthly",
+            "sequence_start": "1",
+            "category_scope_level": "",
+            "effective_from": "",
+            "effective_to": "",
+        },
+        actor=admin,
+        company=company,
+    )
+
+    assert not form.is_valid()
+    assert "按分类重置时必须选择大类、小类或叶级分类" in str(
+        form.errors["category_scope_level"]
+    )
+    assert "ck_coding_scheme_category_scope" not in str(form.errors)
+
+
+def test_coding_scheme_post_normalizes_irrelevant_fields_and_ignores_deleted_row(client):
+    company = make_company()
+    admin = make_user("normalize-admin", "system_admin")
+    client.force_login(admin)
+
+    response = client.post(
+        reverse("masterdata:coding-scheme-create"),
+        {
+            "scheme_key": "NORMALIZED-HTTP",
+            "name": "规范化表单",
+            "description": "",
+            "reset_mode": "never",
+            "sequence_start": "1",
+            "category_scope_level": "major",
+            "effective_from": "",
+            "effective_to": "",
+            "segments-TOTAL_FORMS": "3",
+            "segments-INITIAL_FORMS": "0",
+            "segments-MIN_NUM_FORMS": "1",
+            "segments-MAX_NUM_FORMS": "1000",
+            "segments-0-sequence_order": "1",
+            "segments-0-segment_type": "company_code",
+            "segments-0-fixed_value": "SHF",
+            "segments-0-sequence_length": "4",
+            "segments-0-zero_pad": "True",
+            "segments-1-sequence_order": "2",
+            "segments-1-segment_type": "sequence",
+            "segments-1-fixed_value": "IGNORED",
+            "segments-1-sequence_length": "4",
+            "segments-1-zero_pad": "True",
+            "segments-2-sequence_order": "",
+            "segments-2-segment_type": "",
+            "segments-2-fixed_value": "",
+            "segments-2-sequence_length": "",
+            "segments-2-DELETE": "on",
+        },
+    )
+
+    assert response.status_code == 302, (
+        response.context["form"].errors,
+        response.context["formset"].errors,
+        response.context["formset"].non_form_errors(),
+    )
+    scheme = AssetCodingScheme.objects.get(
+        company=company, scheme_key="NORMALIZED-HTTP"
+    )
+    assert scheme.category_scope_level is None
+    segments = list(scheme.segments.order_by("sequence_order"))
+    assert len(segments) == 2
+    assert segments[0].segment_type == "company_code"
+    assert segments[0].fixed_value is None
+    assert segments[0].sequence_length is None
+    assert segments[0].zero_pad is None
+    assert segments[1].segment_type == "sequence"
+    assert segments[1].fixed_value is None
+    assert segments[1].sequence_length == 4
+    assert segments[1].zero_pad is True
+
+
 def test_finance_and_management_can_view_but_cannot_create_edit_or_act(client):
     company = make_company()
     admin = make_user("admin", "system_admin")
@@ -169,6 +253,8 @@ def test_coding_pages_do_not_render_hidden_configuration_inputs(client):
     assert 'value="custom_field"' not in content
     # Explanatory prose may name the unavailable fields; no accepting input may.
     assert 'segments-0-format_string' not in content
+    assert "data-coding-scheme-form" in content
+    assert "/static/js/coding-scheme-form.js" in content
 
 
 def test_setup_step_six_is_readable_by_view_role_but_refresh_requires_admin(client):

@@ -368,7 +368,9 @@ def _validate_policy(policy):
         errors["default_useful_life_months"] = "年数总和法寿命必须为 12 的整数倍。"
     if policy.method == "units_of_production" and not str(policy.work_unit or "").strip():
         errors["work_unit"] = "工作量法必须填写单位。"
-    if policy.effective_from and policy.effective_to and policy.effective_to < policy.effective_from:
+    if policy.effective_to and not policy.effective_from:
+        errors["effective_from"] = "填写生效结束日时必须同时填写开始日。"
+    elif policy.effective_from and policy.effective_to and policy.effective_to < policy.effective_from:
         errors["effective_to"] = "生效结束日不得早于开始日。"
     if errors:
         raise ValidationError(errors)

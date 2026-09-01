@@ -13,7 +13,7 @@ from django.utils import timezone
 
 from apps.assets.models import AssetQrIdentity, AttachmentLink
 from apps.assets.services import submit_asset_for_finance
-from apps.finance.forms import ConfirmFormalizationForm
+from apps.finance.forms import ConfirmFormalizationForm, DepreciationPolicyForm
 from apps.finance.models import (
     AssetDepreciationProfile,
     AssetFinance,
@@ -96,6 +96,27 @@ def _policy(company, actor, key="S4-HTTP"):
             "effective_to": None,
         },
     )
+
+
+def _policy_form_data(**overrides):
+    data = {
+        "policy_key": "S4-FORM",
+        "name": "Sprint 4 表单政策",
+        "method": "straight_line",
+        "posting_period": "monthly",
+        "start_rule": "next_month",
+        "stop_rule": "next_month",
+        "default_useful_life_months": "60",
+        "default_salvage_mode": "rate",
+        "default_salvage_rate": "0.05",
+        "default_salvage_amount": "",
+        "annual_posting_month": "",
+        "work_unit": "",
+        "effective_from": "",
+        "effective_to": "",
+    }
+    data.update(overrides)
+    return data
 
 
 def _finance_row(context, *, fixed=False):
@@ -423,6 +444,99 @@ def test_policy_and_category_pages_use_explicit_confirmation_pages(client):
     assert 'name="reason"' in policy_html
     assert 'name="confirm"' in policy_html
     assert "二次确认" in policy_html
+
+
+@pytest.mark.parametrize(
+    ("salvage_rate", "expected_message"),
+    (
+        ("", "残值率模式必须填写默认残值率"),
+        ("5", "默认残值率必须在 0 至 1 之间"),
+    ),
+)
+def test_policy_form_shows_field_error_instead_of_database_constraint(
+    client, salvage_rate, expected_message
+):
+    context = _context()
+    client.force_login(context["finance"])
+
+    response = client.post(
+        reverse("finance:policy-create"),
+        _policy_form_data(default_salvage_rate=salvage_rate),
+    )
+
+    assert response.status_code == 200
+    assert expected_message in response.content.decode()
+    assert "ck_depr_policy_salvage_fields" not in response.content.decode()
+    assert not DepreciationPolicy.objects.filter(
+        company=context["company"], policy_key="S4-FORM"
+    ).exists()
+
+
+def test_policy_form_explains_yearly_period_fields_without_constraint_name(client):
+    context = _context()
+    client.force_login(context["finance"])
+
+    response = client.post(
+        reverse("finance:policy-create"),
+        _policy_form_data(posting_period="yearly", annual_posting_month=""),
+    )
+
+    assert response.status_code == 200
+    assert "年度计提必须填写 1 至 12 的计提月" in response.content.decode()
+    assert "ck_depr_policy_period_fields" not in response.content.decode()
+
+
+def test_policy_form_requires_start_date_when_end_date_is_filled(client):
+    context = _context()
+    client.force_login(context["finance"])
+
+    response = client.post(
+        reverse("finance:policy-create"),
+        _policy_form_data(effective_to=timezone.localdate().isoformat()),
+    )
+
+    assert response.status_code == 200
+    assert "填写生效结束日时必须同时填写开始日" in response.content.decode()
+    assert "ck_depr_policy_effective_dates" not in response.content.decode()
+
+
+@pytest.mark.parametrize(
+    ("salvage_mode", "salvage_rate", "salvage_amount", "saved_rate", "saved_amount"),
+    (
+        ("rate", "0.05", "500.00", Decimal("0.05"), None),
+        ("amount", "0.05", "500.00", None, Decimal("500.00")),
+    ),
+)
+def test_policy_form_discards_fields_that_do_not_match_selected_modes(
+    client, salvage_mode, salvage_rate, salvage_amount, saved_rate, saved_amount
+):
+    context = _context()
+    client.force_login(context["finance"])
+
+    response = client.post(
+        reverse("finance:policy-create"),
+        _policy_form_data(
+            default_salvage_mode=salvage_mode,
+            default_salvage_rate=salvage_rate,
+            default_salvage_amount=salvage_amount,
+            annual_posting_month="12",
+        ),
+    )
+
+    assert response.status_code == 302
+    policy = DepreciationPolicy.objects.get(
+        company=context["company"], policy_key="S4-FORM"
+    )
+    assert policy.default_salvage_rate == saved_rate
+    assert policy.default_salvage_amount == saved_amount
+    assert policy.annual_posting_month is None
+
+
+def test_policy_form_help_text_explains_percentage_input():
+    context = _context()
+    form = DepreciationPolicyForm(actor=context["finance"])
+
+    assert "5% 填写 0.05" in form.fields["default_salvage_rate"].help_text
 
 
 def test_batch_reverse_get_key_is_reused_by_post_retry(client):

@@ -357,7 +357,9 @@ class AssetCodingSchemeForm(forms.ModelForm):
         }
         help_texts = {
             "scheme_key": "同一方案的各版本使用相同稳定键。",
+            "reset_mode": "选择“按分类”模式时，必须同时选择分类作用域层级。",
             "sequence_start": "这是首个预览/未来签发值，不是计数器初值。",
+            "category_scope_level": "仅按分类重置时填写；其他重置模式会自动忽略。",
             "effective_to": "结束日当天仍有效；留空表示无结束日。",
         }
 
@@ -375,6 +377,39 @@ class AssetCodingSchemeForm(forms.ModelForm):
         if value != value.strip() or not value.strip():
             raise ValidationError("方案稳定键不能为空或包含首尾空白。")
         return value
+
+    def clean(self):
+        cleaned = super().clean()
+        reset_mode = cleaned.get("reset_mode")
+        category_scope_level = cleaned.get("category_scope_level")
+        category_modes = {
+            AssetCodingScheme.ResetMode.CATEGORY_YEARLY,
+            AssetCodingScheme.ResetMode.CATEGORY_MONTHLY,
+        }
+        ordinary_modes = {
+            AssetCodingScheme.ResetMode.NEVER,
+            AssetCodingScheme.ResetMode.YEARLY,
+            AssetCodingScheme.ResetMode.MONTHLY,
+        }
+        if reset_mode in category_modes and category_scope_level is None:
+            self.add_error(
+                "category_scope_level",
+                "按分类重置时必须选择大类、小类或叶级分类。",
+            )
+        elif reset_mode in ordinary_modes:
+            cleaned["category_scope_level"] = None
+
+        sequence_start = cleaned.get("sequence_start")
+        if sequence_start is not None and sequence_start < 0:
+            self.add_error("sequence_start", "首个可签发流水值不得为负数。")
+
+        effective_from = cleaned.get("effective_from")
+        effective_to = cleaned.get("effective_to")
+        if effective_to and not effective_from:
+            self.add_error("effective_from", "填写生效结束日时必须同时填写开始日。")
+        elif effective_from and effective_to and effective_to < effective_from:
+            self.add_error("effective_to", "生效结束日不得早于开始日。")
+        return cleaned
 
 
 class AssetCodingSegmentForm(forms.ModelForm):
@@ -395,7 +430,9 @@ class AssetCodingSegmentForm(forms.ModelForm):
             "zero_pad": "左侧补零",
         }
         help_texts = {
-            "fixed_value": "固定文本/自定义固定文本必填；分隔符仅允许 - _ . /。",
+            "fixed_value": (
+                "仅固定文本、自定义固定文本或分隔符填写；公司编码等来源片段自动读取主数据。"
+            ),
             "sequence_length": "仅顺序号填写，必须为 1–12。",
         }
 
@@ -404,21 +441,36 @@ class AssetCodingSegmentForm(forms.ModelForm):
         self.fields["zero_pad"].required = False
         _bootstrap_widgets(self)
 
+    def full_clean(self):
+        super().full_clean()
+        if getattr(self, "cleaned_data", {}).get("DELETE"):
+            self._errors.clear()
+
     def clean(self):
         cleaned = super().clean()
         if cleaned.get("DELETE"):
             return cleaned
         from apps.coding.domain import validate_segment_fields
 
-        # An unchecked checkbox is submitted as False.  The approved field
-        # matrix requires NULL for all non-sequence segment types, while a
-        # sequence deliberately accepts both explicit True and explicit False.
-        if cleaned.get("segment_type") != AssetCodingSegment.SegmentType.SEQUENCE:
+        segment_type = cleaned.get("segment_type")
+        fixed_value_types = {
+            AssetCodingSegment.SegmentType.FIXED_TEXT,
+            AssetCodingSegment.SegmentType.CUSTOM_TEXT,
+            AssetCodingSegment.SegmentType.SEPARATOR,
+        }
+        if segment_type == AssetCodingSegment.SegmentType.SEQUENCE:
+            cleaned["fixed_value"] = None
+        elif segment_type in fixed_value_types:
+            cleaned["sequence_length"] = None
+            cleaned["zero_pad"] = None
+        elif segment_type:
+            cleaned["fixed_value"] = None
+            cleaned["sequence_length"] = None
             cleaned["zero_pad"] = None
 
         try:
             validate_segment_fields(
-                segment_type=cleaned.get("segment_type"),
+                segment_type=segment_type,
                 fixed_value=cleaned.get("fixed_value"),
                 format_string=None,
                 sequence_length=cleaned.get("sequence_length"),
