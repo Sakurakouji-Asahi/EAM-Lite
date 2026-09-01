@@ -7,7 +7,7 @@ from pathlib import Path
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.exceptions import FieldDoesNotExist, PermissionDenied, ValidationError
 from django.core.files.storage import default_storage
 from django.core.paginator import Paginator
 from django.db.models import CharField, Q
@@ -90,6 +90,11 @@ FORBIDDEN_DRAFT_POST_FIELDS = FINANCIAL_FIELD_NAMES | frozenset(
     }
 )
 
+ASSET_SERVICE_ERROR_LABELS = {
+    "attachments": "资产照片",
+    "custom_values": "动态字段",
+}
+
 
 def _company_and_gate():
     company = current_company()
@@ -107,7 +112,17 @@ def _service_error(form, exc):
         for field, errors in exc.message_dict.items():
             target = field if field in form.fields else None
             for error in errors:
-                form.add_error(target, error)
+                message = error
+                if target is None:
+                    label = ASSET_SERVICE_ERROR_LABELS.get(field)
+                    if label is None:
+                        try:
+                            label = str(Asset._meta.get_field(field).verbose_name)
+                        except FieldDoesNotExist:
+                            label = None
+                    if label:
+                        message = f"{label}：{error}"
+                form.add_error(target, message)
     else:
         for error in getattr(exc, "messages", [str(exc)]):
             form.add_error(None, error)
@@ -719,6 +734,7 @@ def asset_submit(request, pk):
             "description": "提交后只进入待财务确认，不生成正式编号或二维码。",
             "button_label": "确认提交",
             "button_class": "primary",
+            "show_asset_edit": True,
         },
     )
 

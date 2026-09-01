@@ -15,6 +15,7 @@
         {% csrf_token %}
         {% for field in form %}{% include "assets/_field.html" with field=field %}{% endfor %}
         <div class="app-form-actions app-form-actions-contained"><button class="btn btn-{{ button_class }}" type="submit">{{ button_label }}</button>
+        {% if show_asset_edit %}<a class="btn btn-outline-primary" href="{% url 'assets:asset-edit' asset.pk %}">补充资产资料</a>{% endif %}
         <a class="btn btn-outline-secondary" href="{% url 'assets:asset-detail' asset.pk %}">取消</a></div>
       </form>
     </div>

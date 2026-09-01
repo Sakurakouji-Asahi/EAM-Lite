@@ -548,6 +548,30 @@ def test_submit_action_stops_at_pending_finance_without_formal_code_or_button(
     assert AssetCodeHistory.objects.count() == 0
 
 
+def test_submit_page_names_each_missing_asset_field_instead_of_repeating_generic_error(
+    client, tmp_path
+):
+    actor, company, _department, _employee, category, _site, _area, _location = (
+        make_context()
+    )
+    asset = direct_draft(company, category, actor=actor, asset_name="待补资料资产")
+    with override_settings(MEDIA_ROOT=tmp_path):
+        add_photo(actor, asset)
+        client.force_login(actor)
+        response = client.post(
+            reverse("assets:asset-submit", args=[asset.pk]), {"confirm": "on"}
+        )
+
+    assert response.status_code == 200
+    html = response.content.decode()
+    for label in ("单位", "当前部门", "当前责任人", "当前位置"):
+        assert f"{label}：提交财务确认前必须填写此字段。" in html
+    assert "补充资产资料" in html
+    assert reverse("assets:asset-edit", args=[asset.pk]) in html
+    asset.refresh_from_db()
+    assert asset.asset_status == "draft"
+
+
 def test_repeat_http_submit_is_idempotent_and_one_audit(client, tmp_path):
     actor, company, department, employee, category, _site, _area, location = make_context()
     asset = make_asset(
