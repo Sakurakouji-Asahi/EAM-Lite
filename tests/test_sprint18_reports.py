@@ -204,7 +204,10 @@ def test_cross_period_reversal_is_negative_original_business_bucket():
     _, details = rows(
         context,
         "supply_issue_detail",
-        {"date_from": date(2026, 8, 1), "date_to": date(2026, 8, 31)},
+        {
+            "date_from": context["paper_issue"].business_date,
+            "date_to": reversal_day,
+        },
     )
     paper_rows = [row for row in details if row["item"].startswith("S18PAPER")]
     assert {row["business_type"] for row in paper_rows} == {"领用", "冲销"}

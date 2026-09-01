@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -86,11 +86,13 @@ def test_controlled_non_fixed_is_rejected_by_preview_direct_services_batch_and_u
 
 def test_fixed_asset_depreciation_still_generates_and_confirms_normally():
     context, asset, _qr, _profile, _policy = active_fixed_asset_context("S16FIX")
+    period_start = timezone.localdate().replace(day=1)
+    period_end = (period_start.replace(day=28) + timedelta(days=4)).replace(day=1)
     batch = generate_depreciation_batch(
         actor=context["finance"],
         company=context["company"],
-        period_start=date(2026, 8, 1),
-        period_end=date(2026, 9, 1),
+        period_start=period_start,
+        period_end=period_end,
         idempotency_key="s16-fixed-batch",
     )
     assert batch.items.filter(asset=asset, status="ready").exists()

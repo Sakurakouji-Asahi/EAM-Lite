@@ -311,8 +311,17 @@ def _configure_fake_backup_runtime(*, settings, tmp_path, monkeypatch, services)
         destination.write_bytes(b"media archive")
         return [], 0
 
-    def fake_encrypt(source, destination, *, passphrase):
+    def fake_encrypt(
+        source,
+        destination,
+        *,
+        passphrase,
+        salt=None,
+        iterations=None,
+    ):
         assert passphrase == "automatic-backup-test-passphrase"
+        assert salt is not None
+        assert iterations is not None
         shutil.copyfile(source, destination)
 
     monkeypatch.setattr(services, "_run_pg_dump", fake_dump)
