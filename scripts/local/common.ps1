@@ -195,6 +195,26 @@ function Ensure-EamDockerReady {
     throw "Docker Engine 在 120 秒内未就绪。脚本未重置 Docker，也未删除任何镜像或数据卷。"
 }
 
+function Resolve-EamGitExecutable {
+    $command = Get-Command git.exe -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    $candidates = @(
+        (Join-Path $env:ProgramFiles "Git\cmd\git.exe"),
+        (Join-Path $env:ProgramFiles "Git\bin\git.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\Git\cmd\git.exe"),
+        (Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\native\git\cmd\git.exe")
+    )
+    foreach ($candidate in $candidates) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            return $candidate
+        }
+    }
+    return $null
+}
+
 function Invoke-EamGit {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
@@ -202,7 +222,11 @@ function Invoke-EamGit {
         [switch]$AllowFailure
     )
 
-    $output = & git.exe -C $RepositoryRoot @Arguments 2>&1
+    $gitExe = Resolve-EamGitExecutable
+    if (-not $gitExe) {
+        throw "未找到 Git，无法验证当前源码工作树。GitHub Release 解压版不需要 Git。"
+    }
+    $output = & $gitExe -C $RepositoryRoot @Arguments 2>&1
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0 -and -not $AllowFailure) {
         throw "Git 检查失败：$($output -join [Environment]::NewLine)"
@@ -212,10 +236,16 @@ function Invoke-EamGit {
 
 function Test-EamGitRepository {
     param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
-    if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) {
+    $gitExe = Resolve-EamGitExecutable
+    if (-not $gitExe) {
+        if (Test-Path -LiteralPath (Join-Path $RepositoryRoot ".git")) {
+            throw "检测到 Git 工作树，但电脑上找不到可执行的 Git。请安装 Git，或改用完整 GitHub Release 解压包。"
+        }
         return $false
     }
-    $result = Invoke-EamGit -RepositoryRoot $RepositoryRoot -Arguments @("rev-parse", "--is-inside-work-tree") -AllowFailure
+    $output = & $gitExe -C $RepositoryRoot rev-parse --is-inside-work-tree 2>&1
+    $exitCode = $LASTEXITCODE
+    $result = [pscustomobject]@{ ExitCode = $exitCode; Output = @($output) }
     return ($result.ExitCode -eq 0 -and ($result.Output -join "").Trim() -eq "true")
 }
 

@@ -110,7 +110,15 @@ def test_all_local_powershell_scripts_parse_cleanly():
         "if($failed){exit 1}"
     )
     result = subprocess.run(
-        ["powershell.exe", "-NoLogo", "-NoProfile", "-Command", command],
+        [
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            command,
+        ],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -118,6 +126,37 @@ def test_all_local_powershell_scripts_parse_cleanly():
         errors="replace",
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Git discovery acceptance")
+def test_git_worktree_is_detected_from_explorer_style_path():
+    command = (
+        "$env:Path=$env:SystemRoot + '\\System32;' + $env:SystemRoot; "
+        ". .\\scripts\\local\\common.ps1; "
+        "$git=Resolve-EamGitExecutable; "
+        "if(-not $git){throw 'Git discovery failed'}; "
+        "$root=Get-EamRepositoryRoot; "
+        "if(-not (Test-EamGitRepository -RepositoryRoot $root)){throw 'Worktree detection failed'}; "
+        "Write-Output $git"
+    )
+    result = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            command,
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().lower().endswith("git.exe")
 
 
 @pytest.mark.django_db(transaction=True)
