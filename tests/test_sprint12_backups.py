@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import hashlib
 import io
 import json
 import os
@@ -21,6 +22,7 @@ from django.test import Client
 
 from apps.audit.models import AuditLog
 from apps.assets.models import Asset
+from apps.masterdata.models import Attachment
 from apps.operations.crypto import decrypt_file, encrypt_file, encryption_metadata
 from apps.operations.models import BackupDownloadGrant, BackupSet
 from apps.operations.services import (
@@ -32,8 +34,16 @@ from apps.operations.services import (
     restore_backup_package_to_isolated,
     verify_backup_set,
 )
+from apps.supplies.services import post_supply_document
 from tests.test_sprint1_services import PASSWORD, make_user
 from tests.test_sprint4_acceptance import _base_context
+from tests.test_sprint15_support import (
+    make_issue_document,
+    make_supply_category,
+    make_supply_item,
+    make_supply_warehouse,
+    seed_supply_stock,
+)
 
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -285,6 +295,47 @@ def test_real_encrypted_backup_restores_to_fresh_database_and_reconciles(
     media_file = settings.MEDIA_ROOT / "restore-test" / "中文 附件.txt"
     media_file.parent.mkdir(parents=True)
     media_file.write_bytes("portable-restore-evidence".encode())
+    Attachment.objects.create(
+        company=context["company"],
+        storage_key="restore-test/中文 附件.txt",
+        original_filename="中文 附件.txt",
+        safe_filename="中文 附件.txt",
+        file_size=media_file.stat().st_size,
+        mime_type="text/plain",
+        sha256=hashlib.sha256(media_file.read_bytes()).hexdigest(),
+        uploaded_by=context["admin"],
+        malware_scan_status=Attachment.MalwareScanStatus.CLEAN,
+        is_available=True,
+    )
+    warehouse_user = make_user("s12-real-restore-warehouse", "warehouse")
+    supply_category = make_supply_category(context["company"], "S12RESTORE-SUP")
+    warehouse = make_supply_warehouse(context["company"], "S12RESTORE-WH")
+    supply_item = make_supply_item(
+        context["company"],
+        supply_category,
+        "S12RESTORE-ITEM",
+        item_type="durable_quantity",
+    )
+    seed_supply_stock(
+        actor=warehouse_user,
+        company=context["company"],
+        warehouse=warehouse,
+        item=supply_item,
+        quantity="3",
+        unit_cost="80",
+        key="s12-real-restore-opening",
+    )
+    issue = make_issue_document(
+        actor=warehouse_user,
+        company=context["company"],
+        warehouse=warehouse,
+        item=supply_item,
+        department=context["department"],
+        employee=context["employee"],
+        quantity="1",
+        key="s12-real-restore-issue",
+    )
+    post_supply_document(document=issue, actor=warehouse_user)
     source_password_hash = context["admin"].password
     backup = create_backup_set(
         actor=context["admin"],
@@ -307,6 +358,11 @@ def test_real_encrypted_backup_restores_to_fresh_database_and_reconciles(
         )
         assert result["record_counts"] == result["manifest"]["record_counts"]
         assert result["record_counts"]["assets"] == 1
+        assert result["record_counts"]["supply_items"] == 1
+        assert result["record_counts"]["supply_balances"] == 1
+        assert result["record_counts"]["supply_ledgers"] >= 2
+        assert result["record_counts"]["supply_custodies"] == 1
+        assert result["record_counts"]["attachments"] == 1
         assert result["media_file_count"] == 1
         restored_media = target_media / "restore-test" / "中文 附件.txt"
         assert restored_media.read_bytes() == media_file.read_bytes()
