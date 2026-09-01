@@ -572,6 +572,42 @@ def test_submit_page_names_each_missing_asset_field_instead_of_repeating_generic
     assert asset.asset_status == "draft"
 
 
+def test_edit_draft_can_fill_missing_department_employee_and_location(client):
+    actor, company, department, employee, category, _site, _area, location = (
+        make_context()
+    )
+    asset = direct_draft(company, category, actor=actor, asset_name="待补资料资产")
+    client.force_login(actor)
+
+    response = client.post(
+        reverse("assets:asset-edit", args=[asset.pk]),
+        form_data(
+            category,
+            department,
+            employee,
+            location,
+            asset_name="资料已补齐",
+            unit="台",
+        ),
+    )
+
+    assert response.status_code == 302
+    asset.refresh_from_db()
+    assert asset.asset_name == "资料已补齐"
+    assert asset.unit == "台"
+    assert asset.department == department
+    assert asset.responsible_employee == employee
+    assert asset.location == location
+    assert asset.asset_status == "draft"
+    assert asset.asset_code is None
+    assert asset.current_issued_code_id is None
+    assert asset.submitted_by_id is None
+    assert asset.submitted_at is None
+    assert AuditLog.objects.filter(
+        action="asset_draft_scope_update", object_id=str(asset.pk)
+    ).exists()
+
+
 def test_repeat_http_submit_is_idempotent_and_one_audit(client, tmp_path):
     actor, company, department, employee, category, _site, _area, location = make_context()
     asset = make_asset(

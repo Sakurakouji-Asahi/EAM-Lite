@@ -398,6 +398,29 @@ def update_asset_draft(
         if custom_values is not None:
             existing_values.delete()
     asset.updated_by = actor
+    new_scope = (
+        asset.department_id,
+        asset.responsible_employee_id,
+        asset.location_id,
+        asset.category_id,
+    )
+    if new_scope[:3] != old_scope[:3]:
+        # Department, responsibility and location become movement-controlled
+        # after formalization. Draft edits still go through this audited
+        # service, so update the three related fields together under the
+        # transaction-local database capability before saving ordinary fields.
+        asset.full_clean()
+        _controlled_update(
+            Asset,
+            pk=asset.pk,
+            values={
+                "department_id": asset.department_id,
+                "responsible_employee_id": asset.responsible_employee_id,
+                "location_id": asset.location_id,
+                "updated_by_id": actor.pk,
+                "updated_at": timezone.now(),
+            },
+        )
     _save(asset)
     _replace_custom_values(asset=asset, custom_values=custom_values)
     _audit(
@@ -407,12 +430,6 @@ def update_asset_draft(
         old_data=old,
         new_data={**_snapshot(asset), "custom_values": _custom_values_snapshot(asset)},
         request=request,
-    )
-    new_scope = (
-        asset.department_id,
-        asset.responsible_employee_id,
-        asset.location_id,
-        asset.category_id,
     )
     if new_scope != old_scope:
         _audit(
