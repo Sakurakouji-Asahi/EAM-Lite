@@ -22,6 +22,27 @@ def test_health_check_is_minimal_no_store_and_has_correlation_id(client):
     assert "version" not in response.content.decode().lower()
 
 
+def test_version_endpoint_reports_build_identity_without_secrets(client, settings):
+    settings.APP_VERSION = "0.2.1-test"
+    settings.APP_COMMIT_SHA = "a" * 40
+    settings.BUILD_TIME = "2026-09-01T00:00:00Z"
+    settings.EAM_ENVIRONMENT = "test"
+
+    response = client.get(reverse("version-info"))
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "version": "0.2.1-test",
+        "commit": "a" * 40,
+        "environment": "test",
+        "database_vendor": settings.DATABASE_ENGINE,
+        "build_time": "2026-09-01T00:00:00Z",
+    }
+    assert "no-store" in response["Cache-Control"]
+    serialized = response.content.decode().lower()
+    assert "password" not in serialized and "secret" not in serialized
+
+
 def test_unapproved_host_is_rejected(client):
     response = client.get("/healthz/", HTTP_HOST="evil.example.invalid")
     assert response.status_code == 400
@@ -127,6 +148,60 @@ def test_production_settings_fail_closed_and_valid_secure_configuration_loads(tm
     )
     assert invalid.returncode != 0
     assert "SECURE_HSTS_SECONDS" in invalid.stderr
+
+
+def test_local_settings_are_postgresql_debug_false_and_exact_loopback(tmp_path):
+    env = _production_settings_env(tmp_path)
+    env.update(
+        {
+            "EAM_ENVIRONMENT": "local",
+            "DEBUG": "false",
+            "ALLOWED_HOSTS": "127.0.0.1",
+            "CSRF_TRUSTED_ORIGINS": "http://127.0.0.1:8765",
+            "QR_BASE_URL": "http://127.0.0.1:8765",
+            "SECURE_SSL_REDIRECT": "false",
+            "SESSION_COOKIE_SECURE": "false",
+            "CSRF_COOKIE_SECURE": "false",
+            "TRUST_PROXY_SSL_HEADER": "false",
+            "TRUST_PROXY_CLIENT_IP": "false",
+            "TRUSTED_PROXY_NETWORKS": "",
+        }
+    )
+    valid = subprocess.run(
+        [
+            str(Path(".venv/Scripts/python.exe")),
+            "-c",
+            (
+                "import config.settings as s; "
+                "assert s.EAM_ENVIRONMENT == 'local'; "
+                "assert s.DEBUG is False; "
+                "assert s.DATABASE_ENGINE == 'postgresql'; "
+                "assert s.QR_BASE_URL == 'http://127.0.0.1:8765'"
+            ),
+        ],
+        cwd=Path.cwd(),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert valid.returncode == 0, valid.stderr
+
+    for key, value, expected in (
+        ("DEBUG", "true", "DEBUG=false"),
+        ("DB_ENGINE", "sqlite", "PostgreSQL"),
+        ("QR_BASE_URL", "http://localhost:8765", "127.0.0.1:8765"),
+    ):
+        invalid_env = env.copy()
+        invalid_env[key] = value
+        result = subprocess.run(
+            [str(Path(".venv/Scripts/python.exe")), "-c", "import config.settings"],
+            cwd=Path.cwd(),
+            env=invalid_env,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0
+        assert expected in result.stderr
 
 
 @pytest.mark.parametrize(

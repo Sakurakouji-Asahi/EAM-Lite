@@ -17,6 +17,12 @@
 <body class="app-body">
   <a class="skip-link" href="#main-content">跳到主要内容</a>
 
+  {% if runtime_metadata.is_development %}
+    <div class="alert alert-warning rounded-0 border-0 text-center fw-semibold mb-0 py-2" role="status" data-development-environment-banner>
+      开发环境 · 数据与稳定使用版完全隔离
+    </div>
+  {% endif %}
+
   <header class="app-topbar">
     <div class="app-topbar-inner">
       {% if request.user.is_authenticated %}
@@ -116,5 +122,8 @@
       {% block anonymous_content %}{% endblock %}
     </main>
   {% endif %}
+  <footer class="border-top bg-body-tertiary py-2 px-3 text-center small text-secondary" data-runtime-version>
+    EAM-Lite {{ runtime_metadata.version }} · commit {{ runtime_metadata.short_commit }}{% if runtime_metadata.is_development %} · 开发环境{% elif runtime_metadata.is_local %} · 本机稳定使用版{% endif %}
+  </footer>
 </body>
 </html>

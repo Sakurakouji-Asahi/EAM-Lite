@@ -11,12 +11,14 @@ from apps.core.views import (
     home,
     settings_center,
     task_center,
+    version_info,
 )
 from apps.masterdata.views import setup_overview, setup_step
 
 
 urlpatterns = [
     path("healthz/", healthz, name="healthz"),
+    path("version/", version_info, name="version-info"),
     path("", home, name="home"),
     path("tasks/", task_center, name="task-center"),
     path("settings/", settings_center, name="settings-center"),

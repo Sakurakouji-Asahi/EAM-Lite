@@ -621,4 +621,23 @@ def application_navigation(request):
     return {"app_navigation": build_application_navigation(request)}
 
 
-__all__ = ["application_navigation", "build_application_navigation"]
+def runtime_metadata(request):
+    from django.conf import settings
+
+    return {
+        "runtime_metadata": {
+            "version": settings.APP_VERSION,
+            "commit": settings.APP_COMMIT_SHA,
+            "short_commit": settings.APP_COMMIT_SHA[:7],
+            "environment": settings.EAM_ENVIRONMENT,
+            "is_development": settings.EAM_ENVIRONMENT == "development",
+            "is_local": settings.EAM_ENVIRONMENT == "local",
+        }
+    }
+
+
+__all__ = [
+    "application_navigation",
+    "build_application_navigation",
+    "runtime_metadata",
+]

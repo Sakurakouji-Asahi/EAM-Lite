@@ -20,9 +20,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = read_secret_env("SECRET_KEY")
 DEBUG = read_bool_env("DEBUG")
 EAM_ENVIRONMENT = read_env("EAM_ENVIRONMENT", "development").strip().lower()
-if EAM_ENVIRONMENT not in {"development", "test", "production"}:
+if EAM_ENVIRONMENT not in {"development", "test", "local", "production"}:
     raise ImproperlyConfigured(
-        "EAM_ENVIRONMENT 必须是 development、test 或 production"
+        "EAM_ENVIRONMENT 必须是 development、test、local 或 production"
     )
 ALLOWED_HOSTS = read_list_env("ALLOWED_HOSTS", required=True)
 CSRF_TRUSTED_ORIGINS = read_list_env(
@@ -91,6 +91,7 @@ TEMPLATES = [
                 "apps.reports.context_processors.report_navigation",
                 "apps.operations.context_processors.operations_navigation",
                 "apps.core.context_processors.application_navigation",
+                "apps.core.context_processors.runtime_metadata",
             ],
         },
     },
@@ -164,7 +165,9 @@ if BUSINESS_CURRENCY != "CNY":
 # development and automated tests deterministic without an external service.
 QR_BASE_URL = read_env("QR_BASE_URL", "https://localhost").rstrip("/")
 _qr_base = urlsplit(QR_BASE_URL)
-_allowed_qr_schemes = {"http", "https"} if DEBUG else {"https"}
+_allowed_qr_schemes = (
+    {"http", "https"} if DEBUG or EAM_ENVIRONMENT == "local" else {"https"}
+)
 try:
     _qr_port = _qr_base.port
 except ValueError as exc:
@@ -204,6 +207,7 @@ STATIC_ROOT = resolve_configured_path(
     BASE_DIR, read_env("STATIC_ROOT", "var/static")
 )
 MEDIA_ROOT = resolve_configured_path(BASE_DIR, read_env("MEDIA_ROOT", "var/media"))
+MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
 # Django may spool uploads larger than FILE_UPLOAD_MAX_MEMORY_SIZE here.  It is
 # deliberately separate from both static files and the durable attachment
 # store so a reverse proxy cannot accidentally publish an in-flight upload.
@@ -245,7 +249,19 @@ BACKUP_DOCKER_BIN = read_env("BACKUP_DOCKER_BIN", "docker")
 BACKUP_POSTGRES_CONTAINER = read_env(
     "BACKUP_POSTGRES_CONTAINER", "eam-lite-sprint0-pg"
 )
-APP_COMMIT_SHA = read_env("APP_COMMIT_SHA", "unknown", allow_blank=True).strip()
+_version_file = BASE_DIR / "VERSION"
+_version_default = (
+    _version_file.read_text(encoding="utf-8").strip()
+    if _version_file.is_file()
+    else "unknown"
+)
+APP_VERSION = read_env("APP_VERSION", _version_default, allow_blank=True).strip()
+APP_COMMIT_SHA = read_env(
+    "BUILD_COMMIT",
+    read_env("APP_COMMIT_SHA", "unknown", allow_blank=True),
+    allow_blank=True,
+).strip()
+BUILD_TIME = read_env("BUILD_TIME", "unknown", allow_blank=True).strip()
 DATABASE_RUNTIME_ROLE = read_env(
     "DATABASE_RUNTIME_ROLE", "", allow_blank=True
 ).strip()
@@ -288,7 +304,7 @@ STORAGES = {
     "staticfiles": {
         "BACKEND": (
             "apps.core.storage.EAMManifestStaticFilesStorage"
-            if EAM_ENVIRONMENT == "production"
+            if EAM_ENVIRONMENT in {"local", "production"}
             else "django.contrib.staticfiles.storage.StaticFilesStorage"
         ),
     },
@@ -420,6 +436,30 @@ if EAM_ENVIRONMENT == "production":
                 raise ImproperlyConfigured(
                     "production 备份暂存、临时和镜像目录必须完全分离"
                 )
+
+if EAM_ENVIRONMENT == "local":
+    if len(SECRET_KEY) < 50:
+        raise ImproperlyConfigured("local SECRET_KEY 至少需要 50 个字符")
+    if DEBUG:
+        raise ImproperlyConfigured("local 稳定使用环境必须 DEBUG=false")
+    if DATABASE_ENGINE != "postgresql":
+        raise ImproperlyConfigured("local 稳定使用环境必须使用 PostgreSQL")
+    if QR_BASE_URL != "http://127.0.0.1:8765":
+        raise ImproperlyConfigured(
+            "local QR_BASE_URL 必须精确为 http://127.0.0.1:8765"
+        )
+    if "127.0.0.1" not in {host.casefold() for host in ALLOWED_HOSTS}:
+        raise ImproperlyConfigured("local ALLOWED_HOSTS 必须包含 127.0.0.1")
+    if set(origin.rstrip("/") for origin in CSRF_TRUSTED_ORIGINS) != {
+        "http://127.0.0.1:8765"
+    }:
+        raise ImproperlyConfigured(
+            "local CSRF_TRUSTED_ORIGINS 必须精确为 http://127.0.0.1:8765"
+        )
+    if SECURE_SSL_REDIRECT or SESSION_COOKIE_SECURE or CSRF_COOKIE_SECURE:
+        raise ImproperlyConfigured(
+            "local 回环 HTTP 环境不得启用 SSL 重定向或 Secure Cookie"
+        )
 
 LOG_LEVEL = read_env("LOG_LEVEL", "INFO").upper()
 if LOG_LEVEL not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:

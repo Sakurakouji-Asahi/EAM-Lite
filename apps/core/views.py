@@ -40,6 +40,22 @@ def healthz(request):
     return response
 
 
+@never_cache
+@require_GET
+def version_info(request):
+    response = JsonResponse(
+        {
+            "version": settings.APP_VERSION,
+            "commit": settings.APP_COMMIT_SHA,
+            "environment": settings.EAM_ENVIRONMENT,
+            "database_vendor": connection.vendor,
+            "build_time": settings.BUILD_TIME,
+        }
+    )
+    response["Cache-Control"] = "no-store"
+    return response
+
+
 def _error_page(request, status_code, title, message):
     return render(
         request,
