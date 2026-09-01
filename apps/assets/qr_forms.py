@@ -73,6 +73,7 @@ class TokenRotationForm(forms.Form):
 
 class LabelAttachmentForm(forms.Form):
     scanned_token = forms.CharField(label="当前二维码", widget=forms.HiddenInput)
+    opaque_origin_bridge = forms.CharField(widget=forms.HiddenInput, required=False)
     label_attached = forms.BooleanField(label="已将此标签贴在该实物上")
     responsibility_confirmed = forms.BooleanField(label="已核对部门、责任人和位置")
     target_status = forms.ChoiceField(

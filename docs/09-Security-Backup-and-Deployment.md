@@ -115,7 +115,7 @@ Gunicorn/WSGI → Django Templates + HTMX
 - 数据库保存可重印标签所需的高熵 `public_token`。该值印在实物标签上，因此只作为不可猜测的公开标识，不作为授权凭据；扫描后仍需登录并执行对象权限检查。数据库备份和管理页面仍须保护该字段。
 - 换标时轮换 Token，旧 Token 标记 revoked 并永久失效；不得因编号不变继续沿用已泄露 Token。
 - 应用日志和 AuditLog 不记录完整 Token；必要时只记录不可用于访问的截断摘要。
-- Edge Android 扫码页面及受控应用内浏览器可能以不透明来源提交 `Origin: null`。兼容逻辑只能作用于精确的当前二维码扫码确认 POST 和单资产 Web 贴标确认 POST：请求 Host 必须等于配置的 `QR_BASE_URL`，必须同时带登录会话 Cookie、CSRF Cookie 和表单 CSRF Token，且仍由 Django `CsrfViewMiddleware` 校验 Token；随后继续执行当前二维码、角色、对象范围、打印状态、资料完整性和幂等校验。禁止全局信任 `null`、禁止把其他 POST 端点设为 `csrf_exempt`，并在成功审计中区分扫码与 Web 兼容确认方式。
+- Edge Android 扫码页面及微信等受控应用内浏览器可能以不透明来源提交 `Origin: null`，并携带应用壳自身的 HTTPS Referer。兼容逻辑只能作用于精确的当前二维码扫码确认 POST 和单资产 Web 贴标确认 POST：请求 Host 必须等于配置的 `QR_BASE_URL`，必须同时带登录会话 Cookie、CSRF Cookie、表单 CSRF Token，以及服务器生成且绑定当前会话与精确 POST 路径的短时签名桥接令牌，且仍由 Django `CsrfViewMiddleware` 校验 Token；随后继续执行当前二维码、角色、对象范围、打印状态、资料完整性和幂等校验。禁止全局信任 `null`、禁止把其他 POST 端点设为 `csrf_exempt`，并在成功审计中区分扫码与 Web 兼容确认方式。
 
 ### 8.2 上传
 

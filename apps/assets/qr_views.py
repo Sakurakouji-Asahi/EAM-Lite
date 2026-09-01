@@ -15,6 +15,7 @@ from django.core.paginator import Paginator
 from django.db.models import Count, Max, Prefetch, Q, Sum
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_http_methods, require_POST
 
 from apps.assets.models import (
@@ -54,6 +55,7 @@ from apps.assets.qr_services import (
     rotate_qr_identity,
 )
 from apps.audit.services import request_audit_context, write_business_audit_log
+from apps.core.qr_csrf import build_qr_opaque_origin_bridge
 from apps.maintenance.permissions import (
     can_complete_maintenance,
     can_view_maintenance_asset_summary,
@@ -87,6 +89,14 @@ def _scan_response(response):
 
 def _scan_redirect(token):
     return _scan_response(redirect("assets:qr-scan", token=token))
+
+
+def _opaque_origin_bridge(request, path):
+    return build_qr_opaque_origin_bridge(
+        user_id=request.user.pk,
+        session_key=request.session.session_key,
+        path=path,
+    )
 
 
 def _item_has_current_printable_identity(item):
@@ -663,7 +673,13 @@ def qr_scan(request, token):
     ):
         attachment_form = LabelAttachmentForm(
             first_attachment=first_attachment,
-            initial={"scanned_token": token},
+            initial={
+                "scanned_token": token,
+                "opaque_origin_bridge": _opaque_origin_bridge(
+                    request,
+                    reverse("assets:qr-attach", args=[token]),
+                ),
+            },
         )
     maintenance_context = (
         _maintenance_context(request.user, asset)
@@ -843,6 +859,12 @@ def qr_web_attach(request, pk):
         request.POST or None,
         first_attachment=first_attachment,
         qr_identity_id=qr_identity.pk,
+        initial={
+            "opaque_origin_bridge": _opaque_origin_bridge(
+                request,
+                reverse("assets:qr-web-attach", args=[asset.pk]),
+            )
+        },
     )
     if request.method == "POST":
         form.is_valid()

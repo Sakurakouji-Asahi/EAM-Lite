@@ -354,12 +354,16 @@ def test_edge_opaque_origin_scan_confirmation_keeps_standard_csrf_checks():
     csrf_client = Client(enforce_csrf_checks=True)
     csrf_client.force_login(context["finance"])
     scan_url = reverse("assets:qr-scan", args=[qr_identity.public_token])
-    assert csrf_client.get(scan_url).status_code == 200
+    landing = csrf_client.get(scan_url)
+    assert landing.status_code == 200
     csrf_token = csrf_client.cookies["csrftoken"].value
     confirm_url = reverse("assets:qr-attach", args=[qr_identity.public_token])
     form_data = {
         "csrfmiddlewaretoken": csrf_token,
         "scanned_token": qr_identity.public_token,
+        "opaque_origin_bridge": landing.context["attachment_form"][
+            "opaque_origin_bridge"
+        ].value(),
         "label_attached": "on",
         "responsibility_confirmed": "on",
         "target_status": "in_use",
@@ -370,6 +374,7 @@ def test_edge_opaque_origin_scan_confirmation_keeps_standard_csrf_checks():
         confirm_url,
         form_data,
         HTTP_ORIGIN="null",
+        HTTP_REFERER="https://servicewechat.com/wx/page-frame.html",
     )
 
     assert response.status_code == 302
@@ -392,7 +397,8 @@ def test_web_opaque_origin_confirmation_keeps_standard_csrf_checks():
     csrf_client = Client(enforce_csrf_checks=True)
     csrf_client.force_login(context["finance"])
     web_url = reverse("assets:qr-web-attach", args=[asset.pk])
-    assert csrf_client.get(web_url).status_code == 200
+    web_page = csrf_client.get(web_url)
+    assert web_page.status_code == 200
     csrf_token = csrf_client.cookies["csrftoken"].value
 
     response = csrf_client.post(
@@ -400,12 +406,16 @@ def test_web_opaque_origin_confirmation_keeps_standard_csrf_checks():
         {
             "csrfmiddlewaretoken": csrf_token,
             "qr_identity_id": str(qr_identity.pk),
+            "opaque_origin_bridge": web_page.context["form"][
+                "opaque_origin_bridge"
+            ].value(),
             "label_attached": "on",
             "responsibility_confirmed": "on",
             "target_status": "in_use",
             "idempotency_key": "S6WEBOPAQUE-attach",
         },
         HTTP_ORIGIN="null",
+        HTTP_REFERER="https://servicewechat.com/wx/page-frame.html",
     )
 
     assert response.status_code == 302
@@ -429,12 +439,16 @@ def test_edge_opaque_origin_compatibility_is_limited_to_valid_qr_form():
     csrf_client = Client(enforce_csrf_checks=True)
     csrf_client.force_login(context["finance"])
     scan_url = reverse("assets:qr-scan", args=[qr_identity.public_token])
-    assert csrf_client.get(scan_url).status_code == 200
+    landing = csrf_client.get(scan_url)
+    assert landing.status_code == 200
     csrf_token = csrf_client.cookies["csrftoken"].value
     confirm_url = reverse("assets:qr-attach", args=[qr_identity.public_token])
     valid_data = {
         "csrfmiddlewaretoken": csrf_token,
         "scanned_token": qr_identity.public_token,
+        "opaque_origin_bridge": landing.context["attachment_form"][
+            "opaque_origin_bridge"
+        ].value(),
         "label_attached": "on",
         "responsibility_confirmed": "on",
         "target_status": "in_use",
@@ -448,15 +462,24 @@ def test_edge_opaque_origin_compatibility_is_limited_to_valid_qr_form():
         without_token,
         HTTP_ORIGIN="null",
     ).status_code == 403
+    without_bridge = dict(valid_data)
+    without_bridge.pop("opaque_origin_bridge")
+    assert csrf_client.post(
+        confirm_url,
+        without_bridge,
+        HTTP_ORIGIN="null",
+    ).status_code == 403
     assert csrf_client.post(
         confirm_url,
         valid_data,
         HTTP_ORIGIN="null",
         HTTP_HOST="alternate.test",
     ).status_code == 403
+    invalid_bridge = dict(valid_data)
+    invalid_bridge["opaque_origin_bridge"] += "tampered"
     assert csrf_client.post(
         confirm_url,
-        valid_data,
+        invalid_bridge,
         HTTP_ORIGIN="null",
         HTTP_REFERER="http://evil.example/opaque/",
     ).status_code == 403

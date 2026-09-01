@@ -7,6 +7,8 @@ from django.conf import settings
 from django.core.exceptions import DisallowedHost, SuspiciousOperation
 from django.http import UnreadablePostError
 
+from apps.core.qr_csrf import validate_qr_opaque_origin_bridge
+
 
 _QR_CONFIRM_PATHS = (
     re.compile(r"^/assets/scan/[A-Za-z0-9_-]{22,128}/confirm/$"),
@@ -28,10 +30,11 @@ class QrOpaqueOriginCsrfCompatibilityMiddleware:
     and submit ``Origin: null`` even though the visible URL is the EAM host.
     The compatibility paths are intentionally narrow: they only treat that
     origin as absent for QR scan attachment and per-asset Web attachment POSTs,
-    with the configured QR host, session cookie, CSRF cookie and submitted
-    CSRF token all still required. The inventory scan path is accepted only
-    for the short-lived signed ``scan_bridge`` handoff rendered by a valid QR
-    page. Django's normal CsrfViewMiddleware performs the actual token
+    with the configured QR host, session cookie, CSRF cookie, submitted CSRF
+    token and a short-lived signed bridge bound to the current session and
+    exact POST path all still required. The inventory scan path is accepted
+    only for its separate signed ``scan_bridge`` handoff rendered by a valid
+    QR page. Django's normal CsrfViewMiddleware performs the actual token
     validation.
     """
 
@@ -78,6 +81,18 @@ class QrOpaqueOriginCsrfCompatibilityMiddleware:
                     return False
             except (SuspiciousOperation, UnreadablePostError):
                 return False
+        else:
+            try:
+                bridge = request.POST.get("opaque_origin_bridge", "").strip()
+            except (SuspiciousOperation, UnreadablePostError):
+                return False
+            if not validate_qr_opaque_origin_bridge(
+                bridge,
+                user_id=request.session.get("_auth_user_id"),
+                session_key=request.session.session_key,
+                path=request.path_info,
+            ):
+                return False
         submitted_token = request.META.get(settings.CSRF_HEADER_NAME, "").strip()
         if not submitted_token:
             try:
@@ -93,7 +108,7 @@ class QrOpaqueOriginCsrfCompatibilityMiddleware:
                 referer_origin = (
                     f"{parsed.scheme.casefold()}://{parsed.netloc.casefold()}"
                 )
-                if referer_origin != self.expected_origin:
+                if referer_origin != self.expected_origin and is_inventory_bridge:
                     return False
         return True
 
