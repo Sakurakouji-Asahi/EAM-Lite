@@ -9,6 +9,7 @@
 - `启动EAM-Lite.cmd`、`停止EAM-Lite.cmd`、`更新EAM-Lite.cmd` — Windows 本机稳定版入口
 - `查看EAM-Lite状态.cmd`、`备份EAM-Lite数据.cmd`、`恢复EAM-Lite数据.cmd` — 状态与便携数据入口
 - `启动开发环境.cmd`、`启动开发环境-局域网扫码测试.cmd`、`停止开发环境.cmd` — 与稳定版完全隔离的本机/局域网开发入口
+- `同步开发版到正式版.cmd` — 先备份，再将已提交的开发代码快进发布到独立正式版目录
 - `README-本机使用版.md` — 非技术用户本机使用、更新、备份与迁移说明
 - `scripts/local/` — 可测试的 Windows 本机运行脚本
 - `scripts/release/` — Windows Release 清单与 ZIP 构建器

@@ -61,6 +61,7 @@ def test_one_click_cmd_files_only_dispatch_to_powershell():
         "启动开发环境.cmd": "start-dev.ps1",
         "启动开发环境-局域网扫码测试.cmd": "start-dev-lan.ps1",
         "停止开发环境.cmd": "stop-dev.ps1",
+        "同步开发版到正式版.cmd": "promote-dev-to-stable.ps1",
     }
     for filename, script in expected.items():
         text = (ROOT / filename).read_text(encoding="utf-8")
@@ -106,6 +107,22 @@ def test_local_scripts_never_delete_volumes_or_kill_unknown_processes():
         assert token not in scripts
     assert "脚本不会自动结束该进程" in scripts
     assert "latest 镜像" in scripts
+
+
+def test_development_promotion_is_backup_first_and_fast_forward_only():
+    script = (ROOT / "scripts" / "local" / "promote-dev-to-stable.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+
+    assert "Assert-EamPromotionTreeClean" in script
+    assert '"merge-base",' in script
+    assert '"--is-ancestor",' in script
+    assert '"merge",' in script
+    assert '"--ff-only",' in script
+    assert script.index("$backupScript") < script.index('"merge",')
+    assert "LastPortableBackup" in script
+    assert "eam-lite-dev" not in script
+    assert "postgres_data" not in script
 
 
 @override_settings(
