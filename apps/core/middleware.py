@@ -133,8 +133,6 @@ class QrOpaqueOriginCsrfCompatibilityMiddleware:
                     scan_confirmation.group("token"),
                 ):
                     return rejected("scan_token_bridge_missing_or_mismatch")
-            else:
-                return rejected("qr_bridge_missing")
         submitted_token = request.META.get(settings.CSRF_HEADER_NAME, "").strip()
         if not submitted_token:
             try:

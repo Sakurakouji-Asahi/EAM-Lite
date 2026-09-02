@@ -534,9 +534,6 @@ def test_web_opaque_origin_accepts_an_explicitly_trusted_local_host():
         {
             "csrfmiddlewaretoken": csrf_token,
             "qr_identity_id": str(qr_identity.pk),
-            "opaque_origin_bridge": page.context["form"][
-                "opaque_origin_bridge"
-            ].value(),
             "label_attached": "on",
             "responsibility_confirmed": "on",
             "target_status": "in_use",
