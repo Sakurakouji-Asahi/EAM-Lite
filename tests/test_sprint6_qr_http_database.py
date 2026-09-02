@@ -464,6 +464,7 @@ def test_edge_opaque_origin_compatibility_is_limited_to_valid_qr_form():
     ).status_code == 403
     without_bridge = dict(valid_data)
     without_bridge.pop("opaque_origin_bridge")
+    without_bridge["scanned_token"] += "tampered"
     assert csrf_client.post(
         confirm_url,
         without_bridge,
@@ -511,6 +512,80 @@ def test_edge_opaque_origin_compatibility_is_limited_to_valid_qr_form():
     qr_identity.refresh_from_db()
     assert asset.asset_status == "pending_label"
     assert qr_identity.label_status == "printed"
+
+
+@override_settings(
+    QR_BASE_URL="http://lan.test",
+    ALLOWED_HOSTS=["lan.test", "127.0.0.1"],
+    CSRF_TRUSTED_ORIGINS=["http://lan.test", "http://127.0.0.1"],
+)
+def test_web_opaque_origin_accepts_an_explicitly_trusted_local_host():
+    context, asset, qr_identity = formal_asset_context("S6WEBLOCALHOST")
+    _print(context, asset, "S6WEBLOCALHOST-print")
+    csrf_client = Client(enforce_csrf_checks=True)
+    csrf_client.force_login(context["finance"])
+    web_url = reverse("assets:qr-web-attach", args=[asset.pk])
+    page = csrf_client.get(web_url, HTTP_HOST="127.0.0.1")
+    assert page.status_code == 200
+    csrf_token = csrf_client.cookies["csrftoken"].value
+
+    response = csrf_client.post(
+        web_url,
+        {
+            "csrfmiddlewaretoken": csrf_token,
+            "qr_identity_id": str(qr_identity.pk),
+            "opaque_origin_bridge": page.context["form"][
+                "opaque_origin_bridge"
+            ].value(),
+            "label_attached": "on",
+            "responsibility_confirmed": "on",
+            "target_status": "in_use",
+            "idempotency_key": "S6WEBLOCALHOST-attach",
+        },
+        HTTP_HOST="127.0.0.1",
+        HTTP_ORIGIN="null",
+        HTTP_REFERER="https://servicewechat.com/wx/page-frame.html",
+    )
+
+    assert response.status_code == 302
+    asset.refresh_from_db()
+    qr_identity.refresh_from_db()
+    assert asset.asset_status == "in_use"
+    assert qr_identity.label_status == "attached"
+
+
+@override_settings(
+    QR_BASE_URL="http://testserver",
+    ALLOWED_HOSTS=["testserver"],
+)
+def test_scan_opaque_origin_accepts_matching_scan_token_from_pre_bridge_page():
+    context, asset, qr_identity = formal_asset_context("S6SCANPREBRIDGE")
+    _print(context, asset, "S6SCANPREBRIDGE-print")
+    csrf_client = Client(enforce_csrf_checks=True)
+    csrf_client.force_login(context["finance"])
+    scan_url = reverse("assets:qr-scan", args=[qr_identity.public_token])
+    assert csrf_client.get(scan_url).status_code == 200
+    csrf_token = csrf_client.cookies["csrftoken"].value
+
+    response = csrf_client.post(
+        reverse("assets:qr-attach", args=[qr_identity.public_token]),
+        {
+            "csrfmiddlewaretoken": csrf_token,
+            "scanned_token": qr_identity.public_token,
+            "label_attached": "on",
+            "responsibility_confirmed": "on",
+            "target_status": "in_use",
+            "idempotency_key": "S6SCANPREBRIDGE-attach",
+        },
+        HTTP_ORIGIN="null",
+        HTTP_REFERER="https://servicewechat.com/wx/page-frame.html",
+    )
+
+    assert response.status_code == 302
+    asset.refresh_from_db()
+    qr_identity.refresh_from_db()
+    assert asset.asset_status == "in_use"
+    assert qr_identity.label_status == "attached"
 
 
 def test_generated_batch_refuses_a_noncurrent_identity(client):

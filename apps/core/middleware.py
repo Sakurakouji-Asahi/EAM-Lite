@@ -1,4 +1,6 @@
+import logging
 import re
+import secrets
 import uuid
 from ipaddress import ip_address, ip_network
 from urllib.parse import urlsplit
@@ -10,12 +12,15 @@ from django.http import UnreadablePostError
 from apps.core.qr_csrf import validate_qr_opaque_origin_bridge
 
 
-_QR_CONFIRM_PATHS = (
-    re.compile(r"^/assets/scan/[A-Za-z0-9_-]{22,128}/confirm/$"),
-    re.compile(
-        r"^/assets/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
-        r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/labels/confirm/$"
-    ),
+logger = logging.getLogger("eam_lite.security")
+
+
+_QR_SCAN_CONFIRM_PATH = re.compile(
+    r"^/assets/scan/(?P<token>[A-Za-z0-9_-]{22,128})/confirm/$"
+)
+_QR_WEB_CONFIRM_PATH = re.compile(
+    r"^/assets/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/labels/confirm/$"
 )
 _INVENTORY_QR_BRIDGE_PATH = re.compile(
     r"^/inventory/tasks/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
@@ -41,9 +46,19 @@ class QrOpaqueOriginCsrfCompatibilityMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
         configured = urlsplit(settings.QR_BASE_URL)
-        self.expected_host = configured.netloc.casefold()
         self.expected_origin = (
             f"{configured.scheme.casefold()}://{configured.netloc.casefold()}"
+        )
+        trusted_origins = {self.expected_origin}
+        for value in settings.CSRF_TRUSTED_ORIGINS:
+            parsed = urlsplit(str(value).rstrip("/"))
+            if parsed.scheme and parsed.netloc and "*" not in parsed.netloc:
+                trusted_origins.add(
+                    f"{parsed.scheme.casefold()}://{parsed.netloc.casefold()}"
+                )
+        self.expected_origins = frozenset(trusted_origins)
+        self.expected_hosts = frozenset(
+            urlsplit(origin).netloc.casefold() for origin in trusted_origins
         )
 
     def __call__(self, request):
@@ -57,50 +72,77 @@ class QrOpaqueOriginCsrfCompatibilityMiddleware:
             return False
         if request.META.get("HTTP_ORIGIN", "").strip().casefold() != "null":
             return False
-        is_qr_confirmation = any(
-            pattern.fullmatch(request.path_info)
-            for pattern in _QR_CONFIRM_PATHS
+        scan_confirmation = _QR_SCAN_CONFIRM_PATH.fullmatch(request.path_info)
+        is_web_confirmation = bool(
+            _QR_WEB_CONFIRM_PATH.fullmatch(request.path_info)
         )
+        is_qr_confirmation = bool(scan_confirmation or is_web_confirmation)
         is_inventory_bridge = bool(
             _INVENTORY_QR_BRIDGE_PATH.fullmatch(request.path_info)
         )
         if not is_qr_confirmation and not is_inventory_bridge:
             return False
+        endpoint_kind = "qr_confirmation" if is_qr_confirmation else "inventory_bridge"
+
+        def rejected(reason):
+            logger.warning(
+                "opaque-origin CSRF compatibility rejected endpoint=%s reason=%s",
+                endpoint_kind,
+                reason,
+            )
+            return False
+
         try:
-            if request.get_host().casefold() != self.expected_host:
-                return False
+            actual_host = request.get_host().casefold()
+            if actual_host not in self.expected_hosts:
+                logger.warning(
+                    "opaque-origin host mismatch actual=%s expected=%s",
+                    actual_host,
+                    ",".join(sorted(self.expected_hosts)),
+                )
+                return rejected("host_mismatch")
         except DisallowedHost:
-            return False
+            return rejected("disallowed_host")
         if not request.COOKIES.get(settings.SESSION_COOKIE_NAME):
-            return False
+            return rejected("session_cookie_missing")
         if not request.COOKIES.get(settings.CSRF_COOKIE_NAME):
-            return False
+            return rejected("csrf_cookie_missing")
         if is_inventory_bridge:
             try:
                 if not request.POST.get("scan_bridge", "").strip():
-                    return False
+                    return rejected("inventory_bridge_missing")
             except (SuspiciousOperation, UnreadablePostError):
-                return False
+                return rejected("post_unreadable")
         else:
             try:
                 bridge = request.POST.get("opaque_origin_bridge", "").strip()
             except (SuspiciousOperation, UnreadablePostError):
-                return False
-            if not validate_qr_opaque_origin_bridge(
-                bridge,
-                user_id=request.session.get("_auth_user_id"),
-                session_key=request.session.session_key,
-                path=request.path_info,
-            ):
-                return False
+                return rejected("post_unreadable")
+            if bridge:
+                if not validate_qr_opaque_origin_bridge(
+                    bridge,
+                    user_id=request.session.get("_auth_user_id"),
+                    session_key=request.session.session_key,
+                    path=request.path_info,
+                ):
+                    return rejected("qr_bridge_invalid")
+            elif scan_confirmation:
+                submitted_scan_token = request.POST.get("scanned_token", "").strip()
+                if not submitted_scan_token or not secrets.compare_digest(
+                    submitted_scan_token,
+                    scan_confirmation.group("token"),
+                ):
+                    return rejected("scan_token_bridge_missing_or_mismatch")
+            else:
+                return rejected("qr_bridge_missing")
         submitted_token = request.META.get(settings.CSRF_HEADER_NAME, "").strip()
         if not submitted_token:
             try:
                 submitted_token = request.POST.get("csrfmiddlewaretoken", "").strip()
             except (SuspiciousOperation, UnreadablePostError):
-                return False
+                return rejected("post_unreadable")
         if not submitted_token:
-            return False
+            return rejected("csrf_form_token_missing")
         referer = request.META.get("HTTP_REFERER", "").strip()
         if referer:
             parsed = urlsplit(referer)
@@ -108,8 +150,11 @@ class QrOpaqueOriginCsrfCompatibilityMiddleware:
                 referer_origin = (
                     f"{parsed.scheme.casefold()}://{parsed.netloc.casefold()}"
                 )
-                if referer_origin != self.expected_origin and is_inventory_bridge:
-                    return False
+                if (
+                    referer_origin not in self.expected_origins
+                    and is_inventory_bridge
+                ):
+                    return rejected("inventory_referer_mismatch")
         return True
 
 
