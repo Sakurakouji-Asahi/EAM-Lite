@@ -211,6 +211,18 @@ function Test-EamDockerStaleSocketFailure {
     )
 }
 
+function Test-EamDockerFailureDialog {
+    try {
+        $dialog = Get-CimInstance Win32_Process -Filter "Name = 'Docker Desktop.exe'" |
+            Where-Object { $_.CommandLine -match "--name=error-dialog" } |
+            Select-Object -First 1
+        return [bool]$dialog
+    }
+    catch {
+        return $false
+    }
+}
+
 function Repair-EamDockerStaleSockets {
     if (-not (Test-EamDockerStaleSocketFailure)) {
         return $false
@@ -315,8 +327,8 @@ function Ensure-EamDockerReady {
             return $dockerExe
         }
         if (
-            -not (Get-Process -Name "com.docker.backend" -ErrorAction SilentlyContinue) -and
-            (Test-EamDockerStaleSocketFailure)
+            (Test-EamDockerStaleSocketFailure) -and
+            (Test-EamDockerFailureDialog)
         ) {
             break
         }

@@ -97,6 +97,8 @@ def test_local_launcher_recovers_known_docker_stale_socket_failures_only():
     )
 
     assert "Test-EamDockerStaleSocketFailure" in common
+    assert "Test-EamDockerFailureDialog" in common
+    assert '"--name=error-dialog"' in common
     assert "Repair-EamDockerStaleSockets" in common
     assert '"sailor-ingest\\.sock"' in common
     assert '"docker-secrets-engine.+engine\\.sock"' in common
