@@ -157,10 +157,136 @@ function Get-EamDockerExecutable {
 }
 
 function Test-EamDockerReady {
-    param([Parameter(Mandatory = $true)][string]$DockerExe)
+    param(
+        [Parameter(Mandatory = $true)][string]$DockerExe,
+        [int]$TimeoutMilliseconds = 5000
+    )
 
-    $result = & $DockerExe info --format "{{.ServerVersion}}" 2>$null
-    return ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace(($result -join "")))
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $DockerExe
+    $startInfo.Arguments = 'info --format "{{.ServerVersion}}"'
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) {
+            return $false
+        }
+        if (-not $process.WaitForExit($TimeoutMilliseconds)) {
+            try { $process.Kill() } catch { }
+            return $false
+        }
+        $output = $process.StandardOutput.ReadToEnd().Trim()
+        return ($process.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($output))
+    }
+    catch {
+        return $false
+    }
+    finally {
+        $process.Dispose()
+    }
+}
+
+function Test-EamDockerStaleSocketFailure {
+    $backendLog = Join-Path $env:LOCALAPPDATA "Docker\log\host\com.docker.backend.exe.log"
+    if (-not (Test-Path -LiteralPath $backendLog -PathType Leaf)) {
+        return $false
+    }
+    $logItem = Get-Item -LiteralPath $backendLog
+    if ($logItem.LastWriteTime -lt (Get-Date).AddMinutes(-5)) {
+        return $false
+    }
+    $tailText = (Get-Content -LiteralPath $backendLog -Tail 300) -join "`n"
+    return (
+        $tailText -match "backend crashed" -and
+        $tailText -match "The file cannot be accessed by the system" -and
+        (
+            $tailText -match "dockerInference" -or
+            $tailText -match "sailor-ingest\.sock" -or
+            $tailText -match "docker-secrets-engine.+engine\.sock"
+        )
+    )
+}
+
+function Repair-EamDockerStaleSockets {
+    if (-not (Test-EamDockerStaleSocketFailure)) {
+        return $false
+    }
+
+    Write-Host "检测到 Docker Desktop 遗留通信文件故障，正在执行可恢复修复……" -ForegroundColor Yellow
+    $dockerRoot = [System.IO.Path]::GetFullPath(
+        (Join-Path $env:ProgramFiles "Docker\Docker")
+    ).TrimEnd("\") + "\"
+    $dockerProcessNames = @(
+        "Docker Desktop",
+        "com.docker.backend",
+        "com.docker.build",
+        "com.docker.proxy",
+        "docker-desktop",
+        "docker-sandbox"
+    )
+    Get-Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.ProcessName -in $dockerProcessNames -and
+            $_.Path -and
+            [System.IO.Path]::GetFullPath($_.Path).StartsWith(
+                $dockerRoot,
+                [StringComparison]::OrdinalIgnoreCase
+            )
+        } |
+        Stop-Process -ErrorAction SilentlyContinue
+    & wsl.exe --terminate docker-desktop *> $null
+    Start-Sleep -Seconds 1
+
+    $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $socketDirectories = @(
+        @{
+            Source = (Join-Path $env:LOCALAPPDATA "Docker\run")
+            Parent = (Join-Path $env:LOCALAPPDATA "Docker")
+            BackupName = "run.stale-$timestamp"
+        },
+        @{
+            Source = (Join-Path $env:LOCALAPPDATA "docker-secrets-engine")
+            Parent = $env:LOCALAPPDATA
+            BackupName = "docker-secrets-engine.stale-$timestamp"
+        }
+    )
+    foreach ($directory in $socketDirectories) {
+        $parent = [System.IO.Path]::GetFullPath($directory.Parent).TrimEnd("\")
+        $source = [System.IO.Path]::GetFullPath($directory.Source).TrimEnd("\")
+        if ((Split-Path -Parent $source) -ne $parent) {
+            throw "Docker 通信目录超出预期范围：$source"
+        }
+        if (-not (Test-Path -LiteralPath $source -PathType Container)) {
+            New-Item -ItemType Directory -Path $source | Out-Null
+            continue
+        }
+        $unexpected = @(
+            Get-ChildItem -LiteralPath $source -Force -ErrorAction Stop |
+                Where-Object {
+                    $_.PSIsContainer -or
+                    $_.Length -ne 0 -or
+                    -not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+                }
+        )
+        if ($unexpected.Count -ne 0) {
+            throw "Docker 通信目录包含非运行时文件，已拒绝自动移动：$source"
+        }
+        $backupPath = Join-Path $parent $directory.BackupName
+        if ((Split-Path -Parent $backupPath) -ne $parent) {
+            throw "Docker 通信目录备份路径超出预期范围：$backupPath"
+        }
+        if (Test-Path -LiteralPath $backupPath) {
+            throw "Docker 通信目录备份已存在：$backupPath"
+        }
+        Move-Item -LiteralPath $source -Destination $backupPath -ErrorAction Stop
+        New-Item -ItemType Directory -Path $source | Out-Null
+        Write-Host "已保留失效通信目录：$backupPath" -ForegroundColor DarkGray
+    }
+    return $true
 }
 
 function Start-EamDockerDesktop {
@@ -188,8 +314,27 @@ function Ensure-EamDockerReady {
             Write-Host "Docker Engine 已就绪。" -ForegroundColor Green
             return $dockerExe
         }
+        if (
+            -not (Get-Process -Name "com.docker.backend" -ErrorAction SilentlyContinue) -and
+            (Test-EamDockerStaleSocketFailure)
+        ) {
+            break
+        }
         if (($attempt + 1) % 10 -eq 0) {
             Write-Host "仍在等待 Docker Engine……" -ForegroundColor DarkGray
+        }
+    }
+    if (Repair-EamDockerStaleSockets) {
+        Start-EamDockerDesktop
+        for ($attempt = 0; $attempt -lt 60; $attempt++) {
+            Start-Sleep -Seconds 2
+            if (Test-EamDockerReady -DockerExe $dockerExe) {
+                Write-Host "Docker Engine 已恢复并就绪。" -ForegroundColor Green
+                return $dockerExe
+            }
+            if (($attempt + 1) % 10 -eq 0) {
+                Write-Host "仍在等待 Docker Engine 恢复……" -ForegroundColor DarkGray
+            }
         }
     }
     throw "Docker Engine 在 120 秒内未就绪。脚本未重置 Docker，也未删除任何镜像或数据卷。"
@@ -471,7 +616,7 @@ function Get-EamPrimaryLanAddress {
 }
 
 function Ensure-EamLanFirewallRule {
-    param([int]$Port = 8766)
+    param([ValidateRange(1, 65535)][int]$Port = 8766)
 
     $displayName = "EAM-Lite 开发环境局域网扫码 $Port"
     try {
@@ -483,8 +628,30 @@ function Ensure-EamLanFirewallRule {
                 [System.Security.Principal.WindowsBuiltInRole]::Administrator
             )
             if (-not $isAdministrator) {
-                Write-Warning "当前窗口没有管理员权限，未添加专用防火墙规则。Docker Desktop 已允许时手机仍可直接访问；否则请以管理员身份运行本入口。"
-                return $false
+                Write-Host "需要 Windows 管理员确认以开放局域网端口，请在弹窗中选择【是】。" -ForegroundColor Yellow
+                $payload = @"
+`$ErrorActionPreference = "Stop"
+`$name = "$displayName"
+if (-not (Get-NetFirewallRule -DisplayName `$name -ErrorAction SilentlyContinue)) {
+    New-NetFirewallRule -DisplayName `$name -Direction Inbound -Action Allow -Protocol TCP -LocalPort $Port -RemoteAddress LocalSubnet -Profile Any | Out-Null
+}
+"@
+                $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($payload))
+                $elevated = Start-Process `
+                    -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+                    -Verb RunAs `
+                    -ArgumentList @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encoded) `
+                    -WindowStyle Hidden `
+                    -Wait `
+                    -PassThru
+                if ($elevated.ExitCode -ne 0) {
+                    throw "Windows 防火墙授权未完成。"
+                }
+                $existing = Get-NetFirewallRule -DisplayName $displayName -ErrorAction SilentlyContinue
+                if (-not $existing) {
+                    throw "Windows 防火墙规则创建后未找到。"
+                }
+                return $true
             }
             New-NetFirewallRule `
                 -DisplayName $displayName `

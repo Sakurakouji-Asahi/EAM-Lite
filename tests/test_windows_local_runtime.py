@@ -87,6 +87,24 @@ def test_lan_scan_launcher_keeps_default_dev_safe_and_sets_explicit_network_valu
     assert "Ensure-EamLanFirewallRule" in launcher
     assert "-DevelopmentLanAddress $lanAddress.IPAddress" in launcher
     assert "手机访问" in launcher
+    assert "-RemoteAddress LocalSubnet" in common
+    assert "-Verb RunAs" in common
+
+
+def test_local_launcher_recovers_known_docker_stale_socket_failures_only():
+    common = (ROOT / "scripts" / "local" / "common.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+
+    assert "Test-EamDockerStaleSocketFailure" in common
+    assert "Repair-EamDockerStaleSockets" in common
+    assert '"sailor-ingest\\.sock"' in common
+    assert '"docker-secrets-engine.+engine\\.sock"' in common
+    assert "The file cannot be accessed by the system" in common
+    assert "Move-Item -LiteralPath $source" in common
+    assert "ReparsePoint" in common
+    assert "wsl.exe --terminate docker-desktop" in common
+    assert "Reset to factory defaults" not in common
 
 
 def test_local_scripts_never_delete_volumes_or_kill_unknown_processes():
