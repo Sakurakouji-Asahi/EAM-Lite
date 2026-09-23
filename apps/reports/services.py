@@ -383,6 +383,15 @@ def generate_report_export(
         ),
     }
     digest = _request_hash(payload)
+    from apps.reports.schemas import RETIRED_REPORT_KEYS, RETIRED_REPORT_MESSAGE
+    if report_key in RETIRED_REPORT_KEYS:
+        from apps.reports.models import ExportLog
+        existing = ExportLog.objects.filter(company=company, idempotency_key=idempotency_key).first()
+        if existing is None:
+            raise ValidationError(RETIRED_REPORT_MESSAGE)
+        if existing.request_hash != digest:
+            raise ValidationError("同一幂等键已用于不同导出请求。")
+        return existing
     export_log, created = _create_export_request(
         actor=actor,
         company=company,

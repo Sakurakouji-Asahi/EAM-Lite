@@ -143,9 +143,12 @@ def write_report_workbook(dataset, destination, *, generated_at=None):
             "是" if dataset.filters.get("_includes_cost_fields") else "否",
         ),
     ]
+    display_filters = dataset.filters.get("_asset_list_filter_labels")
+    if display_filters is None:
+        display_filters = [(key, value) for key, value in dataset.filters.items() if not key.startswith("_")]
     information_rows.extend(
         (f"筛选条件：{key}", value)
-        for key, value in dataset.filters.items() if not key.startswith("_")
+        for key, value in display_filters
     )
     for label, value in information_rows:
         kind = _metadata_kind(value)

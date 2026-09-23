@@ -21,6 +21,7 @@ from apps.masterdata.normalization import (
     clean_display_identifier,
     normalize_identifier,
 )
+from apps.coding.standard import MANAGEMENT_CHOICES
 
 
 class AssetQuerySet(models.QuerySet):
@@ -40,6 +41,7 @@ class AssetQuerySet(models.QuerySet):
             "responsible_employee_id",
             "location",
             "location_id",
+            "management_attribute", "coding_year", "coding_year_note", "component_of", "component_of_id",
         }.intersection(kwargs)
         submitted_actor_keys = {"submitted_by", "submitted_by_id"}.intersection(kwargs)
         if submitted_actor_keys and any(kwargs[key] is not None for key in submitted_actor_keys):
@@ -53,6 +55,14 @@ class AssetQuerySet(models.QuerySet):
 
 
 class Asset(models.Model):
+    @property
+    def custody_return_record(self):
+        return self.custody_returns.filter(reversal__isnull=True).select_related("reversal").first()
+
+    def get_asset_status_display(self):
+        from apps.assets.status_display import asset_status_display
+        return asset_status_display(self)
+
     class AssetStatus(models.TextChoices):
         DRAFT = "draft", "草稿"
         PENDING_FINANCE = "pending_finance", "待财务确认"
@@ -163,6 +173,19 @@ class Asset(models.Model):
         related_name="assets",
     )
     acquisition_date = models.DateField("购置日期", null=True, blank=True)
+    management_attribute = models.CharField(
+        "首次建档管理属性", max_length=2, choices=MANAGEMENT_CHOICES, blank=True, default="",
+        help_text="用于稳定编码，财务认定不同也不改号。",
+    )
+    coding_year = models.PositiveSmallIntegerField("取得年份（编码用）", null=True, blank=True)
+    coding_year_note = models.CharField("取得年份依据", max_length=500, blank=True)
+    component_of = models.ForeignKey(
+        "self", verbose_name="所属主资产", null=True, blank=True,
+        on_delete=models.PROTECT, related_name="components",
+    )
+    vehicle_plate = models.CharField("车牌号", max_length=50, blank=True)
+    chassis_number = models.CharField("车架号", max_length=100, blank=True)
+    calibration_number = models.CharField("校准编号", max_length=100, blank=True)
     commissioning_date = models.DateField(
         "达到可使用状态日期", null=True, blank=True
     )
@@ -346,6 +369,15 @@ class Asset(models.Model):
     def clean(self):
         super().clean()
         errors = {}
+        if self.coding_year is not None and not 1000 <= self.coding_year <= timezone.localdate().year:
+            errors["coding_year"] = "取得年份必须为四位年份，且不能晚于当前年份。"
+        if self.component_of_id:
+            if self.component_of_id == self.pk:
+                errors["component_of"] = "资产不能作为自己的组件。"
+            elif self.component_of.company_id != self.company_id:
+                errors["component_of"] = "主资产必须属于同一公司。"
+            elif self.component_of.component_of_id:
+                errors["component_of"] = "请选择最上层主资产，组件不再嵌套分配子项号。"
         if self.asset_code == "":
             errors["asset_code"] = "未发号资产必须保存 NULL，不能使用空字符串。"
         if self.category_id:
@@ -413,8 +445,13 @@ class Asset(models.Model):
                 "department_id",
                 "responsible_employee_id",
                 "location_id",
+                "management_attribute", "coding_year", "coding_year_note", "component_of_id",
             ).first()
             if previous is not None:
+                for name in ("management_attribute", "coding_year", "coding_year_note", "component_of_id"):
+                    if previous["current_issued_code_id"] is not None and getattr(self, name) != previous[name]:
+                        raise ValidationError("首次建档属性、编码年份和组件关系已冻结；财务认定请单独维护。")
+                    previous.pop(name)
                 current = {
                     "asset_status": self.asset_status,
                     "record_status": self.record_status,
@@ -439,6 +476,15 @@ class Asset(models.Model):
     @property
     def draft_number(self):
         return f"D-{str(self.pk).split('-')[0].upper()}"
+
+    @property
+    def identity(self):
+        if self.current_issued_code_id is None:
+            return None
+        try:
+            return self.current_issued_code.identity
+        except AssetIdentity.DoesNotExist:
+            return None
 
     @property
     def cover_attachment_link(self):
@@ -788,6 +834,101 @@ class AssetCustomValue(models.Model):
         return f"{self.asset} / {self.custom_field}"
 
 
+class AssetRegistrationQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        if kwargs and set(kwargs) <= {"registered_by", "registered_by_id"} and all(
+            value is None for value in kwargs.values()
+        ):
+            return super().update(**kwargs)
+        raise ValidationError("实物建档记录只允许追加，不能修改。")
+
+    def delete(self):
+        raise ValidationError("实物建档记录不能删除。")
+
+
+class AssetRegistration(models.Model):
+    """Immutable issuance result, independent of accounting confirmation."""
+
+    class Source(models.TextChoices):
+        PHYSICAL = "physical", "实物建档"
+        LEGACY_FINANCE = "legacy_finance", "原财务建档流程"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(
+        Company, on_delete=models.PROTECT, related_name="asset_registrations"
+    )
+    asset = models.OneToOneField(
+        Asset, on_delete=models.PROTECT, related_name="registration"
+    )
+    result_issued_code = models.OneToOneField(
+        IssuedCode, on_delete=models.PROTECT, related_name="asset_registration"
+    )
+    idempotency_key = models.CharField(max_length=200)
+    request_hash = models.CharField(max_length=64)
+    source = models.CharField(
+        max_length=24, choices=Source.choices, default=Source.PHYSICAL
+    )
+    registered_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="registered_physical_assets",
+    )
+    registered_at = models.DateTimeField(default=timezone.now, editable=False)
+
+    objects = AssetRegistrationQuerySet.as_manager()
+
+    class Meta:
+        verbose_name = "实物建档记录"
+        verbose_name_plural = "实物建档记录"
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "idempotency_key"),
+                name="uq_asset_registration_company_key",
+            ),
+            models.CheckConstraint(
+                condition=Q(source__in=("physical", "legacy_finance")),
+                name="ck_asset_registration_source",
+            ),
+            models.CheckConstraint(
+                condition=Q(idempotency_key__gt="")
+                & Q(request_hash__regex=r"^[0-9a-f]{64}$"),
+                name="ck_asset_registration_request",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if self.asset_id and self.asset.company_id != self.company_id:
+            errors["asset"] = "建档资产必须属于同一公司。"
+        if (
+            self.result_issued_code_id
+            and self.result_issued_code.company_id != self.company_id
+        ):
+            errors["result_issued_code"] = "编号登记必须属于同一公司。"
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            old = type(self).objects.get(pk=self.pk)
+            actor_cleanup = old.registered_by_id is not None and self.registered_by_id is None
+            unchanged = all(
+                getattr(old, field.attname) == getattr(self, field.attname)
+                for field in self._meta.concrete_fields
+                if field.name != "registered_by"
+            )
+            if not actor_cleanup or not unchanged:
+                raise ValidationError("实物建档记录只允许追加，不能修改。")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("实物建档记录不能删除。")
+
+
 class AssetCodeHistory(models.Model):
     class EventType(models.TextChoices):
         ISSUED = "issued", "首次发号"
@@ -938,6 +1079,11 @@ class AssetQrIdentityQuerySet(models.QuerySet):
 
 
 class AssetQrIdentity(models.Model):
+    def get_label_status_display(self):
+        from apps.assets.status_display import label_status_display
+        method = self.attachment_requests.order_by("-completed_at", "-pk").values_list("identification_method", flat=True).first() if self.label_status == "attached" else None
+        return label_status_display(self.asset, self.label_status, method)
+
     class Status(models.TextChoices):
         ACTIVE = "active", "有效"
         REVOKED = "revoked", "已撤销"
@@ -1145,6 +1291,11 @@ class AssetLabelAttachmentRequest(models.Model):
     idempotency_key = models.CharField(max_length=128)
     request_hash = models.CharField(max_length=64)
     target_status = models.CharField(max_length=32, blank=True)
+    identification_method = models.CharField(
+        "标识确认方式", max_length=16, default="physical",
+        choices=(("physical", "实物贴标"), ("electronic", "电子台账"), ("alternative", "替代标识")),
+    )
+    identification_evidence = models.CharField("标识确认依据", max_length=1000, blank=True)
     completed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -1166,6 +1317,11 @@ class AssetLabelAttachmentRequest(models.Model):
             models.CheckConstraint(
                 condition=~Q(idempotency_key="") & ~Q(request_hash=""),
                 name="ck_label_attach_request_values",
+            ),
+            models.CheckConstraint(
+                condition=Q(identification_method="physical", identification_evidence="")
+                | (Q(identification_method__in=("electronic", "alternative")) & ~Q(identification_evidence="")),
+                name="ck_label_identification_evidence",
             ),
         ]
 
@@ -1195,6 +1351,7 @@ class AssetLabelAttachmentRequest(models.Model):
                 "idempotency_key",
                 "request_hash",
                 "target_status",
+                "identification_method", "identification_evidence",
                 "completed_by_id",
                 "completed_at",
             ).first()
@@ -1205,6 +1362,8 @@ class AssetLabelAttachmentRequest(models.Model):
                 "idempotency_key": self.idempotency_key,
                 "request_hash": self.request_hash,
                 "target_status": self.target_status,
+                "identification_method": self.identification_method,
+                "identification_evidence": self.identification_evidence,
                 "completed_by_id": self.completed_by_id,
                 "completed_at": self.completed_at,
             }
@@ -1520,6 +1679,24 @@ class AssetMovementQuerySet(models.QuerySet):
 
 
 class AssetMovement(models.Model):
+    def get_from_status_display(self):
+        return self._business_status_display(self.from_status)
+
+    def get_to_status_display(self):
+        return self._business_status_display(self.to_status)
+
+    def _business_status_display(self, status):
+        if status == "other_disposed" and self.movement_type in {"custody_return", "custody_return_reversal"}:
+            return "已归还"
+        if status == "pending_label":
+            return "待标识确认"
+        return dict(Asset.AssetStatus.choices).get(status, status)
+
+    def get_movement_type_display(self):
+        if self.movement_type == "label_activation":
+            return "首次标识确认启用"
+        return dict(self.MovementType.choices).get(self.movement_type, self.movement_type)
+
     class MovementType(models.TextChoices):
         ASSIGNMENT = "assignment", "领用"
         ASSIGNMENT_RETURN = "assignment_return", "领用归还"
@@ -1535,6 +1712,8 @@ class AssetMovement(models.Model):
         DISPOSAL_CANCEL = "disposal_cancel", "取消处置"
         DISPOSAL_COMPLETE = "disposal_complete", "完成处置"
         DISPOSAL_REVERSAL = "disposal_reversal", "处置冲销"
+        CUSTODY_RETURN = "custody_return", "租入或受托归还"
+        CUSTODY_RETURN_REVERSAL = "custody_return_reversal", "撤销租入受托归还"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey(
@@ -1649,6 +1828,8 @@ class AssetMovement(models.Model):
                         "disposal_cancel",
                         "disposal_complete",
                         "disposal_reversal",
+                        "custody_return",
+                        "custody_return_reversal",
                     )
                 ),
                 name="ck_movement_type_valid",
@@ -1688,6 +1869,14 @@ class AssetMovement(models.Model):
                 name="ck_movement_reason_nonempty",
             ),
         ]
+
+    @property
+    def from_status_display(self):
+        return dict(Asset.AssetStatus.choices).get(self.from_status, self.from_status)
+
+    @property
+    def to_status_display(self):
+        return dict(Asset.AssetStatus.choices).get(self.to_status, self.to_status)
 
     def clean(self):
         super().clean()
@@ -2911,3 +3100,10 @@ class AttachmentLink(models.Model):
             or self.clearance_item
         )
         return f"{target} - {self.get_role_display()}"
+
+
+from apps.assets.identity_models import AssetIdentity  # noqa: E402,F401
+from apps.assets.trace_models import (  # noqa: E402,F401
+    AssetCompositionRevision, AssetCustodyReturn, AssetOriginLink,
+    AssetOriginReversal, AssetCustodyReturnReversal,
+)

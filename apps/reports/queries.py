@@ -19,6 +19,8 @@ from django.db.models import (
     Sum,
 )
 from django.utils import timezone
+from apps.finance.readiness import pending_finance_assets
+from apps.assets.status_display import asset_status_display, with_identity_display
 
 from apps.finance.reporting import (
     ZERO,
@@ -34,14 +36,13 @@ from apps.reports.permissions import (
     require_view_report,
     scoped_report_assets,
 )
-from apps.reports.schemas import TPLUS_TOTAL_METRICS, get_report_definition
+from apps.reports.schemas import TPLUS_TOTAL_METRICS, get_report_definition, RETIRED_REPORT_KEYS, RETIRED_REPORT_MESSAGE
 
 
-MANAGED_STATUSES = (
-    "pending_label", "in_use", "idle", "loaned", "under_repair",
-    "pending_disposal",
+from apps.assets.domain import (
+    MANAGED_ASSET_STATUSES as MANAGED_STATUSES,
+    TERMINAL_ASSET_STATUSES as TERMINAL_STATUSES,
 )
-TERMINAL_STATUSES = ("disposed", "sold", "other_disposed")
 
 
 class ReportValidationError(ValidationError):
@@ -272,7 +273,7 @@ def _assets_at(actor, company, filters, boundary):
                 )
             )
         ).filter(has_attached_label=False)
-    assets = list(qs.order_by("asset_code", "created_at", "id"))
+    assets = list(with_identity_display(qs).order_by("asset_code", "created_at", "id"))
     attribution = _historical_attribution(assets, boundary)
     selected = []
     for asset in assets:
@@ -298,24 +299,32 @@ def _assets_at(actor, company, filters, boundary):
 
 def _historical_attribution(assets, boundary):
     """Use the first later movement's before-values at a historic boundary."""
-    from apps.assets.models import AssetMovement
+    from apps.assets.models import AssetMovement, AssetRegistration
 
     ids = [item.pk for item in assets]
-    later = AssetMovement.objects.filter(
-        asset_id__in=ids, effective_at__gte=boundary
+    from apps.assets.custody_services import effective_movements
+    later = effective_movements(AssetMovement.objects.filter(asset_id__in=ids)).filter(
+        Q(movement_type="custody_return", assetcustodyreturn__returned_on__gte=boundary.date())
+        | (~Q(movement_type="custody_return") & Q(effective_at__gte=boundary))
     ).select_related(
         "from_department", "from_employee", "from_location", "from_location__parent"
-    ).order_by("asset_id", "effective_at", "created_at", "id")
+    ).select_related("assetcustodyreturn").order_by("asset_id", "effective_at", "created_at", "id")
     first = {}
-    for movement in later.iterator(chunk_size=1000):
+    def timeline_key(movement):
+        effective = movement.effective_at
+        if movement.movement_type == "custody_return":
+            effective = datetime.combine(movement.assetcustodyreturn.returned_on, datetime.min.time(), tzinfo=boundary.tzinfo)
+        return (str(movement.asset_id), effective, movement.created_at, str(movement.pk))
+    for movement in sorted(later, key=timeline_key):
         first.setdefault(movement.asset_id, movement)
+    registration_times = dict(AssetRegistration.objects.filter(
+        asset_id__in=ids,
+    ).values_list("asset_id", "registered_at"))
     result = {}
     for asset in assets:
         movement = first.get(asset.pk)
-        finance = getattr(asset, "finance", None)
-        if finance is None or finance.finance_confirmed_at is None or (
-            finance.finance_confirmed_at >= boundary
-        ):
+        registered_at = registration_times.get(asset.pk)
+        if registered_at is None or registered_at >= boundary:
             historic_status = (
                 "pending_finance"
                 if asset.submitted_at is not None and asset.submitted_at < boundary
@@ -335,12 +344,15 @@ def _historical_attribution(assets, boundary):
 def _asset_rows(*, actor, company, report_key, filters):
     as_of = filters.get("as_of_date") or timezone.localdate()
     boundary = _business_boundary(company, as_of + timedelta(days=1))
-    assets, attribution = _assets_at(actor, company, filters, boundary)
-    if report_key == "equipment_list":
-        assets = [a for a in assets if a.category.category_type == "equipment"]
-    elif report_key == "mold_tool_inspection_list":
-        assets = [a for a in assets if a.category.category_type in {"mold", "tool", "inspection_tool"}]
-    elif report_key == "fixed_asset_detail":
+    if "asset_list_filters" in filters:
+        from apps.assets.list_filters import filter_asset_list, with_ledger_status
+        from apps.assets.models import Asset
+        qs = scoped_report_assets(actor, company, Asset.objects.select_related("category", "department", "responsible_employee", "location", "location__parent", "finance"))
+        assets = list(filter_asset_list(with_ledger_status(qs, company=company, actor=actor), filters["asset_list_filters"], actor=actor, company=company).order_by("-created_at", "id"))
+        attribution = {a.pk: {"department": a.department, "responsible_employee": a.responsible_employee, "location": a.location, "asset_status": a.asset_status} for a in assets}
+    else:
+        assets, attribution = _assets_at(actor, company, filters, boundary)
+    if report_key == "fixed_asset_detail":
         assets = [
             a for a in assets
             if hasattr(a, "finance")
@@ -355,14 +367,14 @@ def _asset_rows(*, actor, company, report_key, filters):
     for asset in assets:
         at = attribution[asset.pk]
         row = {
-            "asset_code": asset.asset_code or f"草稿-{asset.pk}",
+            "asset_code": asset.asset_code or (asset.draft_number if "asset_list_filters" in filters else f"草稿-{asset.pk}"),
             "asset_name": asset.asset_name,
             "category": asset.category.name,
             "model": asset.model,
             "department": getattr(at["department"], "name", ""),
             "responsible_employee": getattr(at["responsible_employee"], "name", ""),
             "location": _location_path(at["location"]),
-            "asset_status": dict(asset.AssetStatus.choices).get(at["asset_status"], at["asset_status"]),
+            "asset_status": asset_status_display(asset, at["asset_status"], as_of=as_of),
             "quantity": asset.quantity,
             "acquisition_date": asset.acquisition_date,
         }
@@ -598,6 +610,8 @@ def _disposal_rows(*, actor, company, filters):
 
 def build_report_dataset(*, actor, company, report_key, filters=None):
     require_view_report(actor, report_key)
+    if report_key in RETIRED_REPORT_KEYS:
+        raise ReportValidationError((RETIRED_REPORT_MESSAGE,))
     definition = get_report_definition(report_key)
     if definition.supply:
         from apps.reports.supply_queries import build_supply_report_dataset
@@ -614,6 +628,16 @@ def build_report_dataset(*, actor, company, report_key, filters=None):
         _begin_consistent_read()
         snapshot_at = timezone.now()
         clean = _validated_filters(actor=actor, company=company, filters=filters)
+        if "asset_list_filters" in clean:
+            from apps.assets.list_filters import normalize_list_filters, describe_list_filters, FILTER_LABELS
+            nested = clean["asset_list_filters"]
+            if report_key != "asset_ledger" or not isinstance(nested, dict) or set(nested) - set(FILTER_LABELS) or any(not key.startswith("_") and key != "asset_list_filters" for key in clean):
+                raise ReportValidationError(("台账筛选条件不能与其他报表条件混用。",))
+            try:
+                clean["asset_list_filters"] = normalize_list_filters(nested, actor=actor, company=company)
+                clean["_asset_list_filter_labels"] = describe_list_filters(clean["asset_list_filters"], company=company)
+            except ValidationError as exc:
+                raise ReportValidationError(exc.messages) from exc
         if clean.get("asset_scope") and report_key not in {
             "asset_ledger", "department_assets"
         }:
@@ -624,7 +648,7 @@ def build_report_dataset(*, actor, company, report_key, filters=None):
             raise ReportValidationError(("标签范围筛选只用于在管资产总账。",))
         if clean.get("maintenance_due_scope") and report_key != "maintenance_due":
             raise ReportValidationError(("保养到期范围筛选不适用于当前报表。",))
-        if report_key in {"asset_ledger", "fixed_asset_detail", "department_assets", "employee_assets", "equipment_list", "mold_tool_inspection_list"}:
+        if report_key in {"asset_ledger", "fixed_asset_detail", "department_assets", "employee_assets"}:
             rows = _asset_rows(actor=actor, company=company, report_key=report_key, filters=clean)
         elif report_key in {"depreciation_schedule", "depreciation_detail", "monthly_depreciation"}:
             rows = _depreciation_rows(actor=actor, company=company, report_key=report_key, filters=clean)
@@ -661,9 +685,15 @@ def _validate_tplus_period(*, company, period_start, period_end):
         errors.append("期间存在未确认折旧批次：" + "、".join(map(str, open_batches)))
     missing = Asset.objects.filter(company=company).exclude(asset_status__in=("draft", "pending_finance")).filter(
         Q(finance__isnull=True) | Q(finance__finance_confirmed_at__isnull=True)
+    )
+    inconsistent = missing.filter(
+        Q(registration__isnull=True) | Q(formalization_request__isnull=False)
     ).values_list("asset_code", flat=True)
-    if missing:
-        errors.append("正式资产缺少已确认财务数据：" + "、".join(code or "(无编号)" for code in missing))
+    if inconsistent:
+        errors.append("资产建档或既有财务确认记录不完整：" + "、".join(code or "(无编号)" for code in inconsistent))
+    pending_count = missing.filter(registration__isnull=False, formalization_request__isnull=True).count()
+    if pending_count:
+        warnings.append(f"有 {pending_count} 项已建档资产尚未确认财务与折旧，本次对账不包含这些资产。")
     reversals = approved_depreciation_entries(
         DepreciationEntry.objects.filter(
             company=company,
@@ -962,7 +992,7 @@ def build_dashboard(*, actor, company, filters=None):
                 "disposed": assets.filter(asset_status="disposed").count(),
             },
             "pending": {
-                "pending_finance": assets.filter(asset_status="pending_finance").count(),
+                "pending_finance": pending_finance_assets(assets).count(),
                 "pending_label": managed.annotate(
                     has_attached_label=Exists(
                         AssetQrIdentity.objects.filter(

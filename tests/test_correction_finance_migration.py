@@ -82,6 +82,10 @@ def test_profile_migration_marks_existing_rows_pending_without_guessing_date():
                     actual_continuation_review_required=False,
                     useful_life_months=migrated.useful_life_months + 12,
                 )
+        # Current services require the current schema in every application.
+        # The migration-specific assertions above use historical models only.
+        executor = MigrationExecutor(connection)
+        executor.migrate(executor.loader.graph.leaf_nodes())
         reviewed = review_profile_actual_continuation_date(
             actor=actor,
             profile=AssetDepreciationProfile.objects.get(pk=profile_id),
@@ -99,7 +103,8 @@ def test_profile_migration_marks_existing_rows_pending_without_guessing_date():
                     actual_continuation_date=migrated.start_date + timedelta(days=1)
                 )
     finally:
-        MigrationExecutor(connection).migrate([target_new])
+        executor = MigrationExecutor(connection)
+        executor.migrate(executor.loader.graph.leaf_nodes())
 
 
 @pytest.mark.django_db(transaction=True)
@@ -109,10 +114,13 @@ def test_profile_migration_fresh_database_keeps_new_profiles_reviewed():
     try:
         MigrationExecutor(connection).migrate([target_old])
         MigrationExecutor(connection).migrate([target_new])
+        executor = MigrationExecutor(connection)
+        executor.migrate(executor.loader.graph.leaf_nodes())
         _company, _actor, _management, _admin, _asset, _finance, profile = (
             _custom_profile_context(method="straight_line")
         )
         assert profile.actual_continuation_date == profile.start_date
         assert profile.actual_continuation_review_required is False
     finally:
-        MigrationExecutor(connection).migrate([target_new])
+        executor = MigrationExecutor(connection)
+        executor.migrate(executor.loader.graph.leaf_nodes())

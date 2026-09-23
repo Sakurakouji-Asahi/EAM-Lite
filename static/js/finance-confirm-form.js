@@ -31,6 +31,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const updateTreatmentFields = () => {
     const controlled = treatment.value === "controlled_non_fixed";
+    document.querySelectorAll("[data-fixed-asset-category-warning]").forEach((notice) => {
+      notice.classList.toggle("d-none", controlled);
+    });
     for (const fieldId of depreciationFieldIds) {
       const field = document.getElementById(fieldId);
       if (!field) {

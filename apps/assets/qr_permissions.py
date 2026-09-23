@@ -7,7 +7,7 @@ from apps.masterdata.permissions import role_names_for
 
 
 QR_ACTION_ROLES = frozenset({"finance", "equipment", "warehouse"})
-QR_TERMINAL_ASSET_STATUSES = frozenset({"disposed", "sold", "other_disposed"})
+from apps.assets.domain import TERMINAL_ASSET_STATUSES as QR_TERMINAL_ASSET_STATUSES
 
 
 def can_manage_labels(user, asset) -> bool:

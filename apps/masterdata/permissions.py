@@ -8,6 +8,7 @@ from django.core.exceptions import PermissionDenied
 from django.db.models import Q
 
 from apps.accounts.roles import ROLE_NAMES
+from apps.accounts.role_cache import load_role_names
 
 
 GLOBAL_DEPARTMENT_ROLES = frozenset(
@@ -61,7 +62,9 @@ def assigned_role_names_for(user) -> set[str]:
     """Return configured fixed roles without turning them into authorization."""
     if not getattr(user, "pk", None):
         return set()
-    return set(user.groups.filter(name__in=ROLE_NAMES).values_list("name", flat=True))
+    return load_role_names(
+        user, lambda: user.groups.filter(name__in=ROLE_NAMES).values_list("name", flat=True)
+    )
 
 
 def role_names_for(user) -> set[str]:

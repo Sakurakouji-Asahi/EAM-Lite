@@ -1,22 +1,25 @@
 {% extends "base.html" %}
-{% block title %}{% if individual_durable_view %}逐件低值耐用品{% else %}资产台账{% endif %} - EAM-Lite{% endblock %}
+{% block title %}{% if individual_durable_view %}低值耐用品（逐件）{% else %}全部逐件资产{% endif %} - EAM-Lite{% endblock %}
 {% block content %}
   <header class="app-page-header">
     <div>
-      <h1 class="h3 mb-1">{% if individual_durable_view %}逐件低值耐用品{% else %}资产台账{% endif %}</h1>
-      <p class="text-secondary mb-0">{% if individual_durable_view %}逐件编号、逐件负责、可贴二维码的受控低值耐用品；每条数量固定为 1。{% else %}仅显示当前公司及当前账号数据范围内的资产。{% endif %}</p>
+      <h1 class="h3 mb-1">{% if individual_durable_view %}低值耐用品（逐件）{% else %}全部逐件资产{% endif %}</h1>
+      <p class="text-secondary mb-0">{% if individual_durable_view %}每件单独编号、登记责任人和使用位置，数量固定为 1；这些记录同时包含在全部逐件资产中。{% else %}每件独立建档，包含固定资产实物管理、逐件低值耐用品等；是否属于财务固定资产，由财务另行确认。{% endif %}</p>
     </div>
     <div class="d-flex flex-wrap gap-2">
-      {% if can_open_reports %}<a class="btn btn-outline-secondary" href="{% url 'reports:report-center' %}?report_type=asset_ledger">报表与导出</a>{% endif %}
+      {% if can_open_reports %}<a class="btn btn-outline-secondary" href="{% url 'assets:asset-list-export' %}?{{ filter_query }}">报表与导出</a>{% endif %}
       {% if can_open_imports %}<a class="btn btn-outline-secondary" href="{% url 'imports:home' %}">Excel 导入</a>{% endif %}
+      {% if can_create %}<a class="btn btn-outline-primary" href="{% url 'assets:bulk-registration' %}">批量建档</a>{% endif %}
       {% if can_open_label_queue %}<a class="btn btn-outline-secondary" href="{% url 'assets:label-queue' %}">标签打印</a>{% endif %}
-      {% if can_create %}<a class="btn btn-primary" href="{% if individual_durable_view %}{% url 'supplies:individual-durable-create' %}{% else %}{% url 'assets:asset-create' %}{% endif %}">{% if individual_durable_view %}新增逐件耐用品{% else %}新增资产{% endif %}</a>{% endif %}
+      {% if can_create %}<a class="btn btn-primary" href="{% if individual_durable_view %}{% url 'supplies:individual-durable-create' %}{% else %}{% url 'assets:asset-create' %}{% endif %}">{% if individual_durable_view %}新增低值耐用品（逐件）{% else %}新增逐件资产{% endif %}</a>{% endif %}
     </div>
   </header>
 
-  {% if individual_durable_hint %}<div class="alert alert-info">逐件低值耐用品沿用资产流程：每件单独建档、数量固定为 1；财务确认时选择“受控非固定资产”，不计提折旧。</div>{% endif %}
+  {% if individual_durable_hint %}<div class="alert alert-info">首次管理属性为 LV 的资产建档后即可在此管理，每件数量为 1。财务在资料齐备后独立确认会计处理，不改变原编号。未记录首次属性的旧资产继续按已确认的受控非固定资产口径显示。</div>{% endif %}
 
+  {% for error in filter_errors %}<div class="alert alert-danger">{{ error }}</div>{% endfor %}
   <form method="get" class="card shadow-sm mb-3 app-filter-card" aria-label="资产搜索和筛选">
+    {% if individual_durable_view %}<input type="hidden" name="view" value="individual_durable">{% endif %}
     <div class="card-body">
       <div class="row g-3">
         <div class="col-12 col-lg-4">
@@ -55,8 +58,9 @@
           <label class="form-label" for="filter-location">位置</label>
           <select class="form-select" id="filter-location" name="location">
             <option value="">全部</option>
-            {% for location in locations %}<option value="{{ location.pk }}" {% if location.pk|stringformat:"s" == filters.location %}selected{% endif %}>{{ location.name }}</option>{% endfor %}
+            {% for location in locations %}<option value="{{ location.pk }}" {% if location.pk|stringformat:"s" == filters.location %}selected{% endif %}>{{ location.path_label }}</option>{% endfor %}
           </select>
+          <div class="form-text">选择楼栋或楼层时，包含其下可见房间的资产。</div>
         </div>
         <div class="col-12 col-sm-6 col-lg-2">
           <label class="form-label" for="filter-status">资产状态</label>
@@ -74,6 +78,21 @@
             <option value="unconfirmed" {% if filters.accounting_treatment == 'unconfirmed' %}selected{% endif %}>未确认</option>
           </select>
         </div>{% endif %}
+        <div class="col-12">
+          <details{% if extra_filters_open %} open{% endif %}><summary class="mb-3">更多筛选</summary><div class="row g-3">
+            <div class="col-12 col-sm-6 col-lg-3"><label class="form-label" for="filter-label">标签状态</label><select class="form-select" id="filter-label" name="label_status"><option value="">全部</option>{% for value,label in label_choices %}<option value="{{ value }}"{% if filters.label_status == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+            {% if can_financial_filters %}<div class="col-12 col-sm-6 col-lg-3"><label class="form-label" for="filter-fixed-category">固定资产类别</label><select class="form-select" id="filter-fixed-category" name="fixed_asset_category"><option value="">全部</option>{% for category in fixed_categories %}<option value="{{ category.pk }}"{% if filters.fixed_asset_category == category.pk|stringformat:'s' %} selected{% endif %}>{{ category.name }}</option>{% endfor %}</select></div>{% endif %}
+            {% if list_has_p1 %}
+            <div class="col-12 col-sm-6 col-lg-3"><label class="form-label" for="filter-maintenance">需要保养</label><select class="form-select" id="filter-maintenance" name="maintenance_required"><option value="">全部</option><option value="yes"{% if filters.maintenance_required == 'yes' %} selected{% endif %}>是</option><option value="no"{% if filters.maintenance_required == 'no' %} selected{% endif %}>否</option></select></div>
+            <div class="col-12 col-sm-6 col-lg-3"><label class="form-label" for="filter-serial">有序列号</label><select class="form-select" id="filter-serial" name="has_serial_number"><option value="">全部</option><option value="yes"{% if filters.has_serial_number == 'yes' %} selected{% endif %}>是</option><option value="no"{% if filters.has_serial_number == 'no' %} selected{% endif %}>否</option></select></div>
+            <div class="col-12 col-sm-6 col-lg-3"><label class="form-label" for="filter-attachments">有可见附件</label><select class="form-select" id="filter-attachments" name="has_attachments"><option value="">全部</option><option value="yes"{% if filters.has_attachments == 'yes' %} selected{% endif %}>是</option><option value="no"{% if filters.has_attachments == 'no' %} selected{% endif %}>否</option></select></div>
+            {% endif %}
+            <div class="col-12 col-sm-6 col-lg-3"><label class="form-label" for="filter-initialized-from">正式建档开始日期</label><input class="form-control" type="date" id="filter-initialized-from" name="initialized_from" value="{{ filters.initialized_from }}"></div>
+            <div class="col-12 col-sm-6 col-lg-3"><label class="form-label" for="filter-initialized-to">正式建档结束日期</label><input class="form-control" type="date" id="filter-initialized-to" name="initialized_to" value="{{ filters.initialized_to }}"></div>
+            <div class="col-12 col-sm-6 col-lg-3"><label class="form-label" for="filter-created-from">创建开始日期</label><input class="form-control" type="date" id="filter-created-from" name="created_from" value="{{ filters.created_from }}"></div>
+            <div class="col-12 col-sm-6 col-lg-3"><label class="form-label" for="filter-created-to">创建结束日期</label><input class="form-control" type="date" id="filter-created-to" name="created_to" value="{{ filters.created_to }}"></div>
+          </div></details>
+        </div>
         <div class="col-12 col-lg-10 d-flex align-items-end gap-2">
           <button class="btn btn-primary" type="submit">查询</button>
           <a class="btn btn-outline-secondary" href="{% url 'assets:asset-list' %}">清除筛选</a>
@@ -103,7 +122,7 @@
             {% if list_has_p1 %}<th scope="col">数量</th>{% endif %}
             <th scope="col">状态</th>
             {% if can_financial_filters %}<th scope="col">会计认定</th>{% endif %}
-            <th scope="col">操作</th>
+            <th scope="col">标签状态</th><th scope="col">最近盘点</th><th scope="col">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -119,10 +138,11 @@
               {% if list_has_p1 %}<td>1</td>{% endif %}
               <td><span class="badge text-bg-{% if asset.record_status == 'archived' %}dark{% elif asset.asset_status == 'draft' %}secondary{% elif asset.asset_status == 'pending_finance' %}warning{% else %}info{% endif %}">{% if asset.record_status == 'archived' %}已归档 / {% endif %}{{ asset.get_asset_status_display }}</span></td>
               {% if can_financial_filters %}<td>{% if asset.finance.finance_confirmed_at %}{{ asset.finance.get_accounting_treatment_display }}{% else %}未确认{% endif %}</td>{% endif %}
+              <td>{{ asset.current_label_display }}</td><td>{{ asset.latest_inventory_at|date:"Y-m-d"|default:"—" }}</td>
               <td><a class="btn btn-sm btn-outline-primary" href="{% url 'assets:asset-detail' asset.pk %}">查看</a></td>
             </tr>
           {% empty %}
-            <tr><td colspan="10"><div class="app-empty-state"><strong>没有符合当前条件的资产</strong><span>可以清除筛选后重新查询。{% if can_create %}也可以直接建立新的资产草稿。{% endif %}</span><div><a class="btn btn-sm btn-outline-secondary" href="{% url 'assets:asset-list' %}">清除筛选</a>{% if can_create %} <a class="btn btn-sm btn-primary" href="{% url 'assets:asset-create' %}">新增资产</a>{% endif %}</div></div></td></tr>
+            <tr><td colspan="{{ list_column_count }}"><div class="app-empty-state"><strong>没有符合当前条件的资产</strong><span>可以清除筛选后重新查询。{% if can_create %}也可以直接建立新的资产草稿。{% endif %}</span><div><a class="btn btn-sm btn-outline-secondary" href="{% url 'assets:asset-list' %}">清除筛选</a>{% if can_create %} <a class="btn btn-sm btn-primary" href="{% url 'assets:asset-create' %}">新增资产</a>{% endif %}</div></div></td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -131,8 +151,8 @@
       <div class="card-footer d-flex align-items-center justify-content-between">
         <span class="text-secondary">第 {{ page.number }} / {{ page.paginator.num_pages }} 页，共 {{ page.paginator.count }} 条</span>
         <div class="btn-group" role="group" aria-label="分页">
-          {% if page.has_previous %}<a class="btn btn-sm btn-outline-secondary" href="?page={{ page.previous_page_number }}&q={{ query|urlencode }}&category={{ filters.category|urlencode }}&department={{ filters.department|urlencode }}&employee={{ filters.employee|urlencode }}&location={{ filters.location|urlencode }}&asset_status={{ filters.asset_status|urlencode }}&record_status={{ filters.record_status|urlencode }}&accounting_treatment={{ filters.accounting_treatment|urlencode }}{% if individual_durable_view %}&view=individual_durable{% endif %}">上一页</a>{% endif %}
-          {% if page.has_next %}<a class="btn btn-sm btn-outline-secondary" href="?page={{ page.next_page_number }}&q={{ query|urlencode }}&category={{ filters.category|urlencode }}&department={{ filters.department|urlencode }}&employee={{ filters.employee|urlencode }}&location={{ filters.location|urlencode }}&asset_status={{ filters.asset_status|urlencode }}&record_status={{ filters.record_status|urlencode }}&accounting_treatment={{ filters.accounting_treatment|urlencode }}{% if individual_durable_view %}&view=individual_durable{% endif %}">下一页</a>{% endif %}
+          {% if page.has_previous %}<a class="btn btn-sm btn-outline-secondary" href="?page={{ page.previous_page_number }}&{{ filter_query }}">上一页</a>{% endif %}
+          {% if page.has_next %}<a class="btn btn-sm btn-outline-secondary" href="?page={{ page.next_page_number }}&{{ filter_query }}">下一页</a>{% endif %}
         </div>
       </div>
     {% endif %}

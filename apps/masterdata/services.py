@@ -22,6 +22,7 @@ from django.utils import timezone
 
 from apps.accounts.roles import ROLE_NAMES, ensure_fixed_roles
 from apps.audit.services import request_audit_context, write_business_audit_log
+from apps.core.numbering import save_with_auto_number
 from apps.masterdata.permissions import (
     current_company,
     is_login_capable,
@@ -104,10 +105,8 @@ def _audit(
 
 
 def _save(instance):
-    instance.full_clean()
     try:
-        with transaction.atomic():
-            instance.save()
+        save_with_auto_number(instance)
     except IntegrityError as exc:
         raise ValidationError(
             "保存失败：代码、编号或活动记录与现有数据重复。"
@@ -670,6 +669,8 @@ def _create_tree_master(
     *, actor, company, model, resource, level_field, data, request=None
 ):
     require_manage_masterdata(actor, resource)
+    if resource == "asset_category" and "category_type" in data:
+        raise ValidationError("实物类型字段已移除，请直接维护资产分类。")
     if resource == "asset_category" and "default_coding_scheme" in data:
         require_manage_masterdata(actor, "coding_scheme")
     _require_current_company(company)
@@ -682,7 +683,6 @@ def _create_tree_master(
             "name",
             "parent",
             "location_type",
-            "category_type",
             "is_maintenance_required_default",
             "default_coding_scheme",
             "is_active",
@@ -698,7 +698,7 @@ def _create_tree_master(
     fields = ["code", "name", "parent", level_field, "is_active"]
     fields.extend(
         field
-        for field in ("location_type", "category_type", "is_maintenance_required_default", "default_coding_scheme")
+        for field in ("location_type", "is_maintenance_required_default", "default_coding_scheme")
         if hasattr(instance, field)
     )
     _audit(
@@ -747,6 +747,8 @@ def _update_tree_master(
     *, actor, instance, model, resource, level_field, data, request=None
 ):
     require_manage_masterdata(actor, resource)
+    if resource == "asset_category" and "category_type" in data:
+        raise ValidationError("实物类型字段已移除，请直接维护资产分类。")
     if resource == "asset_category" and "default_coding_scheme" in data:
         require_manage_masterdata(actor, "coding_scheme")
     _require_current_company(instance.company)
@@ -757,7 +759,7 @@ def _update_tree_master(
     fields = ["code", "name", "parent", "is_active"]
     fields.extend(
         field
-        for field in ("location_type", "category_type", "is_maintenance_required_default", "default_coding_scheme")
+        for field in ("location_type", "is_maintenance_required_default", "default_coding_scheme")
         if hasattr(instance, field)
     )
     old = _snapshot(instance, [*fields, level_field])
@@ -1379,7 +1381,7 @@ def refresh_initialization_progress(*, company, actor, request=None):
         # database invariant and silently rewrite the historical completion.
         # Report the live missing conditions and leave the completed snapshot
         # untouched; the UI still renders ``values`` from a fresh computation.
-        missing = [field for field, value in values.items() if not value]
+        missing = [field for field, value in values.items() if not value and field != "finance_rules_configured"]
         if missing:
             raise ValidationError(
                 {"initialization": "当前真实配置仍有未满足项：" + "、".join(missing)}
@@ -1421,7 +1423,7 @@ def complete_initialization(*, actor, company, request=None):
         company=company
     )
     values = compute_initialization_progress(company)
-    missing = [key for key, value in values.items() if not value]
+    missing = [key for key, value in values.items() if not value and key != "finance_rules_configured"]
     old = _snapshot(
         setting,
         (*values, "initialization_completed", "completed_by", "completed_at"),

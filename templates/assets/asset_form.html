@@ -1,17 +1,18 @@
 {% extends "base.html" %}
-{% block title %}{% if asset %}编辑资产草稿{% else %}新增资产{% endif %} - EAM-Lite{% endblock %}
+{% load static %}
+{% block title %}{% if asset %}编辑资产草稿{% elif individual_durable_hint %}新增低值耐用品（逐件）{% else %}新增逐件资产{% endif %} - EAM-Lite{% endblock %}
 {% block content %}
   <header class="app-page-header">
     <div>
-      <h1 class="h3 mb-1">{% if asset %}编辑资产草稿 {{ asset.draft_number }}{% else %}新增资产草稿{% endif %}</h1>
-      <p class="text-secondary mb-0">本页只维护实物资料；不会生成正式编号或财务资料。</p>
+      <h1 class="h3 mb-1">{% if asset %}编辑资产草稿 {{ asset.draft_number }}{% elif individual_durable_hint %}新增低值耐用品（逐件）{% else %}新增逐件资产{% endif %}</h1>
+      <p class="text-secondary mb-0">每件单独建档并生成编号，无需财务复核；照片可以建立后再拍。首次管理属性不代替财务固定资产认定。</p>
     </div>
     <a class="btn btn-outline-secondary" href="{{ cancel_url }}">返回</a>
   </header>
 
   {% if individual_durable_hint %}
     <div class="alert alert-info">
-      <strong>逐件低值耐用品建档提示：</strong>每件单独建档，数量固定为 1；提交后仍由财务确认，并选择“受控非固定资产”。该类资产不计提折旧，后续继续使用现有二维码、调拨、盘点、处置和离职清退。
+      <strong>低值耐用品（逐件）：</strong>每件单独建档，数量固定为 1，使用独立编号跟踪每一件。财务之后另行确认会计处理，原编号和二维码保持不变。
     </div>
   {% endif %}
 
@@ -25,11 +26,12 @@
     </div>
   {% endif %}
 
-  <form method="post" novalidate>
+  <form method="post" novalidate{% if form.identity_enabled %} data-asset-identity-preview="{% url 'assets:asset-code-preview' %}"{% endif %}>
     {% csrf_token %}
+    {% for hidden in form.hidden_fields %}{{ hidden }}{% endfor %}
     {% for section in form_sections %}
       <section class="card shadow-sm mb-3 app-form-section" aria-labelledby="section-{{ forloop.counter }}">
-        <div class="card-header"><h2 class="h5 mb-0" id="section-{{ forloop.counter }}">{{ section.title }}</h2></div>
+        {% if section.optional %}<details{% if section.expanded %} open{% endif %}><summary class="card-header" id="section-{{ forloop.counter }}">{{ section.title }}</summary>{% else %}<div class="card-header"><h2 class="h5 mb-0" id="section-{{ forloop.counter }}">{{ section.title }}</h2></div>{% endif %}
         <div class="card-body">
           <div class="row">
             {% for field in section.fields %}
@@ -39,9 +41,11 @@
             {% endfor %}
           </div>
         </div>
+        {% if section.optional %}</details>{% endif %}
       </section>
     {% endfor %}
 
+    {% if form.identity_enabled %}<div class="alert alert-light border" aria-live="polite" data-identity-preview-result><strong>编号预览：</strong><span data-identity-preview-code>选择管理属性和实物分类后显示。</span><div class="small text-secondary" data-identity-preview-message>预览不占号；管理属性与财务认定独立，后续财务确认不会改号。</div></div>{% endif %}
     <section class="card shadow-sm mb-3 app-form-section" aria-labelledby="custom-fields-title">
       <div class="card-header"><h2 class="h5 mb-0" id="custom-fields-title">分类扩展资料</h2></div>
       <div class="card-body">
@@ -60,12 +64,17 @@
     </section>
 
     <div class="alert alert-info" role="note">
-      照片与附件请先保存草稿，再从资产详情页上传。提交财务确认前至少需要一张有效资产照片。
+      照片不是建档必填项。建立后可从资产详情点击“补拍照片”；发票等资料齐备后，由财务另行确认金额和折旧。
     </div>
     <div class="app-form-actions mobile-action-bar">
-      <button class="btn btn-outline-primary" type="submit" name="next_step" value="detail">仅保存草稿</button>
-      <button class="btn btn-primary" type="submit" name="next_step" value="attachments">保存并上传照片</button>
+      {% if asset %}
+        <button class="btn btn-primary" type="submit" name="asset_action" value="draft">保存草稿</button>
+      {% else %}
+        <button class="btn btn-primary" type="submit" name="asset_action" value="register">建立资产</button>
+        <button class="btn btn-outline-primary" type="submit" name="asset_action" value="draft">暂存草稿</button>
+      {% endif %}
       <a class="btn btn-outline-secondary" href="{{ cancel_url }}">取消</a>
     </div>
   </form>
+  {% if form.identity_enabled %}<script src="{% static 'js/asset-identity.js' %}" defer></script>{% endif %}
 {% endblock %}

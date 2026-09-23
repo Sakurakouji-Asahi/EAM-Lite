@@ -1,13 +1,21 @@
 # Requirements Baseline V1.1
 
+> **AI 设计参考 · 2026-09-09**
+> 原文保留历史方案和案例，不代表用户逐条确认；强制措辞及固定 Sprint 限制不自动适用于当前任务。
+> 当前协作依据见 [AGENTS.md](../AGENTS.md) 与 [文档定位和状态](README.md)。
+
+> **用户确认的后续变化 · 2026-09-09：** 新资产先实物建档并生成编号，照片可后补；财务资料齐备后另行确认折旧。与下文旧阶段描述不一致时，以 [实物建档与财务分离](Asset-Registration-and-Finance-2026-09-09.md) 的明确变化为准，其他规则按相关性核对。
+
+当前实现对应：产品已有范围见 [项目首页](../README.md)，用户确认事项见 [状态索引](README.md)。下文保留业务假设。
+
 ## Baseline status
 
-- Status: approved for staged implementation.
+- Status: AI-generated design reference; not evidence of user approval.
 - Scope: EAM-Lite business V1.
-- Implementation rule: one Sprint at a time; each Sprint requires tests and human acceptance before the next starts.
+- Original delivery plan: staged Sprints. Current work follows the user's task and root AGENTS.md, not an automatic Sprint sequence.
 - This baseline resolves the V1.0 audit findings on coding history, accounting/physical classification, depreciation precision, permissions, workflow, attachments, QR labels, deployment and acceptance.
 
-## Confirmed business facts
+## Historical business assumptions (verify as relevant)
 
 - Initial managed asset volume: about 150 items.
 - Existing finance ledger and equipment-department ledger are inconsistent and will not be used as authoritative migration sources.
@@ -41,7 +49,7 @@
 - Dashboard follows the approved basic financial + physical + pending-work layout.
 - Asset coding rules are NOT predetermined; administrators must configure coding rules during initialization.
 
-## Confirmed interpretation rules
+## Historical interpretation proposals
 
 - V1 operates for one company. Company ownership is still stored on business data so future expansion cannot mix records accidentally.
 - Physical classification and accounting classification are independent. An item may be physically classified as a mold/equipment/tool while Finance separately confirms whether it is a fixed asset.
@@ -55,7 +63,7 @@
 - A4 QR labels are required. Dedicated label-printer adaptation remains future scope.
 - V1 uses Chinese labels, CNY, Asia/Shanghai business time and two-decimal monetary presentation.
 
-## Delivery gates
+## Historical delivery checklist
 
 - Sprint 0 establishes the project, authentication, permission/audit foundation and PostgreSQL-capable environment.
 - Sprint 2 cannot issue an unbound official asset code; official issuance occurs only through a durable issuance record and is atomically bound to an asset during formalization.

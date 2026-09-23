@@ -13,7 +13,7 @@ from apps.assets.permissions import scoped_assets, scoped_assets_p1
 from apps.masterdata.permissions import resolve_department_ids, role_names_for
 
 
-TERMINAL_STATUSES = frozenset({"disposed", "sold", "other_disposed"})
+from apps.assets.domain import TERMINAL_ASSET_STATUSES as TERMINAL_STATUSES
 DISPOSAL_VIEW_ROLES = frozenset(
     {
         "system_admin",

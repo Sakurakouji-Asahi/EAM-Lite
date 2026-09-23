@@ -385,7 +385,8 @@ def _create_movement(
     effective_at = _business_datetime(effective_at)
     if effective_at > timezone.now():
         raise ValidationError({"effective_at": "生效时间不得晚于当前时间。"})
-    latest_effective_at = AssetMovement.objects.filter(asset=asset).order_by(
+    from apps.assets.custody_services import effective_movements
+    latest_effective_at = effective_movements(AssetMovement.objects.filter(asset=asset)).order_by(
         "-effective_at", "-created_at", "-pk"
     ).values_list("effective_at", flat=True).first()
     if latest_effective_at is not None and (
@@ -1187,9 +1188,11 @@ def _required_depreciation_cutoff(*, asset, actual_date):
 def _balances_at(*, asset, cutoff, depreciation_cutoff=None):
     from apps.finance.models import AssetFinance, AssetValueAdjustment, DepreciationEntry
 
-    finance = AssetFinance.objects.select_for_update().get(
+    finance = AssetFinance.objects.select_for_update().filter(
         company=asset.company, asset=asset, finance_confirmed_at__isnull=False
-    )
+    ).first()
+    if finance is None:
+        raise ValidationError("资产尚未完成财务与折旧确认，资料齐备后才能锁定处置金额。")
     if finance.original_cost is None:
         raise ValidationError("资产缺少已确认原值，不能锁定处置快照。")
     later_cost = AssetValueAdjustment.objects.filter(
@@ -1835,42 +1838,34 @@ def correct_asset_code(
     ).get(pk=requested_scheme_id)
     if scheme.company_id != asset.company_id or not is_effective(scheme, business_date):
         raise ValidationError({"coding_scheme": "编码方案在更正生效日不可用。"})
-    validate_scheme_structure(scheme)
-    category_scoped = scheme.reset_mode in {
-        "category_yearly", "category_monthly"
-    }
-    scope_key = build_scope_key(
-        asset.company_id,
-        scheme.pk,
-        scheme.reset_mode,
-        business_date,
-        category=asset.category if category_scoped else None,
-        category_scope_level=(
-            scheme.category_scope_level if category_scoped else None
-        ),
-    )
-    counter = _insert_counter_if_missing(
-        company=asset.company, scheme=scheme, scope_key=scope_key
-    )
-    next_value = counter.current_value + 1
-    display = render_code(
-        list(scheme.segments.order_by("sequence_order")),
-        {
-            "company": asset.company,
-            "category": asset.category,
-            "department": asset.department,
-            "effective_date": business_date,
-        },
-        next_value,
-    )
+    segments = validate_scheme_structure(scheme)
+    from apps.coding.standard import is_standard_segments
+    identity_values = None
+    if is_standard_segments(segments):
+        from apps.coding.standard_issuance import _allocate_standard_code
+        scope_key, next_value, display, identity_values = _allocate_standard_code(
+            actor=actor, asset=asset, scheme=scheme, effective_date=business_date,
+        )
+    else:
+        category_scoped = scheme.reset_mode in {"category_yearly", "category_monthly"}
+        scope_key = build_scope_key(
+            asset.company_id, scheme.pk, scheme.reset_mode, business_date,
+            category=asset.category if category_scoped else None,
+            category_scope_level=scheme.category_scope_level if category_scoped else None,
+        )
+        counter = _insert_counter_if_missing(company=asset.company, scheme=scheme, scope_key=scope_key)
+        next_value = counter.current_value + 1
+        display = render_code(segments, {"company": asset.company, "category": asset.category,
+            "department": asset.department, "effective_date": business_date}, next_value)
     normalized = normalize_code(display)
     if IssuedCode.objects.filter(
         company=asset.company, normalized_code=normalized
     ).exists():
         raise ValidationError("发号引擎生成的新编号已被永久占用，请复核计数器。")
-    _enable_capability("eam_lite.controlled_sequence_counter_increment")
-    counter.current_value = next_value
-    counter.save(update_fields=["current_value", "updated_at"])
+    if identity_values is None:
+        _enable_capability("eam_lite.controlled_sequence_counter_increment")
+        counter.current_value = next_value
+        counter.save(update_fields=["current_value", "updated_at"])
     issued = IssuedCode(
         company=asset.company,
         coding_scheme=scheme,
@@ -1935,6 +1930,9 @@ def correct_asset_code(
         "current_issued_code_id": issued.pk,
         "updated_by_id": actor.pk,
     })
+    if identity_values is not None:
+        from apps.coding.standard_issuance import _save_identity
+        _save_identity(asset=asset, issued=issued, values=identity_values)
     _audit(
         actor=actor,
         action="asset_code.corrected",

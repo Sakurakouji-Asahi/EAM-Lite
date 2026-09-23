@@ -3,11 +3,11 @@
 
   {% if app_navigation.show_assets %}
     <details class="app-nav-group{% if app_navigation.active_section == 'assets' %} is-current{% endif %}" data-nav-section="assets"{% if app_navigation.active_section == 'assets' %} open{% endif %}>
-      <summary>资产管理</summary>
+      <summary>逐件资产</summary>
       <div class="app-nav-items">
-        <a class="app-nav-link{% if app_navigation.active_item == 'asset_ledger' %} active{% endif %}" href="{% url 'assets:asset-list' %}" data-nav-item="asset_ledger"{% if app_navigation.active_item == 'asset_ledger' %} aria-current="page"{% endif %}>资产台账</a>
-        {% if app_navigation.asset.can_create %}<a class="app-nav-link{% if app_navigation.active_item == 'asset_create' %} active{% endif %}" href="{% url 'assets:asset-create' %}" data-nav-item="asset_create"{% if app_navigation.active_item == 'asset_create' %} aria-current="page"{% endif %}>新增资产</a>{% endif %}
-        <a class="app-nav-link{% if app_navigation.active_item == 'individual_durables' %} active{% endif %}" href="{% url 'supplies:individual-durable-list' %}" data-nav-item="individual_durables"{% if app_navigation.active_item == 'individual_durables' %} aria-current="page"{% endif %}>逐件低值耐用品</a>
+        <a class="app-nav-link{% if app_navigation.active_item == 'asset_ledger' %} active{% endif %}" href="{% url 'assets:asset-list' %}" data-nav-item="asset_ledger"{% if app_navigation.active_item == 'asset_ledger' %} aria-current="page"{% endif %}>全部逐件资产</a>
+        <a class="app-nav-link{% if app_navigation.active_item == 'individual_durables' %} active{% endif %}" href="{% url 'supplies:individual-durable-list' %}" data-nav-item="individual_durables"{% if app_navigation.active_item == 'individual_durables' %} aria-current="page"{% endif %}>低值耐用品（逐件）</a>
+        {% if app_navigation.asset.can_create %}<a class="app-nav-link{% if app_navigation.active_item == 'asset_create' %} active{% endif %}" href="{% url 'assets:asset-create' %}" data-nav-item="asset_create"{% if app_navigation.active_item == 'asset_create' %} aria-current="page"{% endif %}>新增逐件资产</a>{% endif %}
         {% if app_navigation.asset.can_manage_labels %}<a class="app-nav-link{% if app_navigation.active_item == 'asset_labels' %} active{% endif %}" href="{% url 'assets:label-queue' %}" data-nav-item="asset_labels"{% if app_navigation.active_item == 'asset_labels' %} aria-current="page"{% endif %}>标签与二维码</a>{% endif %}
         {% if app_navigation.asset.can_view_maintenance_plans %}<a class="app-nav-link{% if app_navigation.active_item == 'maintenance_plans' %} active{% endif %}" href="{% url 'maintenance:plan-list' %}" data-nav-item="maintenance_plans"{% if app_navigation.active_item == 'maintenance_plans' %} aria-current="page"{% endif %}>保养计划</a>{% endif %}
       </div>
@@ -16,13 +16,17 @@
 
   {% if app_navigation.show_supplies %}
     <details class="app-nav-group{% if app_navigation.active_section == 'supplies' %} is-current{% endif %}" data-nav-section="supplies"{% if app_navigation.active_section == 'supplies' %} open{% endif %}>
-      <summary>办公用品与低值品</summary>
+      <summary>数量物品</summary>
       <div class="app-nav-items">
         <a class="app-nav-link{% if app_navigation.active_item == 'supply_overview' %} active{% endif %}" href="{% url 'supplies:dashboard' %}" data-nav-item="supply_overview"{% if app_navigation.active_item == 'supply_overview' %} aria-current="page"{% endif %}>库存总览</a>
         {% if app_navigation.supplies.can_view_stock %}<a class="app-nav-link{% if app_navigation.active_item == 'supply_stock' %} active{% endif %}" href="{% url 'supplies:stock-balance-list' %}" data-nav-item="supply_stock"{% if app_navigation.active_item == 'supply_stock' %} aria-current="page"{% endif %}>当前库存</a>{% endif %}
         {% if app_navigation.supplies.can_view_documents %}<a class="app-nav-link{% if app_navigation.active_item == 'supply_documents' %} active{% endif %}" href="{% url 'supplies:document-list' %}" data-nav-item="supply_documents"{% if app_navigation.active_item == 'supply_documents' %} aria-current="page"{% endif %}>入库、领用与调拨</a>{% endif %}
-        {% if app_navigation.supplies.can_view_custodies %}<a class="app-nav-link{% if app_navigation.active_item == 'supply_custodies' %} active{% endif %}" href="{% url 'supplies:custody-list' %}" data-nav-item="supply_custodies"{% if app_navigation.active_item == 'supply_custodies' %} aria-current="page"{% endif %}>耐用品保管</a>{% endif %}
-        {% if app_navigation.supplies.can_view_items %}<a class="app-nav-link{% if app_navigation.active_item == 'supply_items' %} active{% endif %}" href="{% url 'supplies:item-list' %}" data-nav-item="supply_items"{% if app_navigation.active_item == 'supply_items' %} aria-current="page"{% endif %}>物品档案</a>{% endif %}
+        {% if app_navigation.supplies.can_view_custodies %}<a class="app-nav-link{% if app_navigation.active_item == 'supply_custodies' %} active{% endif %}" href="{% url 'supplies:custody-list' %}" data-nav-item="supply_custodies"{% if app_navigation.active_item == 'supply_custodies' %} aria-current="page"{% endif %}>耐用品数量保管</a>{% endif %}
+        {% if app_navigation.supplies.can_view_items %}
+          <a class="app-nav-link{% if app_navigation.active_item == 'supply_items' %} active{% endif %}" href="{% url 'supplies:item-list' %}" data-nav-item="supply_items"{% if app_navigation.active_item == 'supply_items' %} aria-current="page"{% endif %}>全部数量物品</a>
+          <a class="app-nav-link{% if app_navigation.active_item == 'supply_durable_items' %} active{% endif %}" href="{% url 'supplies:item-list' %}?item_type=durable_quantity" data-nav-item="supply_durable_items"{% if app_navigation.active_item == 'supply_durable_items' %} aria-current="page"{% endif %}>低值耐用品（按数量）</a>
+          <a class="app-nav-link{% if app_navigation.active_item == 'supply_consumables' %} active{% endif %}" href="{% url 'supplies:item-list' %}?item_type=consumable" data-nav-item="supply_consumables"{% if app_navigation.active_item == 'supply_consumables' %} aria-current="page"{% endif %}>低值易耗品</a>
+        {% endif %}
       </div>
     </details>
   {% endif %}
@@ -47,7 +51,7 @@
     <details class="app-nav-group{% if app_navigation.active_section == 'finance_reports' %} is-current{% endif %}" data-nav-section="finance_reports"{% if app_navigation.active_section == 'finance_reports' %} open{% endif %}>
       <summary>报表与财务</summary>
       <div class="app-nav-items">
-        {% if app_navigation.finance_reports.can_manage_finance %}<a class="app-nav-link{% if app_navigation.active_item == 'pending_finance' %} active{% endif %}" href="{% url 'finance:pending-list' %}" data-nav-item="pending_finance"{% if app_navigation.active_item == 'pending_finance' %} aria-current="page"{% endif %}>待财务确认</a>
+        {% if app_navigation.finance_reports.can_manage_finance %}<a class="app-nav-link{% if app_navigation.active_item == 'pending_finance' %} active{% endif %}" href="{% url 'finance:pending-list' %}" data-nav-item="pending_finance"{% if app_navigation.active_item == 'pending_finance' %} aria-current="page"{% endif %}>待确认折旧</a>
         <a class="app-nav-link{% if app_navigation.active_item == 'depreciation' %} active{% endif %}" href="{% url 'finance:batch-list' %}" data-nav-item="depreciation"{% if app_navigation.active_item == 'depreciation' %} aria-current="page"{% endif %}>固定资产折旧</a>{% endif %}
         <a class="app-nav-link{% if app_navigation.active_item == 'report_center' %} active{% endif %}" href="{% url 'reports:report-center' %}" data-nav-item="report_center"{% if app_navigation.active_item == 'report_center' %} aria-current="page"{% endif %}>报表中心</a>
         {% if app_navigation.finance_reports.can_view_tplus %}<a class="app-nav-link{% if app_navigation.active_item == 'tplus' %} active{% endif %}" href="{% url 'reports:tplus-export' %}" data-nav-item="tplus"{% if app_navigation.active_item == 'tplus' %} aria-current="page"{% endif %}>T+ 对账</a>{% endif %}

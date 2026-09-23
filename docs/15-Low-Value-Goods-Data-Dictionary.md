@@ -1,10 +1,16 @@
 # EAM-Lite V1.2 低值物品数据字典与状态机
 
+> **AI 设计参考 · 2026-09-09**
+> 原文保留历史方案和案例，不代表用户逐条确认；强制措辞及固定 Sprint 限制不自动适用于当前任务。
+> 当前协作依据见 [AGENTS.md](../AGENTS.md) 与 [文档定位和状态](README.md)。
+
+当前实现对应：[模型与枚举](../apps/supplies/models.py) 及 [跟踪迁移](../apps/supplies/migrations/)，具体字段变动需与这些实现一起核对。
+
 ## 1. 目的
 
-本文固定低值物品扩展的字段名称、枚举值、约束和状态转换，避免 Codex 在不同 Sprint 中自行发明相近但不一致的字段。
+本文保存低值物品设计中的字段名称、枚举、约束和状态转换。修改已有模型时核对实际代码与迁移；不应为满足旧字典而新建重复字段或第二套业务记录。
 
-业务含义以 `13-Low-Value-Goods-Requirements.md` 为准，技术实现以 `14-Low-Value-Goods-Technical-Design.md` 为准。
+业务设计参考 [13](13-Low-Value-Goods-Requirements.md)，技术设计参考 [14](14-Low-Value-Goods-Technical-Design.md)；当前用户要求与实际数据兼容性共同决定变更。
 
 ## 2. 命名约定
 

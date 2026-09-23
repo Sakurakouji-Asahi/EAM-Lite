@@ -1,5 +1,9 @@
 # Sprint 1 验收证据映射
 
+> **历史验证记录 · 2026-09-09**
+> 下文结果限于记录的日期、代码和环境，不能自动认定当前工作树或生产环境已通过；原始证据继续保留。
+> 当前协作依据见 [AGENTS.md](../AGENTS.md) 与 [文档定位和状态](README.md)。
+
 本表把 `tasks/Sprint-1-Master-Data.md` 的自动测试 1–22 和验收场景 1–6
 映射到可重复执行的 pytest node ID。数据库约束、并发和本表的
 `test_sprint1_acceptance_evidence.py` 节点必须在 PostgreSQL 18.4 执行；SQLite

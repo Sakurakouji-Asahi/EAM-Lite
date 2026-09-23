@@ -4,6 +4,8 @@ import uuid
 from decimal import Decimal
 
 from django import forms
+from apps.core.form_widgets import normalize_date_widgets
+from apps.core.numbering import configure_auto_number_field
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.forms import formset_factory
 from django.db.models import Q
@@ -40,6 +42,7 @@ from .permissions import (
 
 
 def _bootstrap_widgets(form):
+    normalize_date_widgets(form)
     for field in form.fields.values():
         widget = field.widget
         if isinstance(widget, forms.CheckboxInput):
@@ -59,6 +62,7 @@ class SupplyFormMixin:
         self.actor = actor
         self.company = company
         super().__init__(*args, **kwargs)
+        configure_auto_number_field(self)
         if hasattr(self.instance, "company_id") and self.instance.company_id is None:
             self.instance.company = company
         _bootstrap_widgets(self)
@@ -157,7 +161,7 @@ class SupplyItemForm(SupplyFormMixin, forms.ModelForm):
         }
         help_texts = {
             "item_code": "同一公司内按规范化编码唯一。",
-            "item_type": "需要逐件二维码、序列号或单件责任人的物品请使用现有资产模块。",
+            "item_type": "低值易耗品领用后按消耗管理；低值耐用品按数量登记保管、归还和转交。需要识别每一件或独立二维码时，请使用逐件资产。",
             "minimum_stock_quantity": "最多 4 位小数，不得为负数。",
         }
 

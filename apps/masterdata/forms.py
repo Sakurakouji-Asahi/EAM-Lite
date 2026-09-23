@@ -1,6 +1,8 @@
 """Chinese, company-scoped forms for Sprint 1 master data."""
 
 from django import forms
+from apps.core.form_widgets import normalize_date_widgets
+from apps.core.numbering import configure_auto_number_field
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -23,6 +25,7 @@ from apps.masterdata.services import SAFE_ATTACHMENT_EXTENSIONS
 
 
 def _bootstrap_widgets(form):
+    normalize_date_widgets(form)
     for field in form.fields.values():
         widget = field.widget
         if isinstance(widget, forms.CheckboxSelectMultiple):
@@ -46,6 +49,7 @@ class AuthorizedModelForm(forms.ModelForm):
         self.actor = actor
         self.company = company
         super().__init__(*args, **kwargs)
+        configure_auto_number_field(self)
         _bootstrap_widgets(self)
 
 
@@ -275,7 +279,6 @@ class AssetCategoryForm(AuthorizedModelForm):
             "code",
             "name",
             "parent",
-            "category_type",
             "is_maintenance_required_default",
             "default_coding_scheme",
         )
@@ -283,12 +286,8 @@ class AssetCategoryForm(AuthorizedModelForm):
             "code": "分类编码",
             "name": "实物分类名称",
             "parent": "上级分类",
-            "category_type": "实物类型",
             "is_maintenance_required_default": "默认需要保养",
             "default_coding_scheme": "默认编码方案版本",
-        }
-        help_texts = {
-            "category_type": "这里只表达实物管理分类，不表示是否为固定资产。",
         }
 
     def __init__(self, *args, **kwargs):

@@ -1,5 +1,13 @@
 # T+ Reconciliation Export Specification V1.1
 
+> **AI 设计参考 · 2026-09-09**
+> 原文保留历史方案和案例，不代表用户逐条确认；强制措辞及固定 Sprint 限制不自动适用于当前任务。
+> 当前协作依据见 [AGENTS.md](../AGENTS.md) 与 [文档定位和状态](README.md)。
+
+> **用户确认的后续变化 · 2026-09-09：** 新资产先实物建档并生成编号，照片可后补；财务资料齐备后另行确认折旧。与下文旧阶段描述不一致时，以 [实物建档与财务分离](Asset-Registration-and-Finance-2026-09-09.md) 的明确变化为准，其他规则按相关性核对。
+
+当前实现对应：[报表定义](../apps/reports/schemas.py)、[查询](../apps/reports/queries.py)、[Excel 生成](../apps/reports/excel.py)。
+
 ## 1. Purpose and boundary
 
 EAM-Lite does not call or write the T+ API in V1. T+ remains the official accounting ledger.

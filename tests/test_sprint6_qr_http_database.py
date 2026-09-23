@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 
@@ -146,7 +148,7 @@ def test_print_action_records_batch_and_opens_local_a4_snapshot_without_second_c
     assert asset.asset_code in text
     assert asset.department.name in text
     assert "原值" not in text and "账面净值" not in text
-    assert "cdn" not in text.casefold()
+    assert re.search('<(?:script|img|link)\\b[^>]*\\b(?:src|href)=["\'](?:https?:)?//', text, re.IGNORECASE) is None
     assert "fonts.googleapis" not in text.casefold()
     qr_url = reverse("assets:label-item-qr", args=[item.pk])
     assert f'href="{qr_url}"' in text

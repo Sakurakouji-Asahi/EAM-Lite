@@ -1,9 +1,4 @@
-"""Transactional management services for Sprint 2 coding configuration.
-
-This module deliberately contains no official-code issuance or allocation
-primitive.  SequenceCounter and IssuedCode remain empty schema foundations
-until Asset formalisation connects them in Sprint 4.
-"""
+"""Transactional coding-scheme configuration, separate from asset issuance."""
 
 from __future__ import annotations
 
@@ -259,6 +254,10 @@ def _static_maximum_length(scheme, segments):
             length += segment.sequence_length
         elif segment_type == "year":
             length += 4
+        elif segment_type in {"management_attribute", "subitem_number"}:
+            length += 2
+        elif segment_type == "coding_year":
+            length += 4
         elif segment_type == "year_month":
             length += 6
         elif segment_type == "full_date":
@@ -355,6 +354,10 @@ def _validate_all_context_lengths(scheme, segments):
             fixed_length += segment.sequence_length
         elif segment.segment_type == "year":
             fixed_length += 4
+        elif segment.segment_type in {"management_attribute", "subitem_number"}:
+            fixed_length += 2
+        elif segment.segment_type == "coding_year":
+            fixed_length += 4
         elif segment.segment_type == "year_month":
             fixed_length += 6
         elif segment.segment_type == "full_date":
@@ -393,7 +396,9 @@ def _refresh_coding_progress(*, company, actor, request=None):
         company=company
     )
     if setting.initialization_completed:
-        raise ValidationError("Sprint 2 不得设置或改写整体初始化完成状态。")
+        if _currently_valid_default(company) is None:
+            raise ValidationError("已初始化公司必须保留生效的默认编码方案，请先切换到替代方案。")
+        return setting
     configured = _currently_valid_default(company) is not None
     if setting.coding_scheme_configured == configured:
         return setting

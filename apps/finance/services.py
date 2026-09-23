@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
+from copy import copy
 from collections.abc import Mapping
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -30,7 +31,13 @@ from apps.coding.domain import (
     render_code,
     validate_scheme_structure,
 )
+from apps.coding.issuance import (
+    _resolve_coding_scheme,
+    _insert_counter_if_missing,
+    _issue_asset_code as _issue_code,
+)
 from apps.finance.permissions import require_manage_finance
+from apps.finance.readiness import finance_confirmation_pending
 from apps.masterdata.permissions import current_company
 
 
@@ -319,10 +326,9 @@ def _apply(instance, data, allowed):
 
 
 def _save(instance, *, update_fields=None, validate=True):
-    if validate:
-        instance.full_clean()
-    instance.save(update_fields=update_fields)
-    return instance
+    from apps.core.numbering import save_with_auto_number
+
+    return save_with_auto_number(instance, update_fields=update_fields, validate=validate)
 
 
 def _policy_snapshot(policy):
@@ -773,16 +779,41 @@ def _refresh_finance_setup(*, company, actor, request=None):
     return setting
 
 
+def _set_unconfirmed_commissioning_date(*, actor, asset, value, request=None):
+    if value is None or value == asset.commissioning_date:
+        return
+    from apps.assets.services import _controlled_update
+
+    value = _business_date(value, field_name="commissioning_date")
+    if value > timezone.localdate():
+        raise ValidationError({"commissioning_date": "达到可使用状态日期不能晚于今天。"})
+    if _models()["AssetFinance"].objects.filter(
+        asset=asset, finance_confirmed_at__isnull=False,
+    ).exists():
+        raise ValidationError("已确认财务的启用日期不能在此修改。")
+    previous = asset.commissioning_date
+    _controlled_update(_models()["Asset"], pk=asset.pk, values={
+        "commissioning_date": value, "updated_by_id": actor.pk,
+        "updated_at": timezone.now(),
+    })
+    asset.commissioning_date = value
+    _audit(actor=actor, action="asset_commissioning_confirm", instance=asset,
+           old={"commissioning_date": previous}, new={"commissioning_date": value}, request=request)
+
+
 @transaction.atomic
-def save_asset_finance_draft(*, actor, asset, data, request=None):
+def save_asset_finance_draft(*, actor, asset, data, commissioning_date=None, request=None):
     require_manage_finance(actor)
     models = _models()
     Asset = models["Asset"]
     Finance = models["AssetFinance"]
     asset = Asset.objects.select_for_update().select_related("company").get(pk=asset.pk)
     _require_current_company(asset.company)
-    if asset.asset_status != "pending_finance":
-        raise ValidationError("只有待财务确认资产可以保存财务草稿。")
+    if not finance_confirmation_pending(asset):
+        raise ValidationError("只有尚未完成财务折旧确认的资产可以保存财务草稿。")
+    _set_unconfirmed_commissioning_date(
+        actor=actor, asset=asset, value=commissioning_date, request=request,
+    )
     values = dict(data)
     unknown = set(values).difference(FINANCE_DRAFT_FIELDS)
     if unknown:
@@ -889,11 +920,20 @@ def _profile_spec(*, asset, finance_data, profile_data, policy):
     if method != "units_of_production":
         work_unit = None
         expected_total_units = None
+    salvage_mode = values.get("salvage_mode", policy.default_salvage_mode)
+    # A per-asset mode override must not inherit the other mode's default.
+    # Explicitly supplied conflicting values still reach the domain validator.
+    salvage_rate = values.get(
+        "salvage_rate", policy.default_salvage_rate if salvage_mode == "rate" else None,
+    )
+    salvage_amount = values.get(
+        "salvage_amount", policy.default_salvage_amount if salvage_mode == "amount" else None,
+    )
     spec = domain.ScheduleInput(
         original_cost=original_cost,
-        salvage_mode=values.get("salvage_mode", policy.default_salvage_mode),
-        salvage_rate=values.get("salvage_rate", policy.default_salvage_rate),
-        salvage_amount=values.get("salvage_amount", policy.default_salvage_amount),
+        salvage_mode=salvage_mode,
+        salvage_rate=salvage_rate,
+        salvage_amount=salvage_amount,
         method=method,
         posting_period=values.get("posting_period", policy.posting_period),
         start_rule=start_rule,
@@ -1001,12 +1041,17 @@ def _profile_spec(*, asset, finance_data, profile_data, policy):
     return spec, result, resolved
 
 
-def preview_asset_depreciation(*, actor, asset, finance_data, profile_data=None):
+def preview_asset_depreciation(*, actor, asset, finance_data, profile_data=None, commissioning_date=None):
     require_manage_finance(actor)
     if asset.company_id != getattr(current_company(include_inactive=True), "pk", None):
         raise PermissionDenied("目标资产不属于当前公司。")
-    if asset.asset_status != "pending_finance":
-        raise ValidationError("只有待财务确认资产可执行正式化前试算。")
+    if not finance_confirmation_pending(asset):
+        raise ValidationError("只有尚未完成财务折旧确认的资产可执行确认前试算。")
+    if commissioning_date is not None:
+        asset = copy(asset)
+        asset.commissioning_date = _business_date(commissioning_date, field_name="commissioning_date")
+        if asset.commissioning_date > timezone.localdate():
+            raise ValidationError({"commissioning_date": "达到可使用状态日期不能晚于今天。"})
     ensure_asset_is_depreciable(
         asset,
         finance_data=finance_data,
@@ -1033,6 +1078,16 @@ def preview_asset_depreciation(*, actor, asset, finance_data, profile_data=None)
 
 
 def _validate_asset_physical(asset):
+    if asset.current_issued_code_id is not None:
+        from apps.assets.models import AssetRegistration
+
+        if not finance_confirmation_pending(asset) or not AssetRegistration.objects.filter(
+            asset=asset, company=asset.company
+        ).exists():
+            raise ValidationError("该资产不在可办理财务折旧确认的范围内。")
+        # Responsibility may have changed after registration. Finance confirms
+        # accounting data, rather than re-approving physical ownership or labels.
+        return
     errors = {}
     if asset.asset_status != "pending_finance":
         errors["asset_status"] = "资产必须处于待财务确认。"
@@ -1056,117 +1111,10 @@ def _validate_asset_physical(asset):
         raise ValidationError(errors)
 
 
-def _resolve_coding_scheme(*, asset, effective_date):
-    Scheme = _models()["AssetCodingScheme"]
-    queryset = Scheme.objects.select_for_update().prefetch_related("segments")
-    if asset.requested_coding_scheme_id:
-        scheme = queryset.get(pk=asset.requested_coding_scheme_id)
-        if scheme.company_id != asset.company_id or not is_effective(scheme, effective_date):
-            raise ValidationError({"coding_scheme": "指定编码方案在正式编号生效日不可用；不会静默回退。"})
-        return scheme
-    category_scheme_id = asset.category.default_coding_scheme_id
-    if category_scheme_id:
-        scheme = queryset.get(pk=category_scheme_id)
-        if scheme.company_id != asset.company_id or not is_effective(scheme, effective_date):
-            raise ValidationError({"coding_scheme": "实物分类默认编码方案在生效日不可用。"})
-        return scheme
-    schemes = list(
-        queryset.filter(company=asset.company, status="active", is_default=True, effective_from__lte=effective_date)
-        .filter(Q(effective_to__isnull=True) | Q(effective_to__gte=effective_date))
-    )
-    if len(schemes) != 1:
-        raise ValidationError({"coding_scheme": "公司必须且只能解析出一个生效的默认编码方案。"})
-    return schemes[0]
 
 
-def _insert_counter_if_missing(*, company, scheme, scope_key):
-    Counter = _models()["SequenceCounter"]
-    initial = scheme.sequence_start - 1
-    table = connection.ops.quote_name(Counter._meta.db_table)
-    now = timezone.now()
-    # PostgreSQL's ON CONFLICT primitive is required for first-use concurrency.
-    # The only interpolated identifier is ORM model metadata quoted by the
-    # active database backend; every business value remains parameter-bound.
-    with connection.cursor() as cursor:
-        cursor.execute(
-            f"INSERT INTO {table} (company_id, coding_scheme_id, scope_key, current_value, created_at, updated_at) "  # nosec B608
-            "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
-            [company.pk, scheme.pk, scope_key, initial, now, now],
-        )
-    return Counter.objects.select_for_update().get(company=company, coding_scheme=scheme, scope_key=scope_key)
 
 
-def _issue_code(*, actor, asset, effective_date, reason, idempotency_key):
-    models = _models()
-    IssuedCode = models["IssuedCode"]
-    History = models["AssetCodeHistory"]
-    scheme = _resolve_coding_scheme(asset=asset, effective_date=effective_date)
-    validate_scheme_structure(scheme)
-    category_scoped = scheme.reset_mode in {"category_yearly", "category_monthly"}
-    scope_key = build_scope_key(
-        asset.company_id,
-        scheme.pk,
-        scheme.reset_mode,
-        effective_date,
-        category=asset.category if category_scoped else None,
-        category_scope_level=(scheme.category_scope_level if category_scoped else None),
-    )
-    counter = _insert_counter_if_missing(company=asset.company, scheme=scheme, scope_key=scope_key)
-    next_value = counter.current_value + 1
-    display = render_code(
-        list(scheme.segments.order_by("sequence_order")),
-        {
-            "company": asset.company,
-            "category": asset.category,
-            "department": asset.department,
-            "effective_date": effective_date,
-        },
-        next_value,
-    )
-    if connection.vendor == "postgresql":
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT set_config('eam_lite.controlled_sequence_counter_increment', 'on', true)"
-            )
-    counter.current_value = next_value
-    counter.save(update_fields=["current_value", "updated_at"])
-    try:
-        issued = IssuedCode.objects.create(
-            company=asset.company,
-            coding_scheme=scheme,
-            scope_key=scope_key,
-            sequence_value=next_value,
-            display_code=display,
-            normalized_code=normalize_code(display),
-            effective_date=effective_date,
-            effective_date_reason=reason,
-            status="active",
-            idempotency_key=idempotency_key,
-            issued_by=actor,
-        )
-    except IntegrityError as exc:
-        if connection.vendor == "postgresql" and getattr(
-            exc.__cause__, "sqlstate", None
-        ) != "23505":
-            raise
-        # A different scheme/version can legitimately render a code that was
-        # issued in the past.  The permanent registry must keep rejecting that
-        # value, but the controlled workflow should return a business error
-        # and roll back the counter instead of leaking a database 500 response.
-        raise ValidationError(
-            {"asset_code": "生成的正式编号已被永久占用，请检查编码方案后重试。"}
-        ) from exc
-    History.objects.create(
-        company=asset.company,
-        asset=asset,
-        event_type="issued",
-        old_issued_code=None,
-        new_issued_code=issued,
-        reason="",
-        effective_at=_effective_timestamp(effective_date),
-        operated_by=actor,
-    )
-    return issued
 
 
 def _create_profile_and_schedule(
@@ -1636,13 +1584,14 @@ def confirm_asset_finance(
     asset,
     finance_data,
     profile_data=None,
+    commissioning_date=None,
     code_effective_date=None,
     code_effective_reason="",
     idempotency_key,
     reason=None,
     request=None,
 ):
-    """Atomically formalize one pending asset and permanently issue its code."""
+    """Confirm accounting/depreciation without changing an existing physical identity."""
 
     require_manage_finance(actor)
     reason = _required_reason(reason)
@@ -1684,6 +1633,8 @@ def confirm_asset_finance(
         "code_effective_reason": str(code_effective_reason or "").strip(),
         "reason": reason,
     }
+    if commissioning_date is not None:
+        formalization_payload["commissioning_date"] = commissioning_date
     formalization_hash = _request_hash(formalization_payload)
     existing_for_asset = FormalizationRequest.objects.select_for_update().filter(
         asset=asset
@@ -1705,8 +1656,10 @@ def confirm_asset_finance(
         ):
             return asset
         raise ValidationError("相同幂等键已用于其他资产或不同正式化参数。")
-    if asset.current_issued_code_id:
-        raise ValidationError("资产已有正式编号但缺少正式化幂等结果，请停止并复核数据。")
+    already_registered = asset.current_issued_code_id is not None
+    _set_unconfirmed_commissioning_date(
+        actor=actor, asset=asset, value=commissioning_date, request=request,
+    )
     imported_profile_drafts = list(
         models["AssetDepreciationProfile"]
         .objects.select_for_update()
@@ -1718,11 +1671,11 @@ def confirm_asset_finance(
             "资产存在多个未确认折旧 Profile 草稿，必须先复核数据。"
         )
     _validate_asset_physical(asset)
-    target_date = _business_date(code_effective_date, field_name="code_effective_date")
+    target_date = _business_date(None if already_registered else code_effective_date, field_name="code_effective_date")
     today = _business_date()
-    if target_date > today:
+    if not already_registered and target_date > today:
         raise ValidationError({"code_effective_date": "正式编号生效日不得为未来。"})
-    if target_date < today and not str(code_effective_reason or "").strip():
+    if not already_registered and target_date < today and not str(code_effective_reason or "").strip():
         raise ValidationError({"code_effective_reason": "历史生效日期必须填写原因。"})
     values = dict(finance_data)
     unknown = set(values).difference(FINANCE_DRAFT_FIELDS)
@@ -1806,37 +1759,20 @@ def confirm_asset_finance(
             ),
         )
         _create_opening_effects(actor=actor, asset=asset, finance=finance, profile=profile, resolved=resolved)
-    issued = _issue_code(
-        actor=actor,
-        asset=asset,
-        effective_date=target_date,
-        reason=str(code_effective_reason or "").strip(),
-        idempotency_key=normalized_key,
-    )
-    token = secrets.token_urlsafe(32)
-    qr = QR.objects.create(
-        company=company,
-        asset=asset,
-        public_token=token,
-        status="active",
-        label_status="ready_to_print",
-        issued_at=timezone.now(),
-        issued_by=actor,
-        version=1,
-    )
-    _set_controlled_asset_mutation()
-    # Asset.save() intentionally refuses protected fields; the controlled SQL
-    # update is additionally guarded by the PostgreSQL trigger/GUC.
-    Asset.objects.filter(pk=asset.pk)._update(
-        [
-            (Asset._meta.get_field("asset_code"), None, issued.display_code),
-            (Asset._meta.get_field("current_issued_code"), None, issued.pk),
-            (Asset._meta.get_field("asset_status"), None, "pending_label"),
-            (Asset._meta.get_field("updated_by"), None, actor.pk),
-            (Asset._meta.get_field("updated_at"), None, timezone.now()),
-        ]
-    )
-    asset.refresh_from_db()
+    if not already_registered:
+        # Compatibility for existing pending-finance drafts and historical callers.
+        # New physical registrations never reach this branch.
+        from apps.assets.registration import _register_locked_asset
+        from apps.assets.models import AssetRegistration
+
+        asset = _register_locked_asset(
+            actor=actor, asset=asset, idempotency_key=normalized_key,
+            request_hash=formalization_hash, code_effective_date=target_date,
+            code_effective_reason=str(code_effective_reason or "").strip(),
+            source=AssetRegistration.Source.LEGACY_FINANCE,
+            issue_code=_issue_code, request=request,
+        )
+    issued = asset.current_issued_code
     FormalizationRequest.objects.create(
         company=company,
         asset=asset,
@@ -1866,8 +1802,6 @@ def confirm_asset_finance(
         },
         request=request,
     )
-    _audit(actor=actor, action="asset_code_issue", instance=asset, new={"issued_code_id": str(issued.pk), "asset_code": issued.display_code}, request=request)
-    _audit(actor=actor, action="asset_qr_identity_create", instance=asset, new={"qr_identity_id": str(qr.pk), "label_status": "ready_to_print"}, request=request)
     return asset
 
 

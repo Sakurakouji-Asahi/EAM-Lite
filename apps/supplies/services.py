@@ -13,6 +13,7 @@ from django.db.models.query import QuerySet
 from django.utils import timezone
 
 from apps.audit.services import request_audit_context, write_business_audit_log
+from apps.core.numbering import save_with_auto_number
 from apps.masterdata.permissions import current_company
 
 from .domain import (
@@ -184,10 +185,8 @@ def _apply(instance, data: Mapping, allowed_fields):
 
 
 def _save(instance):
-    instance.full_clean()
     try:
-        with transaction.atomic():
-            instance.save()
+        save_with_auto_number(instance)
     except IntegrityError as exc:
         raise ValidationError("保存失败：当前公司已存在相同的规范化编码。") from exc
     return instance

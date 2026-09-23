@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 from django import forms
+from apps.core.form_widgets import normalize_date_widgets
 
 from apps.masterdata.models import (
     AssetCategory,
@@ -86,6 +87,7 @@ class ReportFilterForm(forms.Form):
 
     def __init__(self, *args, actor=None, company=None, **kwargs):
         super().__init__(*args, **kwargs)
+        normalize_date_widgets(self)
         from apps.assets.permissions import can_view_financial_fields
         from apps.reports.permissions import can_view_report
 

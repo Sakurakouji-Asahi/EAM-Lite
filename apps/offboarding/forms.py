@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 from django import forms
+from apps.core.form_widgets import normalize_date_widgets
 from django.core.exceptions import PermissionDenied
 
 from apps.assets.lifecycle_permissions import can_lifecycle_action
@@ -21,6 +22,7 @@ from apps.offboarding.permissions import (
 
 
 def _style(form):
+    normalize_date_widgets(form)
     for field in form.fields.values():
         if isinstance(field.widget, (forms.HiddenInput, forms.CheckboxInput)):
             continue

@@ -408,7 +408,6 @@ def test_postgresql_category_scheme_guard_rejects_cross_company_and_noncurrent()
         code="EQ",
         normalized_code="eq",
         name="设备",
-        category_type="equipment",
     )
 
     for candidate in (current, future):

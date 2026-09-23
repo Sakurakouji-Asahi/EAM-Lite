@@ -34,8 +34,6 @@ EXPECTED_REPORT_TYPES = {
     "monthly_depreciation",
     "department_assets",
     "employee_assets",
-    "equipment_list",
-    "mold_tool_inspection_list",
     "inventory_results",
     "inventory_differences",
     "maintenance_plans",

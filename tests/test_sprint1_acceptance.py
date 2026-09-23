@@ -90,7 +90,6 @@ def test_setup_progress_steps_1_to_5_and_8_persist_but_never_complete():
         data={
             "code": "EQ",
             "name": "设备",
-            "category_type": "equipment",
         },
     )
     create_location(
@@ -733,7 +732,7 @@ def test_tree_reparent_recalculates_all_descendant_levels_and_audits():
 
 def test_asset_category_is_physical_only_and_has_no_finance_fields():
     field_names = {field.name for field in AssetCategory._meta.get_fields()}
-    assert "category_type" in field_names
+    assert "category_type" not in field_names
     assert "fixed_asset_category" not in field_names
     assert "depreciation_policy" not in field_names
     assert "coding_scheme" not in field_names

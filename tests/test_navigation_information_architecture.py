@@ -200,8 +200,8 @@ def test_primary_navigation_is_task_oriented_for_all_eight_roles(
         assert all(count > 0 for count in navigation.group_item_counts.values())
         assert navigation.section_labels == {
             section: {
-                "assets": "资产管理",
-                "supplies": "办公用品与低值品",
+                "assets": "逐件资产",
+                "supplies": "数量物品",
                 "tasks": "我的工作",
                 "finance_reports": "报表与财务",
                 "settings": "基础资料与设置",
@@ -499,8 +499,8 @@ def test_individual_durable_redirects_keep_asset_navigation_and_breadcrumb(
     client.force_login(users["finance"])
 
     cases = (
-        ("supplies:individual-durable-list", "逐件低值耐用品"),
-        ("supplies:individual-durable-create", "新增逐件低值耐用品"),
+        ("supplies:individual-durable-list", "低值耐用品（逐件）"),
+        ("supplies:individual-durable-create", "新增低值耐用品（逐件）"),
     )
     for view_name, page_label in cases:
         response = client.get(reverse(view_name), follow=True)
@@ -511,7 +511,7 @@ def test_individual_durable_redirects_keep_asset_navigation_and_breadcrumb(
         html = response.content.decode()
         assert 'aria-label="面包屑"' in html
         assert f">{page_label}</li>" in html
-        assert ">资产管理</a>" in html
+        assert ">逐件资产</a>" in html
 
 
 def test_navigation_action_entries_do_not_exceed_role_permissions(
@@ -545,13 +545,15 @@ def test_navigation_uses_business_facing_chinese_terms(client, navigation_users)
     client.force_login(users["finance"])
     html = client.get(reverse("home")).content.decode()
     for label in (
-        "资产管理",
-        "办公用品与低值品",
+        "逐件资产",
+        "数量物品",
         "我的工作",
         "报表与财务",
         "基础资料与设置",
-        "耐用品保管",
-        "逐件低值耐用品",
+        "耐用品数量保管",
+        "低值耐用品（逐件）",
+        "低值耐用品（按数量）",
+        "低值易耗品",
         "操作日志",
     ):
         assert label in html

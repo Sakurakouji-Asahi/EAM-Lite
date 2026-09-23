@@ -24,6 +24,16 @@ function Assert-EamWindows {
 function Get-EamStateRoot {
     param([ValidateSet("local", "dev")][string]$Mode)
 
+    if ($Mode -eq "dev") {
+        $overrideFile = Join-Path (Get-EamRepositoryRoot) "var\local\dev-state-root.txt"
+        if (Test-Path -LiteralPath $overrideFile -PathType Leaf) {
+            $overrideRoot = (Get-Content -LiteralPath $overrideFile -Raw -Encoding UTF8).Trim()
+            if ($overrideRoot -notmatch '^[A-Za-z]:[\\/]' -or -not (Test-Path -LiteralPath $overrideRoot -PathType Container)) {
+                throw "开发运行目录配置无效；请核对已迁移的本机运行目录。"
+            }
+            return [System.IO.Path]::GetFullPath($overrideRoot)
+        }
+    }
     if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
         throw "无法定位当前用户的 LOCALAPPDATA。"
     }
@@ -728,6 +738,27 @@ function Invoke-EamCompose {
         throw "Docker Compose 操作失败：$($output -join [Environment]::NewLine)"
     }
     return [pscustomobject]@{ ExitCode = $exitCode; Output = @($output) }
+}
+
+function Initialize-EamDevelopmentSchema {
+    param([Parameter(Mandatory = $true)]$Context)
+
+    if ($Context.Project -ne $script:DevelopmentProject) {
+        throw "此检查只适用于开发环境。"
+    }
+    # migrate --check exits before applying changes. A ready development
+    # database does not require the migration identity on every daily start.
+    $check = Invoke-EamCompose -Context $Context -Arguments @(
+        "run", "--rm", "--no-deps", "-T", "app",
+        "python", "manage.py", "migrate", "--check", "--noinput"
+    ) -AllowFailure
+    if ($check.ExitCode -eq 0) {
+        Write-Host "数据库结构已就绪。"
+        return
+    }
+    Invoke-EamCompose -Context $Context -Arguments @(
+        "--profile", "release", "run", "--rm", "release"
+    ) | Out-Null
 }
 
 function Invoke-EamComposeInteractive {

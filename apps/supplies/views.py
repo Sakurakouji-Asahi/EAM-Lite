@@ -130,6 +130,10 @@ from .services import (
 
 
 PAGE_SIZE = 25
+ITEM_PAGE_LABELS = {
+    SupplyItemType.DURABLE_QUANTITY: "低值耐用品（按数量）",
+    SupplyItemType.CONSUMABLE: "低值易耗品",
+}
 SPRINT15_DOCUMENT_TYPES = frozenset(
     {
         SupplyDocumentType.OPENING,
@@ -552,6 +556,10 @@ def item_list(request):
             "query": query,
             "selected_category": category_id,
             "selected_item_type": item_type,
+            "page_title": ITEM_PAGE_LABELS.get(item_type, "全部数量物品"),
+            "can_create_selected": can_manage_supply_item(
+                request.user, item_type or SupplyItemType.DURABLE_QUANTITY
+            ),
             "selected_status": selected_status,
             "categories": scoped_supply_categories(request.user, company).filter(
                 is_active=True
@@ -571,8 +579,14 @@ def item_list(request):
 def item_create(request):
     company = _company_or_404()
     require_manage_supply_item(request.user, SupplyItemType.DURABLE_QUANTITY)
+    selected_type = request.GET.get("item_type", "")
+    if selected_type not in SupplyItemType.values:
+        selected_type = ""
+    if selected_type:
+        require_manage_supply_item(request.user, selected_type)
     form = SupplyItemForm(
-        request.POST or None, actor=request.user, company=company
+        request.POST or None, actor=request.user, company=company,
+        initial={"item_type": selected_type} if selected_type else None,
     )
     if request.method == "POST" and form.is_valid():
         try:
@@ -590,7 +604,7 @@ def item_create(request):
     return render(
         request,
         "supplies/item_form.html",
-        {"form": form, "title": "新增低值物品"},
+        {"form": form, "title": f"新增{ITEM_PAGE_LABELS.get(selected_type, '数量物品')}"},
     )
 
 
@@ -621,7 +635,7 @@ def item_edit(request, pk):
     return render(
         request,
         "supplies/item_form.html",
-        {"form": form, "title": "编辑低值物品", "object": item},
+        {"form": form, "title": f"编辑{ITEM_PAGE_LABELS[item.item_type]}", "object": item},
     )
 
 

@@ -11,7 +11,7 @@ import io
 import re
 import uuid
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import PurePosixPath
@@ -45,6 +45,7 @@ from apps.masterdata.services import (
     get_system_setting,
 )
 from apps.imports.tempfiles import hold_temp_file_active
+from apps.imports.asset_identity import IDENTITY_COLUMNS, IDENTITY_COLUMN_KEYS, validate_import_identity
 
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -143,12 +144,13 @@ TEMPLATE_REGISTRY = {
     "asset_initialization": TemplateDefinition(
         import_type="asset_initialization",
         label="资产初始化",
-        version="asset-initialization-v2",
+        version="asset-initialization-v3",
         sheet_name="资产初始化导入",
         has_example_sheet=True,
         columns=(
             Column("资产名称", "asset_name", True),
             Column("实物分类编码", "category_code", True),
+            *(Column(label, key) for label, key in IDENTITY_COLUMNS),
             Column("品牌", "brand"),
             Column("型号", "model"),
             Column("厂家", "manufacturer"),
@@ -248,11 +250,18 @@ TEMPLATE_REGISTRY = {
 }
 
 
-def get_template_definition(import_type: str, *, company=None) -> TemplateDefinition:
+def get_template_definition(import_type: str, *, company=None, version=None) -> TemplateDefinition:
     try:
         definition = TEMPLATE_REGISTRY[import_type]
     except KeyError as exc:
         raise ValidationError("不支持的导入类型。") from exc
+    if version is not None and version != definition.version:
+        if import_type == "asset_initialization" and version == "asset-initialization-v2":
+            definition = replace(definition, version=version, columns=tuple(
+                column for column in definition.columns if column.key not in IDENTITY_COLUMN_KEYS
+            ))
+        else:
+            raise ValidationError("批次模板版本已不再受支持，请重新下载模板并上传。")
     if import_type != "asset_initialization":
         return definition
     if company is None:
@@ -329,8 +338,8 @@ def _require_current_import_company(company):
         raise PermissionDenied("导入目标不属于当前公司。")
 
 
-def build_template_workbook(import_type: str, company=None) -> bytes:
-    definition = get_template_definition(import_type, company=company)
+def build_template_workbook(import_type: str, company=None, *, version=None) -> bytes:
+    definition = get_template_definition(import_type, company=company, version=version)
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = definition.sheet_name
@@ -372,6 +381,11 @@ def build_template_workbook(import_type: str, company=None) -> bytes:
             f"{sheet.cell(1001, status_column).coordinate}"
         )
     if import_type == "asset_initialization":
+        if "首次管理属性" in definition.headers:
+            attribute_validation = DataValidation(type="list", formula1='"FA,LV,IA,LS,OT"', allow_blank=True)
+            sheet.add_data_validation(attribute_validation)
+            column = definition.headers.index("首次管理属性") + 1
+            attribute_validation.add(f"{sheet.cell(2, column).coordinate}:{sheet.cell(1001, column).coordinate}")
         treatment_validation = DataValidation(
             type="list", formula1='"fixed_asset,controlled_non_fixed"'
         )
@@ -452,6 +466,9 @@ def build_template_workbook(import_type: str, company=None) -> bytes:
                 (
                     ("匹配键", "公司/分类/部门/位置按 code，责任人按 employee_no 精确匹配"),
                     ("单件规则", "每一行只代表一件实物，数量必须精确为 1"),
+                    ("首次管理属性", "统一编码主资产必填 FA/LV/IA/LS/OT，与会计认定独立；组件可以沿用主资产"),
+                    ("取得年份", "留空时按购置日期年份；单独填写其他年份时必须提供依据，不能用年份决定折旧起算日"),
+                    ("主资产编号", "仅组件填写，引用已有正式主资产；同批未发号草稿须先建档，不能作为本批组件的主资产"),
                     ("确认结果", "仅创建草稿，不生成正式编号、二维码或实际折旧分录"),
                     ("附件", "本表只填写后续上传说明，不接受本机路径或 URL 自动抓取"),
                     ("财务列", "只有 finance 可提交；无财务权限时所有财务列必须留空"),
@@ -533,6 +550,7 @@ def build_template_workbook(import_type: str, company=None) -> bytes:
         else:
             sample = {
                 "资产名称": "示例设备（请勿直接导入）",
+                "首次管理属性": "FA",
                 "实物分类编码": "EQUIPMENT",
                 "数量": 1,
                 "单位": "台",
@@ -960,6 +978,22 @@ def _xlsx_decimal_literals(data, worksheet_path):
                         literals[reference] = value_node.text
                 element.clear()
     return literals
+
+
+def _asset_upload_definition(data, definition):
+    """Preserve the actual v2 version while retaining its strict column schema."""
+    try:
+        workbook = load_workbook(io.BytesIO(data), read_only=True, data_only=False, keep_links=False)
+    except Exception:
+        return definition
+    try:
+        if "填写说明" in workbook.sheetnames and _text(workbook["填写说明"]["B2"].value) == "asset-initialization-v2":
+            return replace(definition, version="asset-initialization-v2", columns=tuple(
+                column for column in definition.columns if column.key not in IDENTITY_COLUMN_KEYS
+            ))
+        return definition
+    finally:
+        workbook.close()
 
 
 def _load_rows(data, definition):
@@ -1724,7 +1758,7 @@ def _asset_theoretical_summary(result, *, as_of_date=None):
     )
 
 
-def _inflate_asset_row(*, company, normalized, lock=False):
+def _inflate_asset_row(*, actor, company, normalized, lock=False):
     from apps.assets.models import AssetCustomField
     from apps.masterdata.models import AssetCategory, Department, Employee, Location
 
@@ -1767,6 +1801,8 @@ def _inflate_asset_row(*, company, normalized, lock=False):
     }
     for key in ("category_id", "department_id", "responsible_employee_id", "location_id"):
         data.pop(key, None)
+    data.update(validate_import_identity(actor=actor, company=company, data=data, lock_parent=lock))
+    data.pop("component_of_id", None)
     field_ids = set(normalized.get("custom_values", {}))
     fields = {
         str(value.pk): value
@@ -2039,6 +2075,33 @@ def _normalize_asset_rows(*, actor, company, loaded_rows, definition):
         commissioning_date = _date(
             values["commissioning_date"], "达到可使用状态日期", errors
         )
+        identity_fields = {
+            "management_attribute": _text(values.get("management_attribute")).upper(),
+            "coding_year": _integer_value(values.get("coding_year"), "取得年份", errors),
+            "coding_year_note": _text(values.get("coding_year_note")),
+            "vehicle_plate": _text(values.get("vehicle_plate")),
+            "chassis_number": _text(values.get("chassis_number")),
+            "calibration_number": _text(values.get("calibration_number")),
+        }
+        if all((category, department, employee, location)):
+            try:
+                identity_fields.update(validate_import_identity(
+                    actor=actor, company=company, parent_code=_text(values.get("parent_asset_code")),
+                    data={**identity_fields, "category": category, "department": department,
+                          "acquisition_date": acquisition_date, "serial_number": _text(values["serial_number"])},
+                ))
+            except (ValidationError, PermissionDenied) as exc:
+                if hasattr(exc, "error_dict"):
+                    labels = {key: label for label, key in IDENTITY_COLUMNS}
+                    labels.update(component_of="主资产编号", serial_number="序列号", acquisition_date="购置日期")
+                    for key, messages in exc.message_dict.items():
+                        errors.extend(_error(labels.get(key, "编码资料"), None, message) for message in messages)
+                else:
+                    errors.extend(_error("编码资料", None, message) for message in _validation_messages(exc))
+        parent = identity_fields.pop("component_of", None)
+        identity_fields["component_of_id"] = str(parent.pk) if parent is not None else None
+        if definition.version == "asset-initialization-v2":
+            warnings.append(_error("模板版本", definition.version, "旧版表格不含首次管理属性等编码资料；采用统一编码时请下载新版模板补齐。"))
         maintenance = _nullable_boolean(
             values["is_maintenance_required"], "是否需要保养", errors
         )
@@ -2236,6 +2299,7 @@ def _normalize_asset_rows(*, actor, company, loaded_rows, definition):
 
         normalized = {
             "asset_data": {
+                **identity_fields,
                 "asset_name": _text(values["asset_name"]),
                 "category_id": str(category.pk) if category else None,
                 "brand": _text(values["brand"]),
@@ -2313,6 +2377,7 @@ def _preflight_business_rows(*, actor, company, import_type, prepared):
             for item in prepared:
                 try:
                     data, custom_values = _inflate_asset_row(
+                        actor=actor,
                         company=company,
                         normalized=item["normalized"],
                     )
@@ -2519,6 +2584,8 @@ def upload_and_validate_import(
     limit = get_system_setting(company=company, key="attachment_max_size_bytes")
     data = _read_uploaded(uploaded_file, limit)
     container_errors = _validate_xlsx_container(data)
+    if not container_errors and import_type == "asset_initialization":
+        definition = _asset_upload_definition(data, definition)
     digest = hashlib.sha256(data).hexdigest()
     request_hash = hashlib.sha256(
         f"{import_type}:{definition.version}:{digest}".encode()
@@ -2854,9 +2921,7 @@ def _confirm_import_batch_atomic(*, actor, batch, request=None):
     require_import_permission(actor, batch.import_type, company=batch.company)
     if batch.status == "confirmed":
         return batch
-    definition = get_template_definition(batch.import_type, company=batch.company)
-    if batch.template_version != definition.version:
-        raise ValidationError("批次模板版本已不再受支持，请重新下载模板并上传。")
+    definition = get_template_definition(batch.import_type, company=batch.company, version=batch.template_version)
     if batch.status != "validated" or batch.error_rows != 0:
         raise ValidationError("只能确认无错误的已验证批次。")
     if batch.file_sha256 != batch.file_attachment.sha256:
@@ -2874,10 +2939,13 @@ def _confirm_import_batch_atomic(*, actor, batch, request=None):
 
     created = {}
     if batch.import_type == "asset_initialization":
+        from apps.masterdata.models import Company
+        # Match registration's Company -> asset/parent lock order.
+        Company.objects.select_for_update().get(pk=batch.company_id)
         for row in rows:
             item = row.normalized_data_json
             data, custom_values = _inflate_asset_row(
-                company=batch.company, normalized=item, lock=True
+                actor=actor, company=batch.company, normalized=item, lock=True
             )
             require_import_permission(
                 actor,

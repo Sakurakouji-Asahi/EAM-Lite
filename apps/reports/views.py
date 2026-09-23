@@ -14,6 +14,7 @@ from django.core.files.storage import default_storage
 from django.core.paginator import Paginator
 from django.http import FileResponse, Http404, HttpResponseBadRequest, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.encoding import escape_uri_path
 from django.views.decorators.cache import never_cache
@@ -58,6 +59,8 @@ from apps.reports.schemas import (
     TPLUS_ENTRY_COLUMNS,
     TPLUS_TOTAL_METRICS,
     get_report_definition,
+    RETIRED_REPORT_KEYS,
+    RETIRED_REPORT_MESSAGE,
 )
 
 
@@ -150,6 +153,9 @@ def _filter_dict(cleaned_data):
 
 
 def _display_filters(filters, company):
+    if "asset_list_filters" in filters:
+        from apps.assets.list_filters import describe_list_filters
+        return describe_list_filters(filters["asset_list_filters"], company=company)
     result = []
     labels = {
         "as_of_date": "基准日期",
@@ -222,6 +228,14 @@ def report_center(request):
     unexpected = set(request.GET) - _REPORT_FILTER_KEYS
     if unexpected:
         return _no_store(HttpResponseBadRequest("包含不支持的报表筛选参数。"))
+    if request.GET.get("report_type") in RETIRED_REPORT_KEYS:
+        denied = _require_no_store(require_view_report, request.user, request.GET["report_type"])
+        if denied:
+            return denied
+        filters = request.GET.copy()
+        filters["report_type"] = "asset_ledger"
+        messages.info(request, RETIRED_REPORT_MESSAGE)
+        return _no_store(redirect(reverse("reports:report-center") + "?" + filters.urlencode()))
     company = _company_or_400()
     form = ReportFilterForm(
         request.GET or None,
@@ -580,7 +594,7 @@ def export_detail(request, pk):
             "export_log": export_log,
             "definition": get_report_definition(export_log.export_type),
             "can_download": can_download_export(request.user, export_log),
-            "display_filters": {
+            "display_filters": dict(_display_filters(export_log.filters_json, company)) if "asset_list_filters" in export_log.filters_json else {
                 key: value
                 for key, value in export_log.filters_json.items()
                 if not key.startswith("_")

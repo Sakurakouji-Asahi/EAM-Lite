@@ -7,6 +7,8 @@ import json
 from decimal import Decimal
 
 from django import forms
+from apps.core.form_widgets import normalize_date_widgets
+from apps.core.numbering import configure_auto_number_field
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db.models import Q
 from django.utils import timezone
@@ -27,6 +29,7 @@ from apps.masterdata.models import AssetCategory, FixedAssetCategory
 
 
 def _bootstrap_widgets(form):
+    normalize_date_widgets(form)
     for field in form.fields.values():
         widget = field.widget
         if isinstance(widget, forms.CheckboxInput):
@@ -35,6 +38,22 @@ def _bootstrap_widgets(form):
             widget.attrs.setdefault("class", "form-select")
         else:
             widget.attrs.setdefault("class", "form-control")
+
+
+class PendingFinanceFilterForm(forms.Form):
+    q = forms.CharField(label="资产编号或名称", max_length=200, required=False)
+    department = forms.ModelChoiceField(label="部门", queryset=None, required=False)
+    data_status = forms.ChoiceField(label="资料状态", required=False, choices=(
+        ("", "全部待确认"), ("not_entered", "尚未填写财务资料"), ("saved", "已保存财务资料"),
+    ))
+
+    def __init__(self, *args, company, **kwargs):
+        from apps.masterdata.models import Department
+
+        super().__init__(*args, **kwargs)
+        self.fields["department"].queryset = Department.objects.filter(company=company).order_by("normalized_code")
+        self.fields["department"].empty_label = "全部部门"
+        _bootstrap_widgets(self)
 
 
 class FinanceBoundForm(forms.Form):
@@ -180,6 +199,10 @@ class FixedAssetWarningAmountForm(FinanceBoundForm):
 
 
 class FixedAssetCategoryForm(FinanceBoundForm, forms.ModelForm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        configure_auto_number_field(self)
+
     class Meta:
         model = FixedAssetCategory
         fields = ("code", "name", "useful_life_months_default", "note")
@@ -193,6 +216,19 @@ class FixedAssetCategoryForm(FinanceBoundForm, forms.ModelForm):
 
 
 class FinanceDraftForm(FinanceBoundForm):
+    commissioning_date = forms.DateField(
+        label="达到可使用状态日期", required=False,
+        widget=forms.DateInput(attrs={"type": "date"}),
+        help_text="可在财务资料齐备后补充；折旧起算仍按下方规则或指定日期确认。",
+    )
+    action_reason = forms.CharField(
+        label="确认说明", required=False,
+        initial="确认会计认定与折旧参数", widget=forms.Textarea(attrs={"rows": 2}),
+    )
+    confirm_permanent_code = forms.BooleanField(
+        label="我已核对会计认定、原值和折旧起算设置。", required=False,
+        help_text="保存资料和试算不会确认折旧；点击确认时需要勾选。",
+    )
     accounting_treatment = forms.ChoiceField(
         label="会计认定", choices=AssetFinance.AccountingTreatment.choices
     )
@@ -284,6 +320,15 @@ class FinanceDraftForm(FinanceBoundForm):
 
         self.company = company
         self.asset = asset
+        for name in ("salvage_mode", "method", "posting_period", "start_rule", "stop_rule"):
+            self.fields[name].choices = [("", "使用政策默认"), *self.fields[name].choices]
+        self.initial.setdefault("commissioning_date", asset.commissioning_date)
+        if asset.current_issued_code_id is not None:
+            for field_name in ("code_effective_date", "code_effective_reason"):
+                self.fields[field_name].required = False
+                self.fields[field_name].disabled = True
+                self.fields[field_name].widget = forms.HiddenInput()
+                self.initial[field_name] = None if field_name == "code_effective_date" else ""
         today = timezone.localdate()
         self.fields["fixed_asset_category"].queryset = FixedAssetCategory.objects.filter(
             company=company, is_active=True
@@ -295,6 +340,10 @@ class FinanceDraftForm(FinanceBoundForm):
         ).order_by("policy_key", "-version")
         if not self.is_bound and not self.initial.get("idempotency_key"):
             self.initial["idempotency_key"] = uuid.uuid4().hex
+        self.order_fields(
+            [name for name in self.fields if name not in {"action_reason", "confirm_permanent_code"}]
+            + ["action_reason", "confirm_permanent_code"]
+        )
 
     def clean(self):
         cleaned = super().clean()
@@ -307,6 +356,8 @@ class FinanceDraftForm(FinanceBoundForm):
             for field, message in required.items():
                 if cleaned.get(field) in (None, ""):
                     self.add_error(field, message)
+            if not cleaned.get("commissioning_date") and not self.asset.commissioning_date:
+                self.add_error("commissioning_date", "请补充达到可使用状态日期。")
         elif treatment == AssetFinance.AccountingTreatment.CONTROLLED_NON_FIXED:
             for field in (
                 "fixed_asset_category", "capitalization_date", "depreciation_policy",
@@ -368,10 +419,10 @@ class FinanceDraftForm(FinanceBoundForm):
 
 class ConfirmFormalizationForm(FinanceDraftForm):
     action_reason = forms.CharField(
-        label="财务正式化原因", widget=forms.Textarea(attrs={"rows": 3})
+        label="确认说明", initial="确认会计认定与折旧参数", widget=forms.Textarea(attrs={"rows": 2})
     )
     confirm_permanent_code = forms.BooleanField(
-        label="我确认正式编号生成后永久占用，不会因更正或处置而复用。"
+        label="我已核对会计认定、原值和折旧起算设置。"
     )
 
 

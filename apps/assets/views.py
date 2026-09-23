@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import re
+import uuid
+from urllib.parse import urlencode
 from pathlib import Path
 
 from django.contrib import messages
@@ -10,13 +11,13 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import FieldDoesNotExist, PermissionDenied, ValidationError
 from django.core.files.storage import default_storage
 from django.core.paginator import Paginator
-from django.db.models import CharField, Q
-from django.db.models.functions import Cast
+from django.db.models import Q
 from django.db.utils import OperationalError, ProgrammingError
-from django.http import FileResponse, Http404, HttpResponseNotAllowed
+from django.http import FileResponse, Http404, HttpResponseBadRequest, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.encoding import escape_uri_path
 
+from apps.assets.access import asset_company_for_request, asset_queryset_for_request, asset_or_404
 from apps.assets.forms import (
     AssetAttachmentUploadForm,
     AssetAttachmentVoidForm,
@@ -31,6 +32,7 @@ from apps.assets.models import Asset, AssetCustomField, AttachmentLink
 from apps.assets.permissions import (
     ASSET_GLOBAL_WRITE_ROLES,
     can_create_attachment_link,
+    can_create_asset_draft,
     can_delete_asset_draft,
     can_edit_asset_draft,
     can_set_requested_coding_scheme,
@@ -41,9 +43,10 @@ from apps.assets.permissions import (
     can_view_financial_fields,
     can_void_attachment_link,
     can_withdraw_asset,
-    scoped_assets,
     scoped_assets_p1,
 )
+from apps.masterdata.models import FixedAssetCategory
+from apps.assets.list_filters import (FILTER_LABELS, CHOICES, describe_list_filters, filter_asset_list, normalize_list_filters, with_ledger_status)
 from apps.assets.qr_forms import SingleLabelPrintForm
 from apps.assets.qr_permissions import can_manage_labels
 from apps.assets.lifecycle_permissions import (
@@ -63,16 +66,16 @@ from apps.assets.services import (
 )
 from apps.audit.services import request_audit_context, write_business_audit_log
 from apps.finance.permissions import can_manage_finance
+from apps.finance.readiness import finance_confirmation_pending
+from apps.assets.registration import create_registered_asset, register_asset
 from apps.masterdata.models import (
     AssetCategory,
     Attachment,
     Department,
     Employee,
-    InitializationSetting,
     Location,
 )
 from apps.masterdata.permissions import (
-    current_company,
     resolve_department_ids,
     role_names_for,
 )
@@ -94,17 +97,6 @@ ASSET_SERVICE_ERROR_LABELS = {
     "attachments": "资产照片",
     "custom_values": "动态字段",
 }
-
-
-def _company_and_gate():
-    company = current_company()
-    if company is None:
-        raise Http404("尚未配置启用公司。")
-    if not InitializationSetting.objects.filter(
-        company=company, initialization_completed=True
-    ).exists():
-        raise PermissionDenied("系统初始化尚未完成，资产建账入口暂不可用。")
-    return company
 
 
 def _service_error(form, exc):
@@ -145,27 +137,6 @@ def _audit_forbidden_fields(request, *, company, object_id=""):
     raise PermissionDenied("资产实物表单包含无权写入字段，已拒绝并记录安全事件。")
 
 
-def _object_queryset(user, company):
-    return scoped_assets(
-        user,
-        company,
-        Asset.objects.select_related(
-            "category",
-            "department",
-            "responsible_employee",
-            "location",
-            "requested_coding_scheme",
-            "created_by",
-            "submitted_by",
-            "finance",
-        ),
-    )
-
-
-def _asset_or_404(user, company, pk):
-    return get_object_or_404(_object_queryset(user, company), pk=pk)
-
-
 def _tree_path(node):
     if node is None:
         return "—"
@@ -191,42 +162,15 @@ def _configure_hierarchy_labels(form):
 
 
 def _form_sections(form):
-    return (
-        {
-            "title": "基本资料",
-            "fields": [
-                form[name]
-                for name in (
-                    "asset_name",
-                    "category",
-                    "brand",
-                    "model",
-                    "manufacturer",
-                    "serial_number",
-                    "factory_number",
-                    "historical_code",
-                    "quantity",
-                    "unit",
-                    "description",
-                    "notes",
-                )
-            ],
-        },
-        {
-            "title": "使用信息",
-            "fields": [
-                form[name]
-                for name in (
-                    "department",
-                    "responsible_employee",
-                    "location",
-                    "acquisition_date",
-                    "commissioning_date",
-                    "is_maintenance_required",
-                )
-            ],
-        },
-    )
+    sections = [
+        ("基本资料", ("asset_name", "category", "quantity", "unit", "serial_number"), False),
+        ("使用信息", ("department", "responsible_employee", "location", "acquisition_date", "commissioning_date", "is_maintenance_required"), False),
+        ("更多实物资料（选填）", ("brand", "model", "manufacturer", "factory_number", "historical_code", "vehicle_plate", "chassis_number", "calibration_number", "description", "notes"), True),
+    ]
+    if form.identity_enabled:
+        sections.insert(1, ("编码资料", ("management_attribute", "component_of", "coding_year", "coding_year_note"), False))
+    return tuple({"title": title, "fields": [form[name] for name in names], "optional": optional,
+                  "expanded": any(form[name].errors for name in names)} for title, names, optional in sections)
 
 
 def _custom_value(value):
@@ -287,20 +231,10 @@ def _custom_payload(custom_forms):
     }
 
 
-def _safe_filter(queryset, *, field, value, model, company):
-    if not value:
-        return queryset
-    try:
-        valid = model.objects.filter(company=company, pk=value).exists()
-    except (TypeError, ValueError, ValidationError):
-        valid = False
-    return queryset.filter(**{field: value}) if valid else queryset.none()
-
-
 @login_required
 def asset_list(request):
-    company = _company_and_gate()
-    scoped_queryset = _object_queryset(request.user, company)
+    company = asset_company_for_request()
+    scoped_queryset = asset_queryset_for_request(request.user, company)
     include_archived = request.GET.get("record_status") == "archived"
     base_queryset = scoped_queryset.filter(
         record_status=(
@@ -314,96 +248,22 @@ def asset_list(request):
     individual_durable_view = request.GET.get("view", "") == "individual_durable"
     p1_asset_ids = scoped_assets_p1(request.user, company).values("pk")
     list_has_p1 = not base_queryset.exclude(pk__in=p1_asset_ids).exists()
-    queryset = base_queryset
-    query = request.GET.get("q", "").strip()
-    if query:
-        search = (
-            Q(asset_code__icontains=query)
-            | Q(asset_name__icontains=query)
-            | Q(responsible_employee__name__icontains=query)
+    filter_errors = []
+    try:
+        filters = normalize_list_filters(request.GET, actor=request.user, company=company)
+        if not list_has_p1:
+            for key in ("maintenance_required", "has_serial_number", "has_attachments"):
+                filters[key] = ""
+        queryset = filter_asset_list(
+            with_ledger_status(base_queryset, company=company, actor=request.user),
+            filters, actor=request.user, company=company,
         )
-        if list_has_p1:
-            search |= (
-                Q(model__icontains=query)
-                | Q(serial_number__icontains=query)
-                | Q(factory_number__icontains=query)
-            )
-        draft_match = re.fullmatch(r"D-([0-9A-Fa-f]{1,8})", query)
-        if draft_match:
-            queryset = queryset.annotate(
-                _draft_uuid=Cast("id", output_field=CharField())
-            )
-            search |= Q(_draft_uuid__istartswith=draft_match.group(1))
-        queryset = queryset.filter(search)
-
-    filters = {
-        "category": request.GET.get("category", ""),
-        "department": request.GET.get("department", ""),
-        "employee": request.GET.get("employee", ""),
-        "location": request.GET.get("location", ""),
-        "asset_status": request.GET.get("asset_status", ""),
-        "record_status": request.GET.get("record_status", ""),
-        "accounting_treatment": (
-            request.GET.get("accounting_treatment", "")
-            if can_financial_filters
-            else ""
-        ),
-    }
-    queryset = _safe_filter(
-        queryset,
-        field="category_id",
-        value=filters["category"],
-        model=AssetCategory,
-        company=company,
-    )
-    queryset = _safe_filter(
-        queryset,
-        field="department_id",
-        value=filters["department"],
-        model=Department,
-        company=company,
-    )
-    queryset = _safe_filter(
-        queryset,
-        field="responsible_employee_id",
-        value=filters["employee"],
-        model=Employee,
-        company=company,
-    )
-    queryset = _safe_filter(
-        queryset,
-        field="location_id",
-        value=filters["location"],
-        model=Location,
-        company=company,
-    )
-    valid_statuses = {choice for choice, _ in Asset.AssetStatus.choices}
-    if filters["asset_status"]:
-        queryset = (
-            queryset.filter(asset_status=filters["asset_status"])
-            if filters["asset_status"] in valid_statuses
-            else queryset.none()
-        )
-    treatment = filters["accounting_treatment"]
-    if individual_durable_view:
-        queryset = queryset.filter(
-            finance__accounting_treatment="controlled_non_fixed",
-            finance__finance_confirmed_at__isnull=False,
-        )
-    elif treatment in {"fixed_asset", "controlled_non_fixed"}:
-        queryset = queryset.filter(
-            finance__accounting_treatment=treatment,
-            finance__finance_confirmed_at__isnull=False,
-        )
-    elif treatment == "unconfirmed":
-        queryset = queryset.filter(
-            Q(finance__isnull=True)
-            | Q(finance__finance_confirmed_at__isnull=True)
-            | Q(finance__accounting_treatment__isnull=True)
-        )
-    elif treatment:
-        queryset = queryset.none()
-
+    except ValidationError as exc:
+        filters = {key: request.GET.get(key, "") for key in FILTER_LABELS}
+        filter_errors = exc.messages
+        queryset = base_queryset.none()
+    query = filters["q"]
+    filter_query = urlencode({key: value for key, value in filters.items() if value})
     can_create = bool(roles.intersection(ASSET_GLOBAL_WRITE_ROLES)) or bool(
         "department_manager" in roles
         and resolve_department_ids(request.user, company)
@@ -413,10 +273,15 @@ def asset_list(request):
     employee_ids = base_queryset.exclude(responsible_employee_id=None).values(
         "responsible_employee_id"
     )
-    location_ids = base_queryset.exclude(location_id=None).values("location_id")
-    page = Paginator(queryset.order_by("-created_at"), 25).get_page(
+    from apps.masterdata.location_tree import LocationTree
+    location_ids = base_queryset.exclude(location_id=None).values_list("location_id", flat=True)
+    location_options = LocationTree(company).options(location_ids)
+    page = Paginator(queryset.order_by("-created_at", "id"), 25).get_page(
         request.GET.get("page")
     )
+    for item in page:
+        from apps.assets.status_display import label_status_display
+        item.current_label_display = label_status_display(item, item.current_label_status, item._identification_method)
     return render(
         request,
         "assets/asset_list.html",
@@ -425,7 +290,12 @@ def asset_list(request):
             "page": page,
             "query": query,
             "filters": filters,
-            "status_choices": Asset.AssetStatus.choices,
+            "filter_errors": filter_errors,
+            "filter_query": filter_query,
+            "extra_filters_open": any(filters.get(key) for key in ("fixed_asset_category", "maintenance_required", "label_status", "has_serial_number", "has_attachments", "initialized_from", "initialized_to", "created_from", "created_to")),
+            "label_choices": CHOICES["label_status"].items(),
+            "fixed_categories": FixedAssetCategory.objects.filter(company=company) if can_financial_filters else (),
+            "status_choices": CHOICES["asset_status"].items(),
             "categories": AssetCategory.objects.filter(pk__in=category_ids).order_by(
                 "category_level", "normalized_code"
             ),
@@ -435,10 +305,9 @@ def asset_list(request):
             "employees": Employee.objects.filter(pk__in=employee_ids).order_by(
                 "normalized_employee_no"
             ),
-            "locations": Location.objects.filter(pk__in=location_ids).order_by(
-                "level", "normalized_code"
-            ),
+            "locations": location_options,
             "list_has_p1": list_has_p1,
+            "list_column_count": 10 + (2 if list_has_p1 else 0) + (1 if can_financial_filters else 0),
             "can_create": can_create,
             "can_financial_filters": can_financial_filters,
             "individual_durable_view": individual_durable_view,
@@ -456,18 +325,81 @@ def asset_list(request):
     )
 
 
+@login_required
+def asset_list_export(request):
+    from django.utils.cache import add_never_cache_headers
+    from apps.reports.permissions import require_export_report
+    from apps.reports.queries import build_report_dataset, ReportValidationError
+    from apps.reports.services import generate_report_export
+
+    if request.method not in {"GET", "POST"}:
+        return HttpResponseNotAllowed(["GET", "POST"])
+    company = asset_company_for_request()
+    require_export_report(request.user, "asset_ledger")
+    source = request.POST if request.method == "POST" else request.GET
+    if set(source) - set(FILTER_LABELS) - {"csrfmiddlewaretoken", "idempotency_key"}:
+        from django.http import HttpResponseBadRequest
+        return HttpResponseBadRequest("包含不支持的台账筛选条件。")
+    errors, dataset, filters = [], None, {}
+    key = source.get("idempotency_key") or uuid.uuid4().hex
+    try:
+        filters = normalize_list_filters(source, actor=request.user, company=company)
+        payload = {"asset_list_filters": filters}
+        if request.method == "POST":
+            if not source.get("idempotency_key"):
+                raise ValidationError("导出请求已失效，请返回预览后重试。")
+            export = generate_report_export(
+                actor=request.user, company=company, report_key="asset_ledger",
+                filters=payload, idempotency_key=key, request=request,
+            )
+            return redirect("reports:export-detail", pk=export.pk)
+        dataset = build_report_dataset(actor=request.user, company=company, report_key="asset_ledger", filters=payload)
+    except (ValidationError, ReportValidationError) as exc:
+        errors = getattr(exc, "messages", None) or exc.errors
+    response = render(request, "assets/asset_export.html", {
+        "filters": filters, "filter_query": urlencode({k: v for k, v in filters.items() if v}),
+        "display_filters": describe_list_filters(filters, company=company),
+        "dataset": dataset, "preview_rows": dataset.rows[:100] if dataset else (),
+        "idempotency_key": key, "errors": errors,
+    }, status=400 if errors else 200)
+    add_never_cache_headers(response)
+    return response
+
+
 def _render_asset_form(request, *, company, asset=None):
+    action = request.POST.get("asset_action", "register" if asset is None else "draft")
+    registration_requested = asset is None and action == "register"
+    initial = {}
+    if asset is None and request.method == "GET":
+        if request.GET.get("source") == "individual_durable":
+            initial["management_attribute"] = "LV"
+        if request.GET.get("component_of"):
+            try:
+                parent_id = uuid.UUID(request.GET["component_of"])
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise Http404("主资产标识格式无效。") from exc
+            parent = get_object_or_404(scoped_assets_p1(request.user, company, Asset.objects.filter(
+                record_status="active", current_issued_code__identity__subitem_number=0,
+            ).select_related("current_issued_code__identity", "department", "responsible_employee", "location", "category")),
+                pk=parent_id)
+            initial.update({name: getattr(parent, name) for name in ("category", "department", "responsible_employee", "location", "unit")})
+            initial.update({"component_of": parent, "management_attribute": parent.identity.management_attribute,
+                            "coding_year": parent.identity.coding_year, "coding_year_note": parent.identity.year_note})
     form = AssetDraftForm(
         request.POST or None,
         actor=request.user,
         company=company,
         instance=asset,
+        registration_requested=registration_requested,
+        initial=initial,
     )
     _configure_hierarchy_labels(form)
     form_valid = form.is_valid() if request.method == "POST" else False
     category = _selected_category(
         request, company, asset=asset, form=form if form_valid else None
     )
+    if request.method == "GET" and initial.get("category") is not None:
+        category = initial["category"]
     custom_forms = _custom_value_forms(
         request, company=company, category=category, asset=asset
     )
@@ -478,20 +410,38 @@ def _render_asset_form(request, *, company, asset=None):
     )
     if request.method == "POST" and form_valid and custom_valid:
         try:
+            if action not in {"register", "draft"}:
+                raise ValidationError("未知的资产保存动作。")
+            if asset is not None and action == "register":
+                raise ValidationError("请保存草稿后，从资产详情办理实物建档。")
+            asset_data = {
+                key: value for key, value in form.cleaned_data.items()
+                if key != "idempotency_key"
+            }
             if asset is None:
-                saved = create_asset_draft(
+                create_service = create_registered_asset if registration_requested else create_asset_draft
+                registration_options = (
+                    {"idempotency_key": form.cleaned_data["idempotency_key"]}
+                    if registration_requested else {}
+                )
+                saved = create_service(
                     actor=request.user,
                     company=company,
-                    data=form.cleaned_data,
+                    data=asset_data,
                     custom_values=_custom_payload(custom_forms),
                     request=request,
+                    **registration_options,
                 )
-                messages.success(request, "资产草稿已创建；尚未生成正式编号。")
+                messages.success(
+                    request,
+                    f"资产 {saved.asset_code} 已建立，可办理标签和日常管理；照片和财务资料可以后补。"
+                    if registration_requested else "资产草稿已保存，可继续补充实物资料。",
+                )
             else:
                 saved = update_asset_draft(
                     actor=request.user,
                     asset=asset,
-                    data=form.cleaned_data,
+                    data=asset_data,
                     custom_values=_custom_payload(custom_forms),
                     request=request,
                 )
@@ -529,7 +479,7 @@ def _render_asset_form(request, *, company, asset=None):
 
 @login_required
 def asset_create(request):
-    company = _company_and_gate()
+    company = asset_company_for_request()
     if request.method not in {"GET", "POST"}:
         return HttpResponseNotAllowed(["GET", "POST"])
     if request.method == "POST":
@@ -539,8 +489,8 @@ def asset_create(request):
 
 @login_required
 def asset_edit(request, pk):
-    company = _company_and_gate()
-    asset = _asset_or_404(request.user, company, pk)
+    company = asset_company_for_request()
+    asset = asset_or_404(request.user, company, pk)
     if request.method not in {"GET", "POST"}:
         return HttpResponseNotAllowed(["GET", "POST"])
     if request.method == "POST":
@@ -552,12 +502,13 @@ def asset_edit(request, pk):
 
 @login_required
 def asset_detail(request, pk):
-    company = _company_and_gate()
-    asset = _asset_or_404(request.user, company, pk)
+    company = asset_company_for_request()
+    asset = asset_or_404(request.user, company, pk)
     can_p1 = can_view_asset_p1(request.user, asset)
     can_summary_fields = can_view_asset_summary_fields(request.user, asset)
     can_financial = can_view_financial_fields(request.user)
     can_manage_financial = can_manage_finance(request.user)
+    finance_pending = finance_confirmation_pending(asset)
     roles = role_names_for(request.user)
     current_qr = asset.qr_identities.filter(status="active").first()
     can_manage_label_actions = can_manage_labels(request.user, asset)
@@ -643,6 +594,7 @@ def asset_detail(request, pk):
             "can_summary_fields": can_summary_fields,
             "can_financial": can_financial,
             "can_manage_financial": can_manage_financial,
+            "finance_pending": finance_pending,
             "location_path": _tree_path(asset.location),
             "category_path": _tree_path(asset.category),
             "custom_values": [
@@ -667,6 +619,26 @@ def asset_detail(request, pk):
                 else None
             ),
             "archived": archived,
+            "can_create_component": bool(asset.identity and asset.identity.subitem_number == 0
+                and not archived and asset.asset_status in {"pending_label", "in_use", "idle", "under_repair"}
+                and can_create_asset_draft(request.user, company, asset.department) and can_p1),
+            "identity_parent": asset.component_of if asset.component_of_id and can_view_asset_p1(request.user, asset.component_of) else None,
+            "identity_components": scoped_assets_p1(request.user, company, asset.components.select_related(
+                "current_issued_code__identity").order_by("created_at")) if can_p1 else [],
+            "can_manage_trace": bool(can_p1 and asset.current_issued_code_id and not archived and not terminal
+                and can_create_asset_draft(request.user, company, asset.department)),
+            "origin_incoming": asset.origin_incoming.filter(source_asset__in=scoped_assets_p1(request.user, company))
+                .select_related("source_asset", "source_issued_code", "reversal__recorded_by").order_by("recorded_at") if can_p1 else [],
+            "origin_outgoing": asset.origin_outgoing.filter(target_asset__in=scoped_assets_p1(request.user, company))
+                .select_related("target_asset", "target_issued_code", "reversal").order_by("recorded_at") if can_p1 else [],
+            "composition": asset.composition_revisions.first() if can_p1 else None,
+            "composition_history": asset.composition_revisions.defer("members").select_related("recorded_by")[:10] if can_p1 else [],
+            "custody_return_record": getattr(asset, "custody_return_record", None) if can_p1 else None,
+            "custody_return_history": asset.custody_returns.select_related("recorded_by", "reversal__recorded_by").order_by("-recorded_at") if can_p1 else [],
+            "can_correct_trace": bool(can_p1 and not archived and can_create_asset_draft(request.user, company, asset.department)),
+            "can_return_custody": bool(can_p1 and asset.current_issued_code_id and not archived
+                and asset.management_attribute == "LS" and not getattr(asset, "custody_return_record", None)
+                and can_create_asset_draft(request.user, company, asset.department)),
             "terminal": terminal,
             "active_loan": active_loan,
             "latest_disposal": latest_disposal,
@@ -700,49 +672,45 @@ def asset_detail(request, pk):
 
 @login_required
 def asset_submit(request, pk):
-    company = _company_and_gate()
-    asset = _asset_or_404(request.user, company, pk)
+    company = asset_company_for_request()
+    asset = asset_or_404(request.user, company, pk)
     if request.method not in {"GET", "POST"}:
         return HttpResponseNotAllowed(["GET", "POST"])
-    if request.method == "POST" and asset.asset_status == Asset.AssetStatus.PENDING_FINANCE:
-        submit_asset_for_finance(actor=request.user, asset=asset, request=request)
-        messages.info(request, "该资产已经处于待财务确认状态，未重复写入记录。")
+    # Resolve a repeated registration before constructing a draft-only form.
+    if request.method == "POST" and asset.current_issued_code_id is not None:
+        try:
+            register_asset(
+                actor=request.user, asset=asset,
+                idempotency_key=request.POST.get("idempotency_key"), request=request,
+            )
+        except ValidationError:
+            return HttpResponseBadRequest("建档请求与已保存记录不一致，请刷新资产详情。")
+        messages.info(request, "资产已建立，未重复生成编号。")
         return redirect("assets:asset-detail", pk=asset.pk)
-    form = AssetSubmitForm(
-        request.POST or None, actor=request.user, asset=asset
-    )
+    form = AssetSubmitForm(request.POST or None, actor=request.user, asset=asset)
     if request.method == "POST" and form.is_valid():
         try:
-            asset = submit_asset_for_finance(
-                actor=request.user, asset=asset, request=request
+            registered = register_asset(
+                actor=request.user, asset=asset,
+                idempotency_key=form.cleaned_data["idempotency_key"], request=request,
             )
         except ValidationError as exc:
             _service_error(form, exc)
         else:
-            messages.success(
-                request,
-                "资产已提交财务确认。财务确认完成后，系统才会生成正式编号和二维码。",
-            )
-            return redirect("assets:asset-detail", pk=asset.pk)
-    return render(
-        request,
-        "assets/action_form.html",
-        {
-            "asset": asset,
-            "form": form,
-            "title": "提交财务确认",
-            "description": "提交后只进入待财务确认，不生成正式编号或二维码。",
-            "button_label": "确认提交",
-            "button_class": "primary",
-            "show_asset_edit": True,
-        },
-    )
+            messages.success(request, f"资产 {registered.asset_code} 已建立；无需等待财务复核，照片可以后补。")
+            return redirect("assets:asset-detail", pk=registered.pk)
+    return render(request, "assets/action_form.html", {
+        "asset": asset, "form": form, "title": "建立实物资产",
+        "description": "本次建立正式编号和二维码。照片可后补；财务在资料齐备后另行确认折旧。",
+        "button_label": "确认建档", "button_class": "primary",
+        "show_asset_edit": can_edit_asset_draft(request.user, asset),
+    })
 
 
 @login_required
 def asset_withdraw(request, pk):
-    company = _company_and_gate()
-    asset = _asset_or_404(request.user, company, pk)
+    company = asset_company_for_request()
+    asset = asset_or_404(request.user, company, pk)
     if request.method not in {"GET", "POST"}:
         return HttpResponseNotAllowed(["GET", "POST"])
     form = AssetWithdrawForm(
@@ -777,8 +745,8 @@ def asset_withdraw(request, pk):
 
 @login_required
 def asset_delete(request, pk):
-    company = _company_and_gate()
-    asset = _asset_or_404(request.user, company, pk)
+    company = asset_company_for_request()
+    asset = asset_or_404(request.user, company, pk)
     if request.method not in {"GET", "POST"}:
         return HttpResponseNotAllowed(["GET", "POST"])
     form = AssetDeleteForm(request.POST or None, actor=request.user, asset=asset)
@@ -811,8 +779,8 @@ def asset_delete(request, pk):
 
 @login_required
 def requested_scheme(request, pk):
-    company = _company_and_gate()
-    asset = _asset_or_404(request.user, company, pk)
+    company = asset_company_for_request()
+    asset = asset_or_404(request.user, company, pk)
     if request.method not in {"GET", "POST"}:
         return HttpResponseNotAllowed(["GET", "POST"])
     form = RequestedCodingSchemeForm(
@@ -840,16 +808,26 @@ def requested_scheme(request, pk):
 
 @login_required
 def attachment_upload(request, pk):
-    company = _company_and_gate()
-    asset = _asset_or_404(request.user, company, pk)
+    company = asset_company_for_request()
+    asset = asset_or_404(request.user, company, pk)
     if request.method not in {"GET", "POST"}:
         return HttpResponseNotAllowed(["GET", "POST"])
+    initial = {}
+    if request.GET.get("role") == "photo" and can_create_attachment_link(request.user, asset, "A0"):
+        initial = {"role": "photo", "security_class": "A0"}
+    elif request.GET.get("role") == "invoice" and can_create_attachment_link(request.user, asset, "A1"):
+        initial = {"role": "invoice", "security_class": "A1"}
     form = AssetAttachmentUploadForm(
         request.POST or None,
         request.FILES or None,
         actor=request.user,
         asset=asset,
+        initial=initial,
     )
+    if initial.get("role") == "photo":
+        form.fields["file"].widget.attrs.update({
+            "accept": "image/jpeg,image/png,image/webp", "capture": "environment",
+        })
     if request.method == "POST" and form.is_valid():
         try:
             upload_asset_attachment(
@@ -868,14 +846,14 @@ def attachment_upload(request, pk):
     return render(
         request,
         "assets/attachment_upload.html",
-        {"asset": asset, "form": form},
+        {"asset": asset, "form": form, "photo_capture": initial.get("role") == "photo"},
     )
 
 
 @login_required
 def attachment_download(request, asset_pk, pk):
-    company = _company_and_gate()
-    asset = _asset_or_404(request.user, company, asset_pk)
+    company = asset_company_for_request()
+    asset = asset_or_404(request.user, company, asset_pk)
     link = get_object_or_404(
         AttachmentLink.objects.select_related("attachment", "asset"),
         pk=pk,
@@ -925,8 +903,8 @@ def attachment_download(request, asset_pk, pk):
 
 @login_required
 def attachment_void(request, asset_pk, pk):
-    company = _company_and_gate()
-    asset = _asset_or_404(request.user, company, asset_pk)
+    company = asset_company_for_request()
+    asset = asset_or_404(request.user, company, asset_pk)
     if request.method not in {"GET", "POST"}:
         return HttpResponseNotAllowed(["GET", "POST"])
     link = get_object_or_404(

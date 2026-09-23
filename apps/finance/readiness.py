@@ -1,0 +1,52 @@
+"""Financial confirmation is independent from an asset's physical state."""
+
+from django.db.models import Q
+
+
+FINANCE_CONFIRMABLE_STATES = (
+    "pending_label", "in_use", "idle", "loaned", "under_repair", "pending_disposal",
+)
+
+
+def missing_finance_base_fields(asset):
+    """Describe missing saved inputs, without claiming a policy or invoice is valid."""
+    finance = getattr(asset, "finance", None)
+    missing = []
+    if finance is None or not finance.accounting_treatment:
+        missing.append("会计认定")
+    if finance is None or finance.original_cost is None:
+        missing.append("原值")
+    if finance is not None and finance.accounting_treatment == "fixed_asset":
+        if finance.fixed_asset_category_id is None:
+            missing.append("固定资产会计类别")
+        if finance.capitalization_date is None:
+            missing.append("资本化日期")
+        if asset.commissioning_date is None:
+            missing.append("达到可使用状态日期")
+    return missing
+
+
+def pending_finance_assets(queryset):
+    """Filter an already company/permission-scoped queryset."""
+    return queryset.filter(
+        Q(asset_status="pending_finance")
+        | Q(asset_status__in=FINANCE_CONFIRMABLE_STATES, current_issued_code__isnull=False),
+        record_status="active",
+        finance__finance_confirmed_at__isnull=True,
+    )
+
+
+def finance_confirmation_pending(asset):
+    if asset.record_status != "active":
+        return False
+    eligible = asset.asset_status == "pending_finance" or (
+        asset.asset_status in FINANCE_CONFIRMABLE_STATES and asset.current_issued_code_id is not None
+    )
+    if not eligible:
+        return False
+    from apps.finance.models import AssetFinance
+
+    return not AssetFinance.objects.filter(
+        asset_id=asset.pk, company_id=asset.company_id,
+        finance_confirmed_at__isnull=False,
+    ).exists()

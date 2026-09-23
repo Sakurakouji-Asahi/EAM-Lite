@@ -188,7 +188,7 @@ def test_employee_user_unique_and_scope_company_database_guard():
         (Location, {"location_type": "site"}, "level"),
         (
             AssetCategory,
-            {"category_type": "equipment"},
+            {},
             "category_level",
         ),
     ],

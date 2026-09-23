@@ -433,6 +433,8 @@ def department_list(request):
 
 @login_required
 def employee_list(request):
+    from apps.masterdata.directory import prepare_employee_directory
+
     require_view_masterdata(request.user, "employee")
     company = _company_or_404()
     queryset = scoped_employees(
@@ -440,6 +442,18 @@ def employee_list(request):
         company,
         Employee.objects.select_related("department", "user"),
     )
+    department_options = list(Department.objects.filter(
+        company=company, pk__in=queryset.values("department_id")
+    ).order_by("normalized_code"))
+    selected_department = request.GET.get("department", "").strip()
+    filter_errors = []
+    if selected_department:
+        allowed = {str(item.pk): item for item in department_options}
+        if selected_department not in allowed:
+            filter_errors.append("部门无效或不在当前账号的可选范围内。")
+            queryset = queryset.none()
+        else:
+            queryset = queryset.filter(department=allowed[selected_department])
     q = request.GET.get("q", "").strip()
     if q:
         queryset = queryset.filter(
@@ -451,11 +465,27 @@ def employee_list(request):
     employment_status = request.GET.get("employment_status", "")
     if employment_status in {"active", "leaving", "resigned"}:
         queryset = queryset.filter(employment_status=employment_status)
+    position = request.GET.get("position", "").strip()
+    source_mark = request.GET.get("source_mark", "").strip()
+    queryset, positions, sources = prepare_employee_directory(
+        queryset.order_by("normalized_employee_no"), position=position, source_mark=source_mark
+    )
+    if position and position not in positions:
+        filter_errors.append("当前筛选范围内没有所选岗位，请重新选择或清除筛选。")
+    if source_mark and source_mark not in sources:
+        filter_errors.append("当前筛选范围内没有所选人员标记，请重新选择或清除筛选。")
     return render(
         request,
         "masterdata/employee_list.html",
         {
-            "objects": queryset.order_by("normalized_employee_no"),
+            "objects": queryset,
+            "department_options": department_options,
+            "selected_department": selected_department,
+            "position_options": positions,
+            "source_options": sources,
+            "position": position,
+            "source_mark": source_mark,
+            "filter_errors": filter_errors,
             "q": q,
             "status": status,
             "employment_status": employment_status,
@@ -633,12 +663,16 @@ def _preview_context(request, scheme):
     ).order_by("category_level", "pk").last()
     department = Department.objects.filter(company=company, is_active=True).first()
     effective_date = scheme.effective_from or timezone.localdate()
-    return {
+    context = {
         "company": company,
         "category": category,
         "department": department,
         "effective_date": effective_date,
     }
+    from apps.coding.standard import is_standard_segments
+    if is_standard_segments(list(scheme.segments.all())):
+        context.update({"management_attribute": "FA", "coding_year": timezone.localdate().year, "subitem_number": 0})
+    return context
 
 
 @login_required
@@ -678,7 +712,8 @@ def coding_scheme_action(request, pk, action):
     scheme = _company_object_or_404(AssetCodingScheme, pk, company)
     try:
         if action == "activate":
-            activate_scheme(actor=request.user, scheme=scheme, request=request)
+            from apps.coding.presets import activate_standard_version
+            activate_standard_version(actor=request.user, scheme=scheme, request=request)
             message = "编码方案已启用。"
         elif action == "retire":
             retire_scheme(actor=request.user, scheme=scheme, request=request)
@@ -807,7 +842,6 @@ def category_detail(request, pk):
             "name",
             "parent",
             "category_level",
-            "category_type",
             "default_coding_scheme",
             "is_maintenance_required_default",
             "is_active",
@@ -1441,10 +1475,11 @@ SETUP_STEPS = {
         "writer": "system_admin",
     },
     7: {
-        "name": "折旧规则与财务参数",
+        "name": "折旧规则与财务参数（可后补）",
         "flag": "finance_rules_configured",
         "url": "finance:policy-list",
         "writer": "finance",
+        "optional_for_registration": True,
     },
     8: {
         "name": "用户、角色及部门数据范围",

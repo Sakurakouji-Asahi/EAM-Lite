@@ -1,5 +1,9 @@
 # Codex Task — Sprint 5：初始化建账与资产 Excel 导入
 
+> **历史 Sprint 任务 · 2026-09-09**
+> 以下为当时的 AI 任务原文，保留作追溯；不构成新的执行授权或全项目长期限制。用户指定该 Sprint 时仍需核对后续改动。
+> 当前协作依据见 [AGENTS.md](../AGENTS.md) 与 [文档定位和状态](../docs/README.md)。
+
 ## 前置
 
 - Sprint 0–4 已验收通过，完整测试通过。

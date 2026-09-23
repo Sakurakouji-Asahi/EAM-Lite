@@ -65,12 +65,13 @@ def test_asset_schema_contains_no_batch_or_partial_quantity_fields():
 
 def test_physical_category_does_not_store_accounting_classification():
     company = make_company()
-    equipment = make_category(company, "MOLD", category_type="mold")
+    equipment = make_category(company, "MOLD")
     asset = direct_draft(company, equipment)
 
     asset_fields = {field.name for field in Asset._meta.get_fields()}
     category_fields = {field.name for field in equipment._meta.get_fields()}
-    assert asset.category.category_type == "mold"
+    assert asset.category.code == "MOLD"
+    assert "category_type" not in category_fields
     assert "accounting_treatment" not in asset_fields
     assert "fixed_asset_category" not in asset_fields
     assert "accounting_treatment" not in category_fields

@@ -189,7 +189,6 @@ def make_category(
     code: str = "EQ",
     *,
     parent=None,
-    category_type: str = "equipment",
     active: bool = True,
 ):
     return AssetCategory.objects.create(
@@ -198,7 +197,6 @@ def make_category(
         normalized_code=code.casefold(),
         name=f"{code} 实物分类",
         parent=parent,
-        category_type=category_type,
         is_active=active,
     )
 

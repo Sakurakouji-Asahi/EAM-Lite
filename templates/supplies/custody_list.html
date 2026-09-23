@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}耐用品保管 - EAM-Lite{% endblock %}
+{% block title %}耐用品数量保管 - EAM-Lite{% endblock %}
 {% block content %}
-<header class="app-page-header"><div><h1 class="h3 mb-1">耐用品保管</h1><p class="text-secondary mb-0">查看数量型耐用品的当前责任，并按权限办理归还、转交、报损或报废。</p></div><a class="btn btn-outline-primary" href="{% url 'supplies:my-custodies' %}">我的领用与保管</a></header>
+<header class="app-page-header"><div><h1 class="h3 mb-1">耐用品数量保管</h1><p class="text-secondary mb-0">查看低值耐用品领用后的部门、人员及保管数量，办理归还、转交、报损或报废；逐件编号的耐用品在逐件资产中管理。</p></div><a class="btn btn-outline-primary" href="{% url 'supplies:my-custodies' %}">我的领用与保管</a></header>
 <form method="get" class="card shadow-sm mb-3"><div class="card-body row g-2">
   <div class="col-md-3"><label class="form-label" for="custody-search">关键字</label><input class="form-control" type="search" id="custody-search" name="q" value="{{ query }}" placeholder="物品、部门、员工或单据号"></div>
   <div class="col-md-2"><label class="form-label" for="custody-item">物品编码</label><input class="form-control" id="custody-item" name="item" value="{{ selected_item }}"></div>

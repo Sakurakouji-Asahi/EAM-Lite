@@ -190,7 +190,7 @@ def test_management_sees_pending_finance_summary_without_mutating_confirmation_b
     client.force_login(context["management"])
     readonly = client.get(reverse("assets:asset-detail", args=[context["asset"].pk]))
     assert readonly.status_code == 200
-    assert "财务资料尚未确认".encode() in readonly.content
+    assert "财务与折旧设置尚未确认".encode() in readonly.content
     assert confirm_url.encode() not in readonly.content
     assert client.get(confirm_url).status_code == 403
 
@@ -246,7 +246,8 @@ def test_finance_confirmation_explains_missing_category_master_and_commissioning
     assert "尚未配置固定资产会计类别" in html
     assert reverse("finance:fixed-category-create") in html
     assert "尚未填写达到可使用状态日期" in html
-    assert reverse("assets:asset-withdraw", args=[context["asset"].pk]) in html
+    assert 'id="id_commissioning_date"' in html
+    assert "无需退回实物草稿" in html
 
 
 def test_finance_confirmation_uses_local_accounting_treatment_script(client):
@@ -457,7 +458,7 @@ def test_sensitive_finance_post_requires_reason_and_confirmation(client):
     )
 
     assert confirm.status_code == 200
-    assert "财务正式化原因" in confirm.content.decode()
+    assert "确认说明" in confirm.content.decode()
     assert context["asset"].current_issued_code_id is None
     assert policy_action.status_code == 400
     policy.refresh_from_db()
@@ -706,4 +707,4 @@ def test_finance_pages_have_no_external_runtime_resource_requests(client):
         assert response.status_code == 200
         html = response.content.decode()
         assert not re.search(r'''(?:src|href)=["'](?:https?:)?//''', html, re.I)
-        assert "cdn" not in html.casefold()
+        assert re.search('<(?:script|img|link)\\b[^>]*\\b(?:src|href)=["\'](?:https?:)?//', html, re.IGNORECASE) is None

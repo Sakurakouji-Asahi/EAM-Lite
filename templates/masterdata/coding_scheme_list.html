@@ -3,7 +3,7 @@
 {% block content %}
 <header class="app-page-header">
   <div><h1 class="h3 mb-1">编码规则</h1><p class="text-secondary mb-0">版本化配置；预览不占用正式序号。</p></div>
-  {% if can_manage %}<a class="btn btn-primary" href="{% url 'masterdata:coding-scheme-create' %}">新增方案草稿</a>{% endif %}
+  {% if can_manage %}<div class="d-flex gap-2 flex-wrap"><a class="btn btn-primary" href="{% url 'masterdata:standard-coding-setup' %}">采用统一编码规则</a><a class="btn btn-outline-secondary" href="{% url 'masterdata:coding-scheme-create' %}">自定义方案</a></div>{% endif %}
 </header>
 <div class="table-responsive card shadow-sm"><table class="table table-hover align-middle mb-0">
   <thead><tr><th>稳定键 / 版本</th><th>名称</th><th>状态</th><th>默认</th><th>重置</th><th>生效期</th><th>操作</th></tr></thead>

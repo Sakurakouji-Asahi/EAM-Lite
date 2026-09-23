@@ -1,12 +1,20 @@
 # User Acceptance Test and Traceability V1.1
 
+> **AI 设计参考 · 2026-09-09**
+> 原文保留历史方案和案例，不代表用户逐条确认；强制措辞及固定 Sprint 限制不自动适用于当前任务。
+> 当前协作依据见 [AGENTS.md](../AGENTS.md) 与 [文档定位和状态](README.md)。
+
+> **用户确认的后续变化 · 2026-09-09：** 新资产先实物建档并生成编号，照片可后补；财务资料齐备后另行确认折旧。与下文旧阶段描述不一致时，以 [实物建档与财务分离](Asset-Registration-and-Finance-2026-09-09.md) 的明确变化为准，其他规则按相关性核对。
+
+当前实现对应：[自动测试](../tests/) 和 [历史全系统 UAT 记录](Sprint-12-UAT-Evidence.md)。场景描述与实际执行证据分开使用。
+
 ## 1. Acceptance method
 
 Run UAT on the intended LAN deployment using PostgreSQL, production-like settings and a copy of non-sensitive test attachments. Record tester, date, build/commit, result and evidence for every case.
 
 A case is accepted only when its expected result is demonstrated and no open severity-P0/P1 defect affects the flow. Failed cases must be corrected and rerun; they may not be waived by deleting tests or changing expected results after implementation.
 
-## 2. Normative test data
+## 2. Historical UAT test-data proposal
 
 Prepare at least:
 - 1 company, 5 departments, 12 employees and a three-level location tree

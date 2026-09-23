@@ -188,6 +188,19 @@ class TrustedProxyClientIpMiddleware:
         return self.get_response(request)
 
 
+class RequestRoleCacheMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if request.method not in {"GET", "HEAD"}:
+            return self.get_response(request)
+        from apps.accounts.role_cache import cache_request_roles
+
+        with cache_request_roles():
+            return self.get_response(request)
+
+
 class CorrelationIdMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response

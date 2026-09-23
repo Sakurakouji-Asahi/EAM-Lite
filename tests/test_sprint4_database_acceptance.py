@@ -367,21 +367,21 @@ def test_database_allows_draft_batch_to_record_confirming_actor():
 
 
 def test_formalization_failure_rolls_back_every_side_effect(monkeypatch):
+    from apps.assets.models import AssetRegistration
+
     require_postgresql()
     context = _pending_asset_context(prefix="S4ROLLBACK")
     before = {
+        "registration": AssetRegistration.objects.count(),
         "finance": AssetFinance.objects.count(),
         "counter": SequenceCounter.objects.count(),
         "issued": IssuedCode.objects.count(),
         "qr": AssetQrIdentity.objects.count(),
         "request": FinanceFormalizationRequest.objects.count(),
     }
-    calls = 0
 
     def fail_second_audit(**_kwargs):
-        nonlocal calls
-        calls += 1
-        if calls == 2:
+        if _kwargs.get("action") == "asset_finance_confirm":
             raise RuntimeError("forced audit failure")
 
     monkeypatch.setattr("apps.finance.services._audit", fail_second_audit)
@@ -393,6 +393,7 @@ def test_formalization_failure_rolls_back_every_side_effect(monkeypatch):
     assert context["asset"].asset_code is None
     assert context["asset"].current_issued_code_id is None
     assert {
+        "registration": AssetRegistration.objects.count(),
         "finance": AssetFinance.objects.count(),
         "counter": SequenceCounter.objects.count(),
         "issued": IssuedCode.objects.count(),

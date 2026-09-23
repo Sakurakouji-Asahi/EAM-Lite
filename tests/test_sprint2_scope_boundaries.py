@@ -17,7 +17,7 @@ APP_ROOT = REPOSITORY_ROOT / "apps"
 
 # "generate" on its own is intentionally not forbidden: Sprint 2 includes
 # preview generation.  These tokens describe an unbound *official* allocation
-# surface, which is reserved for Sprint 4.
+# surface. Official issuance must remain internal to a bound business transaction.
 FORBIDDEN_PUBLIC_TOKEN = re.compile(
     r"(?:^|[-_/.])(?:issue|issuer|issuance|allocate|allocation|formal[-_]?code)"
     r"(?:$|[-_/.])",

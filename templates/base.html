@@ -13,6 +13,7 @@
   <script src="{% static 'vendor/htmx/2.0.10/htmx.min.js' %}" defer></script>
   <script src="{% static 'vendor/bootstrap/5.3.8/js/bootstrap.bundle.min.js' %}" defer></script>
   <script src="{% static 'js/app.js' %}?v=20260831-usability1" defer></script>
+  <script src="{% static 'js/assignment-forms.js' %}?v=20260907" defer></script>
 </head>
 <body class="app-body">
   <a class="skip-link" href="#main-content">跳到主要内容</a>
@@ -51,7 +52,7 @@
         {% endif %}
         <div class="app-topbar-actions">
           {% if app_navigation.asset.can_create %}
-            <a class="btn app-quick-create d-none d-md-inline-flex" href="{% url 'assets:asset-create' %}" data-topbar-asset-create>新增资产</a>
+            <a class="btn app-quick-create d-none d-md-inline-flex" href="{% url 'assets:asset-create' %}" data-topbar-asset-create>新增逐件资产</a>
           {% endif %}
           <div class="dropdown">
             <button class="app-user-menu dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">

@@ -1,4 +1,7 @@
-{% if field.field.widget.input_type == "checkbox" %}
+{% if field.is_hidden %}
+  {{ field }}
+  {% if field.errors %}<div class="alert alert-danger" role="alert">页面状态校验未通过，请刷新页面后重试。</div>{% endif %}
+{% elif field.field.widget.input_type == "checkbox" %}
   <div class="form-check mb-3">
     {{ field }}
     <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %}<span class="required-mark" aria-hidden="true">*</span><span class="visually-hidden">必填</span>{% endif %}</label>

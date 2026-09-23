@@ -1,22 +1,28 @@
-"""Chinese, permission-bound forms for the Sprint 3 asset master."""
+"""Chinese, permission-bound physical asset and attachment forms."""
+
+import uuid
 
 from django import forms
+from apps.core.form_widgets import normalize_date_widgets
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db.models import Q
 from django.utils import timezone
 
 from apps.assets.models import Asset, AssetCustomField, AttachmentLink
 from apps.assets.permissions import (
+    assignable_asset_departments,
     ASSET_GLOBAL_WRITE_ROLES,
     can_create_attachment_link,
     can_delete_asset_draft,
     can_set_requested_coding_scheme,
     can_submit_asset,
     can_void_attachment_link,
+    scoped_assets_p1,
     can_withdraw_asset,
     require_edit_asset_draft,
 )
 from apps.assets.services import FINANCIAL_FIELD_NAMES
+from apps.assets.form_options import link_assignment_options
 from apps.masterdata.models import (
     AssetCategory,
     AssetCodingScheme,
@@ -28,6 +34,7 @@ from apps.masterdata.permissions import resolve_department_ids, role_names_for
 
 
 def _bootstrap_widgets(form):
+    normalize_date_widgets(form)
     for field in form.fields.values():
         widget = field.widget
         if isinstance(widget, forms.CheckboxInput):
@@ -39,13 +46,18 @@ def _bootstrap_widgets(form):
 
 
 class AssetDraftForm(forms.ModelForm):
+    idempotency_key = forms.CharField(
+        widget=forms.HiddenInput, initial=uuid.uuid4, required=False, max_length=200,
+        label="页面校验信息",
+        error_messages={"required": "页面校验信息已失效，请刷新后重新建档。"},
+    )
     quantity = forms.IntegerField(
         label="数量",
         initial=1,
         min_value=1,
         max_value=1,
         widget=forms.NumberInput(attrs={"readonly": "readonly"}),
-        help_text="V1 每条记录代表一件实物；相同多件请分别建档。",
+        help_text="每条档案代表一个独立管理对象；相同多件可分别建档，组合成员数量另行记录。",
     )
 
     class Meta:
@@ -68,8 +80,11 @@ class AssetDraftForm(forms.ModelForm):
             "commissioning_date",
             "is_maintenance_required",
             "notes",
+            "management_attribute", "coding_year", "coding_year_note", "component_of",
+            "vehicle_plate", "chassis_number", "calibration_number",
         )
         labels = {
+            "component_of": "所属主资产（仅组件填写）",
             "asset_name": "资产名称",
             "category": "实物分类",
             "brand": "品牌",
@@ -95,12 +110,13 @@ class AssetDraftForm(forms.ModelForm):
             "commissioning_date": forms.DateInput(attrs={"type": "date"}),
         }
 
-    def __init__(self, *args, actor=None, company=None, **kwargs):
+    def __init__(self, *args, actor=None, company=None, registration_requested=False, **kwargs):
         if actor is None or company is None:
             raise PermissionDenied("资产表单必须绑定当前操作用户和公司。")
         self.actor = actor
         self.company = company
         super().__init__(*args, **kwargs)
+        self.fields["idempotency_key"].required = registration_requested
         # ModelForm runs ``Asset.clean()`` before the Service executes; bind
         # the immutable company boundary now so cross-company validation is
         # accurate for a new unsaved draft.
@@ -114,12 +130,7 @@ class AssetDraftForm(forms.ModelForm):
         ):
             raise PermissionDenied("您没有新建资产草稿的权限。")
 
-        department_ids = None
-        if not roles.intersection(ASSET_GLOBAL_WRITE_ROLES):
-            department_ids = resolve_department_ids(actor, company)
-        departments = Department.objects.filter(company=company, is_active=True)
-        if department_ids is not None:
-            departments = departments.filter(pk__in=department_ids)
+        departments = assignable_asset_departments(actor, company)
         self.fields["department"].queryset = departments.order_by("normalized_code")
         self.fields["responsible_employee"].queryset = Employee.objects.filter(
             company=company,
@@ -136,12 +147,33 @@ class AssetDraftForm(forms.ModelForm):
             .filter(children__isnull=True)
             .order_by("level", "normalized_code")
         )
+        self.fields["component_of"].queryset = scoped_assets_p1(actor, company, Asset.objects.filter(
+            record_status="active", asset_status__in=("pending_label", "in_use", "idle", "under_repair"),
+            current_issued_code__identity__subitem_number=0,
+        ).select_related("current_issued_code__identity", "department")).exclude(pk=self.instance.pk)
+        self.fields["component_of"].label_from_instance = lambda value: f"{value.asset_code} · {value.asset_name}"
+        self.fields["component_of"].help_text = "普通资产留空；组件沿用主资产的属性、编码类别、年份和流水。"
+        self.fields["coding_year"].help_text = "按首次验收或纳管年份填写；留空时优先使用购置年份，取得日期也未填写时使用本次纳管年份。"
+        self.fields["coding_year_note"].help_text = "单独指定取得年份时填写依据，例如原验收单、合同或历史补录资料。"
+        self.fields["coding_year"].min_value = 1000
+        self.fields["coding_year"].max_value = timezone.localdate().year
+        self.identity_enabled = AssetCodingScheme.objects.filter(company=company, status="active",
+            segments__segment_type="management_attribute").exists()
+        default_standard = AssetCodingScheme.objects.filter(company=company, status="active", is_default=True,
+            segments__segment_type="management_attribute").exists()
+        parent_value = self.data.get("component_of") if self.is_bound else self.initial.get("component_of")
+        if registration_requested and default_standard and not parent_value:
+            self.fields["management_attribute"].required = True
         self.fields["department"].required = False
         self.fields["responsible_employee"].required = False
         self.fields["location"].required = False
         self.fields["category"].required = True
         self.fields["asset_name"].required = True
+        if registration_requested:
+            for name in ("unit", "department", "responsible_employee", "location"):
+                self.fields[name].required = True
         _bootstrap_widgets(self)
+        link_assignment_options(self, department="department", employee="responsible_employee", location="location")
 
         if self.is_bound:
             forbidden = set(FINANCIAL_FIELD_NAMES.intersection(self.data))
@@ -193,6 +225,33 @@ class AssetDraftForm(forms.ModelForm):
             self.add_error("responsible_employee", "责任人必须属于当前部门。")
         if location and location.children.exists():
             self.add_error("location", "资产必须选择树形位置的叶级节点。")
+        parent = cleaned.get("component_of")
+        if parent is not None and parent.identity is not None:
+            if not cleaned.get("management_attribute"):
+                cleaned["management_attribute"] = parent.identity.management_attribute
+            if cleaned.get("coding_year") is None:
+                cleaned["coding_year"] = parent.identity.coding_year
+        if category is not None and not self.errors:
+            from apps.coding.domain import validate_scheme_structure
+            from apps.coding.issuance import _resolve_coding_scheme
+            from apps.coding.standard import is_standard_segments
+            from apps.coding.standard_issuance import _prepare_identity_parts
+            candidate = Asset(company=self.company, category=category, department=department,
+                component_of=parent, management_attribute=cleaned.get("management_attribute") or "",
+                coding_year=cleaned.get("coding_year"), coding_year_note=cleaned.get("coding_year_note") or "",
+                acquisition_date=cleaned.get("acquisition_date"), serial_number=cleaned.get("serial_number") or "",
+                requested_coding_scheme=self.instance.requested_coding_scheme)
+            try:
+                scheme = _resolve_coding_scheme(asset=candidate, effective_date=timezone.localdate(), lock=False)
+                if is_standard_segments(validate_scheme_structure(scheme)) and self.fields["idempotency_key"].required:
+                    _prepare_identity_parts(actor=self.actor, asset=candidate, lock_parent=False)
+            except ValidationError as exc:
+                if self.fields["idempotency_key"].required:
+                    if hasattr(exc, "message_dict"):
+                        for field, errors in exc.message_dict.items():
+                            self.add_error(field if field in self.fields else None, errors)
+                    else:
+                        self.add_error(None, exc)
         return cleaned
 
 
@@ -201,7 +260,7 @@ class RequestedCodingSchemeForm(forms.Form):
         label="指定编码方案版本",
         queryset=AssetCodingScheme.objects.none(),
         required=False,
-        help_text="留空时由财务确认事务按分类默认、公司默认解析。",
+        help_text="留空时由实物建档事务按分类默认、公司默认解析。",
     )
 
     def __init__(self, *args, actor=None, asset=None, **kwargs):
@@ -268,7 +327,11 @@ class AssetCustomValueForm(forms.Form):
 
 
 class AssetSubmitForm(forms.Form):
-    confirm = forms.BooleanField(label="确认提交财务确认", required=True)
+    confirm = forms.BooleanField(label="确认实物资料并建立正式资产编号", required=True)
+    idempotency_key = forms.CharField(
+        widget=forms.HiddenInput, initial=uuid.uuid4, max_length=200, label="页面校验信息",
+        error_messages={"required": "页面校验信息已失效，请刷新后重新建档。"},
+    )
 
     def __init__(self, *args, actor=None, asset=None, **kwargs):
         if actor is None or asset is None or not can_submit_asset(actor, asset):
@@ -320,7 +383,7 @@ class AssetAttachmentUploadForm(forms.Form):
         self.asset = asset
         super().__init__(*args, **kwargs)
         roles = role_names_for(actor)
-        if "finance" in roles and asset.asset_status in {"draft", "pending_finance"}:
+        if can_create_attachment_link(actor, asset, "A1"):
             self.fields["role"].choices = AttachmentLink.Role.choices
             self.fields["security_class"].choices = AttachmentLink.SecurityClass.choices
         elif can_create_attachment_link(actor, asset, "A0"):

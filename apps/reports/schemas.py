@@ -447,8 +447,6 @@ REPORT_REGISTRY = {
     "monthly_depreciation": _report("monthly_depreciation", "月度计提报表", "月度计提", DEPRECIATION_COLUMNS, financial=True),
     "department_assets": _report("department_assets", "部门资产", "部门资产", ASSET_COLUMNS),
     "employee_assets": _report("employee_assets", "人员资产", "人员资产", ASSET_COLUMNS),
-    "equipment_list": _report("equipment_list", "设备清单", "设备清单", ASSET_COLUMNS),
-    "mold_tool_inspection_list": _report("mold_tool_inspection_list", "模具工具检具清单", "模具工具检具", ASSET_COLUMNS),
     "inventory_results": _report("inventory_results", "盘点结果", "盘点结果", INVENTORY_COLUMNS),
     "inventory_differences": _report("inventory_differences", "盘点差异", "盘点差异", INVENTORY_COLUMNS),
     "maintenance_plans": _report("maintenance_plans", "保养计划", "保养计划", MAINTENANCE_PLAN_COLUMNS),
@@ -478,6 +476,14 @@ SUPPLY_REPORT_REGISTRY = {
     "supply_management_amount": _supply_report("supply_management_amount", "低值物品综合管理金额表", "综合管理金额", SUPPLY_MANAGEMENT_AMOUNT_COLUMNS),
 }
 
+# Metadata for previously completed exports only; never offered for new reports.
+RETIRED_REPORT_REGISTRY = {
+    "equipment_list": _report("equipment_list", "设备清单", "设备清单", ASSET_COLUMNS),
+    "mold_tool_inspection_list": _report("mold_tool_inspection_list", "模具工具检具清单", "模具工具检具", ASSET_COLUMNS),
+}
+RETIRED_REPORT_KEYS = frozenset(RETIRED_REPORT_REGISTRY)
+RETIRED_REPORT_MESSAGE = "旧分组清单已取消，请使用公司资产总账并按实物分类筛选。"
+
 ALL_REPORT_REGISTRY = {**REPORT_REGISTRY, **SUPPLY_REPORT_REGISTRY}
 
 TOTAL_METRIC_REGISTRY = {
@@ -487,6 +493,8 @@ TOTAL_METRIC_REGISTRY = {
 
 
 def get_report_definition(report_key: str) -> ReportDefinition:
+    if report_key in RETIRED_REPORT_REGISTRY:
+        return RETIRED_REPORT_REGISTRY[report_key]
     try:
         return ALL_REPORT_REGISTRY[report_key]
     except KeyError as exc:

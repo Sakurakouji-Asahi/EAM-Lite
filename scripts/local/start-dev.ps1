@@ -14,8 +14,8 @@ try {
     Assert-EamPortAvailable -Port 8766 -Url $context.Url -ExpectedEnvironment "development"
     Build-EamImage -RepositoryRoot $repositoryRoot -Identity $identity -Development
     Invoke-EamCompose -Context $context -Arguments @("up", "--detach", "--wait", "db") | Out-Null
-    Invoke-EamCompose -Context $context -Arguments @("--profile", "release", "run", "--rm", "release") | Out-Null
-    Invoke-EamComposeInteractive -Context $context -Arguments @("--profile", "release", "run", "--rm", "release", "python", "manage.py", "bootstrap_local_admin")
+    Initialize-EamDevelopmentSchema -Context $context
+    Invoke-EamComposeInteractive -Context $context -Arguments @("run", "--rm", "--no-deps", "app", "python", "manage.py", "bootstrap_local_admin")
     Invoke-EamCompose -Context $context -Arguments @("up", "--detach", "app") | Out-Null
     $version = Wait-EamHealth -Url $context.Url -ExpectedCommit $identity.Commit
     Write-Host "开发环境已就绪：$($context.Url)" -ForegroundColor Yellow

@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}资产{% if kind == 'origin' %}来源{% else %}组合清单{% endif %} - EAM-Lite{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3 mb-1">{% if kind == 'origin' %}登记资产来源{% else %}维护组合成员清单{% endif %}</h1><p class="text-secondary mb-0">{{ asset.asset_code }} · {{ asset.asset_name }}</p></div></header>
+<div class="alert alert-info">{% if kind == 'origin' %}先为目标资产建立自己的编号，再登记拆分或合并来源。此处保留新旧编号关系；原资产停用及财务处理仍按各自流程办理。{% else %}本条资产档案代表一个管理对象，成员数量单独记录。每次保存都会保留一个完整版本，方便追溯成员增减。{% endif %}保存不会自动转移原值、累计折旧或生成库存流水。</div>
+<form method="post" class="card"><div class="card-body">{% csrf_token %}{{ form.non_field_errors }}{% for field in form %}{% if field.is_hidden %}{{ field }}{% else %}<div class="mb-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} *{% endif %}</label>{{ field }}{% for error in field.errors %}<div class="text-danger">{{ error }}</div>{% endfor %}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}</div>{% endif %}{% endfor %}<button type="submit" class="btn btn-primary">保存记录</button> <a class="btn btn-outline-secondary" href="{% url 'assets:asset-detail' asset.pk %}">返回</a></div></form>
+{% endblock %}

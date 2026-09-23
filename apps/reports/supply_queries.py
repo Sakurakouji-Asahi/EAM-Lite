@@ -1511,6 +1511,12 @@ def build_supply_dashboard(*, actor, company):
     result["controlled_non_fixed_count"] = _controlled_asset_queryset(
         actor=actor, company=company, filters={}
     ).count()
+    from apps.assets.classification import individual_durable_filter
+    from apps.assets.permissions import scoped_assets
+
+    result["individual_durable_count"] = scoped_assets(actor, company).filter(
+        record_status="active"
+    ).filter(individual_durable_filter()).count()
     result["draft_document_count"] = scoped_supply_documents(
         actor, company
     ).filter(status="draft").count()

@@ -201,7 +201,6 @@ def test_database_rejects_values_outside_fixed_enums():
         code="A1",
         normalized_code="a1",
         name="分类",
-        category_type="equipment",
     )
     attachment = Attachment.objects.create(
         company=company,
@@ -229,7 +228,6 @@ def test_database_rejects_values_outside_fixed_enums():
 
     invalid_updates = (
         (Location, location.pk, {"location_type": "unknown"}),
-        (AssetCategory, category.pk, {"category_type": "unknown"}),
         (Attachment, attachment.pk, {"malware_scan_status": "unknown"}),
         (SystemSetting, setting.pk, {"value_type": "unknown"}),
     )
@@ -308,14 +306,12 @@ def test_reverse_company_reference_guards_reject_existing_links():
         code="A1",
         normalized_code="a1",
         name="父分类",
-        category_type="equipment",
     )
     AssetCategory.objects.create(
         company=c1,
         code="A2",
         normalized_code="a2",
         name="子分类",
-        category_type="tool",
         parent=category,
     )
     manager = Employee.objects.create(

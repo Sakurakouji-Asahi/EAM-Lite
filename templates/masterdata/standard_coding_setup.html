@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}采用统一资产编码 - EAM-Lite{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3 mb-1">采用统一资产编码</h1><p class="text-secondary mb-0">按你提供的《资产编码规则》配置，建档和财务确认继续分开办理。</p></div></header>
+<div class="card mb-3"><div class="card-body"><h2 class="h5">FA-04-2026-000001-00</h2><p class="mb-1">管理属性 · 实物大类 · 取得年份 · 六位流水 · 子项号</p><p class="text-secondary mb-0">主资产为 00，组件沿用主资产前四段并分配 01—99。管理属性代表首次建档分类，最终会计认定及折旧以财务资料为准。</p></div></div>
+<div class="row g-3 mb-3"><section class="col-md-5"><div class="card h-100"><div class="card-header">管理属性</div><div class="card-body"><ul class="mb-0">{% for code,label in attributes %}<li>{{ label }}</li>{% endfor %}</ul></div></div></section><section class="col-md-7"><div class="card"><div class="card-header">实物大类</div><div class="card-body"><div class="row">{% for code,name in categories %}<div class="col-sm-6 mb-1"><code>{{ code }}</code> {{ name }}</div>{% endfor %}</div></div></div></section></div>
+<form method="post" class="card"><div class="card-body">{% csrf_token %}{{ form.non_field_errors }}{% for field in form %}<div class="form-check mb-3">{{ field }} <label for="{{ field.id_for_label }}">{{ field.label }}</label>{% for error in field.errors %}<div class="text-danger">{{ error }}</div>{% endfor %}<div class="form-text">{{ field.help_text }}</div></div>{% endfor %}<button type="submit" class="btn btn-primary">采用此规则</button> <a class="btn btn-outline-secondary" href="{% url 'masterdata:coding-scheme-list' %}">返回</a></div></form>
+{% endblock %}

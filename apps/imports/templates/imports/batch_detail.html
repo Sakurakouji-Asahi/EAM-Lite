@@ -2,6 +2,7 @@
 {% block title %}导入批次 - EAM-Lite{% endblock %}
 {% block content %}
 <h1 class="h3 mb-3">{{ definition.label }}导入预览</h1>
+{% if is_asset_initialization and batch.status == 'confirmed' %}<p><a class="btn btn-primary" href="{% url 'assets:bulk-registration' %}?import_batch={{ batch.pk }}">核对本批资产并批量建档</a></p>{% endif %}
 {% for message in messages %}<div class="alert alert-{% if message.tags == 'error' %}danger{% else %}success{% endif %}">{{ message }}</div>{% endfor %}
 <dl class="row">
   <dt class="col-sm-2">批次状态</dt><dd class="col-sm-10">{{ batch.get_status_display }}</dd>

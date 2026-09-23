@@ -12,12 +12,18 @@
     <div class="d-flex flex-wrap gap-2">
       <a class="btn btn-outline-secondary" href="{% url 'assets:asset-list' %}">返回总账</a>
       {% if can_edit %}<a class="btn btn-outline-primary" href="{% url 'assets:asset-edit' asset.pk %}">编辑草稿</a>{% endif %}
-      {% if can_submit %}<a class="btn btn-primary" href="{% url 'assets:asset-submit' asset.pk %}">提交财务确认</a>{% endif %}
+      {% if can_create_component %}<a class="btn btn-outline-primary" href="{% url 'assets:asset-create' %}?component_of={{ asset.pk }}">新增组件</a>{% endif %}
+      {% if can_manage_trace %}<a class="btn btn-outline-secondary" href="{% url 'assets:asset-origin-edit' asset.pk %}">登记拆并来源</a><a class="btn btn-outline-secondary" href="{% url 'assets:asset-composition-edit' asset.pk %}">组合成员</a>{% endif %}
+      {% if can_return_custody %}<a class="btn btn-outline-secondary" href="{% url 'assets:asset-custody-return' asset.pk %}">租入受托归还</a>{% endif %}
+      {% if can_submit %}<a class="btn btn-primary" href="{% url 'assets:asset-submit' asset.pk %}">建立实物资产</a>{% endif %}
+      {% if can_upload_a0 %}<a class="btn btn-outline-primary" href="{% url 'assets:attachment-upload' asset.pk %}?role=photo">补拍照片</a>{% endif %}
       {% if can_withdraw %}<a class="btn btn-outline-warning" href="{% url 'assets:asset-withdraw' asset.pk %}">撤回/退回</a>{% endif %}
       {% if can_set_scheme %}<a class="btn btn-outline-primary" href="{% url 'assets:asset-requested-scheme' asset.pk %}">指定编码方案</a>{% endif %}
       {% if can_manage_labels %}
         {% if current_qr %}<a class="btn btn-outline-primary" href="{% url 'assets:asset-current-qr' asset.pk %}" target="_blank" rel="noopener noreferrer">查看二维码</a>{% endif %}
-        {% if current_qr and current_qr.label_status == 'attached' %}
+        {% if current_qr and current_qr.label_status != 'attached' and asset.management_attribute == 'IA' %}
+          <a class="btn btn-primary" href="{% url 'assets:identification-confirm' asset.pk %}">确认电子台账</a>
+        {% elif current_qr and current_qr.label_status == 'attached' %}
           <a class="btn btn-outline-danger" href="{% url 'assets:qr-rotate' asset.pk %}">换标</a>
         {% elif current_qr and current_qr.label_status == 'printed' %}
           <a class="btn btn-primary" href="{% url 'assets:qr-web-attach' asset.pk %}">Web 确认贴标</a>
@@ -25,9 +31,10 @@
         {% elif current_qr and direct_label_print_form %}
           <form method="post" action="{% url 'assets:asset-label-print' asset.pk %}">{% csrf_token %}{{ direct_label_print_form.idempotency_key }}<button class="btn btn-primary" type="submit">打印二维码</button></form>
         {% endif %}
+        {% if current_qr and current_qr.label_status != 'attached' and asset.management_attribute != 'IA' %}<a class="btn btn-outline-secondary" href="{% url 'assets:identification-confirm' asset.pk %}">确认替代标识</a>{% endif %}
       {% endif %}
-      {% if can_manage_financial and asset.asset_status == "pending_finance" %}<a class="btn btn-primary" href="{% url 'finance:finance-confirm' asset.pk %}">财务确认</a>{% endif %}
-      {% if can_financial and asset.asset_status != "draft" and asset.asset_status != "pending_finance" %}<a class="btn btn-outline-primary" href="{% url 'finance:asset-finance-detail' asset.pk %}">资产财务</a>{% endif %}
+      {% if can_manage_financial and finance_pending %}<a class="btn btn-primary" href="{% url 'finance:finance-confirm' asset.pk %}">财务与折旧确认</a>{% endif %}
+      {% if can_financial and asset.finance.finance_confirmed_at %}<a class="btn btn-outline-primary" href="{% url 'finance:asset-finance-detail' asset.pk %}">资产财务</a>{% endif %}
       {% if can_delete %}<a class="btn btn-outline-danger" href="{% url 'assets:asset-delete' asset.pk %}">删除草稿</a>{% endif %}
       {% if lifecycle_actions.archive %}<a class="btn btn-outline-dark" href="{% url 'assets:lifecycle-archive' asset.pk %}">归档</a>{% endif %}
       {% if lifecycle_actions.restore %}<a class="btn btn-outline-primary" href="{% url 'assets:lifecycle-restore' asset.pk %}">恢复显示</a>{% endif %}
@@ -38,12 +45,14 @@
     <strong>当前步骤</strong>
     {% if archived %}
       <span>资产已归档，仅保留只读摘要；有权用户可使用“恢复显示”。</span>
+    {% elif terminal %}
+      <span>资产已结束本公司的实物管理，原编号和历史记录继续保留。</span>
     {% elif asset.asset_status == "draft" %}
-      <span>继续补齐实物资料和资产照片，满足条件后提交财务确认。</span>
+      <span>补齐实物资料后即可建立正式资产；照片可后补，无需等待财务复核。</span>
     {% elif asset.asset_status == "pending_finance" %}
-      <span>当前等待 finance 明确会计认定。确认后系统生成正式编号和二维码身份。</span>
+      <span>这是一条旧流程草稿，可直接建立实物资产和二维码；财务确认单独办理。</span>
     {% elif asset.asset_status == "pending_label" %}
-      <span>正式编号和二维码已生成。请先查看并打印二维码，再通过扫码或 Web 逐项确认贴标。</span>
+      {% if asset.management_attribute == "IA" %}<span>电子编号已生成。核对电子档案或许可标识后即可启用，无需打印实物标签。</span>{% else %}<span>正式编号和二维码已生成。可打印并逐项确认贴标；不便贴标时办理替代标识确认。</span>{% endif %}
     {% elif current_qr and current_qr.label_status != "attached" %}
       <span>当前标签尚未完成贴标，请先完成打印，再通过扫码或 Web 逐项确认。</span>
     {% else %}
@@ -55,6 +64,7 @@
 
   <div class="row g-3">
     <div class="col-12 col-xl-8">
+      {% if asset.identity %}<section class="card shadow-sm mb-3"><div class="card-header"><h2 class="h5 mb-0">首次建档编码</h2></div><div class="card-body"><p class="mb-1">{{ asset.get_management_attribute_display }} · 大类 {{ asset.identity.category_code }} · {{ asset.identity.coding_year }} 年 · 子项 {{ asset.identity.subitem_number|stringformat:"02d" }}</p><p class="text-secondary mb-1">管理属性与会计认定独立，后续财务确认不改变编号或二维码。</p>{% if identity_parent %}<p class="mb-1">所属主资产：<a href="{% url 'assets:asset-detail' identity_parent.pk %}">{{ identity_parent.asset_code }} · {{ identity_parent.asset_name }}</a></p>{% endif %}{% if can_p1 %}<small class="text-secondary">年份依据：{{ asset.identity.year_note }}</small>{% endif %}</div></section>{% endif %}
       <section class="card shadow-sm mb-3" aria-labelledby="p0-title">
         <div class="card-header"><h2 class="h5 mb-0" id="p0-title">识别摘要</h2></div>
         <div class="card-body">
@@ -69,14 +79,22 @@
       </section>
 
       {% if can_p1 %}
+        {% include "assets/_trace_history.html" %}
+        {% if composition %}<section class="card shadow-sm mb-3"><div class="card-header"><h2 class="h5 mb-0">组合成员 · 第 {{ composition.revision }} 版</h2></div><div class="table-responsive"><table class="table mb-0"><thead><tr><th>成员</th><th>数量</th><th>单位</th><th>说明</th></tr></thead><tbody>{% for member in composition.members %}<tr><td>{{ member.name }}</td><td>{{ member.quantity|floatformat:"-4" }}</td><td>{{ member.unit }}</td><td>{{ member.note|default:"—" }}</td></tr>{% endfor %}</tbody></table></div><div class="card-body"><p class="small text-secondary">成员数量仅描述组合构成，不自动改变资产金额或库存。</p><details><summary>清单变更记录</summary><ul class="mt-2 mb-0">{% for revision in composition_history %}<li>第 {{ revision.revision }} 版 · {{ revision.recorded_at|date:"Y-m-d H:i" }} · {{ revision.reason }}</li>{% endfor %}</ul></details></div></section>{% endif %}
+        {% if identity_components %}<section class="card shadow-sm mb-3"><div class="card-header"><h2 class="h5 mb-0">组件</h2></div><div class="list-group list-group-flush">{% for component in identity_components %}<a class="list-group-item list-group-item-action" href="{% url 'assets:asset-detail' component.pk %}"><div>{{ component.asset_name }}</div><small class="text-secondary">{{ component.asset_code|default:component.draft_number }} · {{ component.get_asset_status_display }}</small></a>{% endfor %}</div></section>{% endif %}
         <section class="card shadow-sm mb-3" aria-labelledby="p1-title">
           <div class="card-header"><h2 class="h5 mb-0" id="p1-title">实物资料</h2></div>
           <div class="card-body">
             <dl class="row mb-0">
               <dt class="col-sm-4 text-secondary">品牌 / 型号</dt><dd class="col-sm-8">{{ asset.brand|default:"—" }} / {{ asset.model|default:"—" }}</dd>
+              <dt class="col-sm-4 text-secondary">创建时间</dt><dd class="col-sm-8">{{ asset.created_at|date:"Y-m-d H:i" }}</dd>
+              <dt class="col-sm-4 text-secondary">正式建档时间</dt><dd class="col-sm-8">{% if asset.registration %}{{ asset.registration.registered_at|date:"Y-m-d H:i" }}{% else %}尚未正式建档{% endif %}</dd>
               <dt class="col-sm-4 text-secondary">厂家</dt><dd class="col-sm-8">{{ asset.manufacturer|default:"—" }}</dd>
               <dt class="col-sm-4 text-secondary">序列号</dt><dd class="col-sm-8">{{ asset.serial_number|default:"—" }}</dd>
               <dt class="col-sm-4 text-secondary">出厂编号</dt><dd class="col-sm-8">{{ asset.factory_number|default:"—" }}</dd>
+              {% if asset.vehicle_plate %}<dt class="col-sm-4 text-secondary">车牌号</dt><dd class="col-sm-8">{{ asset.vehicle_plate }}</dd>{% endif %}
+              {% if asset.chassis_number %}<dt class="col-sm-4 text-secondary">车架号</dt><dd class="col-sm-8">{{ asset.chassis_number }}</dd>{% endif %}
+              {% if asset.calibration_number %}<dt class="col-sm-4 text-secondary">校准编号</dt><dd class="col-sm-8">{{ asset.calibration_number }}</dd>{% endif %}
               <dt class="col-sm-4 text-secondary">历史参考编号</dt><dd class="col-sm-8">{{ asset.historical_code|default:"—" }}</dd>
               <dt class="col-sm-4 text-secondary">数量 / 单位</dt><dd class="col-sm-8">1 / {{ asset.unit|default:"—" }}</dd>
               <dt class="col-sm-4 text-secondary">部门</dt><dd class="col-sm-8">{{ asset.department.name|default:"—" }}</dd>
@@ -85,7 +103,7 @@
               <dt class="col-sm-4 text-secondary">购置日期</dt><dd class="col-sm-8">{{ asset.acquisition_date|date:"Y-m-d"|default:"—" }}</dd>
               <dt class="col-sm-4 text-secondary">达到可使用状态日期</dt><dd class="col-sm-8">{{ asset.commissioning_date|date:"Y-m-d"|default:"—" }}</dd>
               <dt class="col-sm-4 text-secondary">需要保养</dt><dd class="col-sm-8">{{ asset.is_maintenance_required|yesno:"是,否" }}</dd>
-              <dt class="col-sm-4 text-secondary">指定编码方案</dt><dd class="col-sm-8">{% if asset.requested_coding_scheme %}{{ asset.requested_coding_scheme.name }} v{{ asset.requested_coding_scheme.version }}{% else %}未指定；正式化时按分类默认、公司默认解析{% endif %}</dd>
+              <dt class="col-sm-4 text-secondary">指定编码方案</dt><dd class="col-sm-8">{% if asset.requested_coding_scheme %}{{ asset.requested_coding_scheme.name }} v{{ asset.requested_coding_scheme.version }}{% else %}{% if asset.asset_code %}已按分类默认或公司默认方案建档{% else %}建档时按分类默认、公司默认解析{% endif %}{% endif %}</dd>
               <dt class="col-sm-4 text-secondary">说明</dt><dd class="col-sm-8">{{ asset.description|default:"—"|linebreaksbr }}</dd>
               <dt class="col-sm-4 text-secondary">备注</dt><dd class="col-sm-8">{{ asset.notes|default:"—"|linebreaksbr }}</dd>
             </dl>
@@ -122,7 +140,7 @@
       {% if can_financial %}
         <section class="card shadow-sm mb-3" aria-labelledby="finance-title">
           <div class="card-header"><h2 class="h5 mb-0" id="finance-title">财务信息</h2></div>
-          <div class="card-body">{% if asset.asset_status == 'pending_finance' %}<p class="mb-2">财务资料尚未确认。</p>{% if can_manage_financial %}<a class="btn btn-sm btn-primary" href="{% url 'finance:finance-confirm' asset.pk %}">进入财务确认</a>{% else %}<span class="text-secondary">等待财务人员处理。</span>{% endif %}{% elif asset.asset_status != 'draft' %}<p class="mb-2">财务数据和实际折旧来自独立受控记录。</p><a class="btn btn-sm btn-outline-primary" href="{% url 'finance:asset-finance-detail' asset.pk %}">查看资产财务</a>{% endif %}</div>
+          <div class="card-body">{% if finance_pending %}<p class="mb-2">财务与折旧设置尚未确认；可等待发票等资料齐备后办理，不影响实物管理。</p>{% if can_manage_financial %}<a class="btn btn-sm btn-primary" href="{% url 'finance:finance-confirm' asset.pk %}">进入财务与折旧确认</a>{% else %}<span class="text-secondary">等待财务人员处理。</span>{% endif %}{% elif asset.asset_status != 'draft' %}<p class="mb-2">财务数据和实际折旧来自独立受控记录。</p><a class="btn btn-sm btn-outline-primary" href="{% url 'finance:asset-finance-detail' asset.pk %}">查看资产财务</a>{% endif %}</div>
         </section>
       {% endif %}
 
@@ -142,7 +160,7 @@
           </div>{% endif %}
           {% if active_loan %}<div class="alert alert-warning"><strong>借出中：</strong>{% if active_loan.borrower_type == 'internal_employee' %}内部员工 {{ active_loan.borrower_name_snapshot }}{% else %}{{ active_loan.borrower_name }}{% if active_loan.borrower_organization %}（{{ active_loan.borrower_organization }}）{% endif %}{% endif %}；预计归还 {{ active_loan.expected_return_date|date:"Y-m-d" }}。</div>{% endif %}
           {% if latest_disposal %}<p><a href="{% url 'assets:disposal-detail' latest_disposal.pk %}">查看最新处置记录：{{ latest_disposal.get_disposal_type_display }} / {{ latest_disposal.get_status_display }}</a></p>{% endif %}
-          <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>生效时间</th><th>类型</th><th>状态</th><th>责任归属</th><th>原因</th></tr></thead><tbody>{% for movement in movements %}<tr><td>{{ movement.effective_at|date:"Y-m-d H:i" }}</td><td>{{ movement.get_movement_type_display }}</td><td>{{ movement.from_status }} → {{ movement.to_status }}</td><td>{{ movement.from_department.name|default:"—" }} / {{ movement.from_employee.name|default:"—" }} / {{ movement.from_location.name|default:"—" }}<br><span class="text-secondary">→ {{ movement.to_department.name|default:"—" }} / {{ movement.to_employee.name|default:"—" }} / {{ movement.to_location.name|default:"—" }}</span></td><td>{{ movement.reason }}</td></tr>{% empty %}<tr><td colspan="5" class="text-secondary">暂无生命周期变动。</td></tr>{% endfor %}</tbody></table></div>
+          <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>生效时间</th><th>类型</th><th>状态</th><th>责任归属</th><th>原因</th></tr></thead><tbody>{% for movement in movements %}<tr><td>{{ movement.effective_at|date:"Y-m-d H:i" }}</td><td>{{ movement.get_movement_type_display }}</td><td>{{ movement.from_status_display }} → {{ movement.to_status_display }}</td><td>{{ movement.from_department.name|default:"—" }} / {{ movement.from_employee.name|default:"—" }} / {{ movement.from_location.name|default:"—" }}<br><span class="text-secondary">→ {{ movement.to_department.name|default:"—" }} / {{ movement.to_employee.name|default:"—" }} / {{ movement.to_location.name|default:"—" }}</span></td><td>{{ movement.reason }}</td></tr>{% empty %}<tr><td colspan="5" class="text-secondary">暂无生命周期变动。</td></tr>{% endfor %}</tbody></table></div>
         </div>
       </section>{% endif %}
       {% if can_p1 %}{% if maintenance_plans or can_create_maintenance_plan %}<section class="card shadow-sm mb-3" aria-labelledby="maintenance-title"><div class="card-header d-flex justify-content-between align-items-center"><h2 class="h5 mb-0" id="maintenance-title">预防性保养</h2>{% if can_create_maintenance_plan %}<a class="btn btn-sm btn-primary" href="{% url 'maintenance:plan-create' %}?asset={{ asset.pk }}">新建计划</a>{% endif %}</div><div class="card-body">{% for plan in maintenance_plans %}<div class="d-flex flex-wrap justify-content-between border-bottom py-2"><div><a href="{% url 'maintenance:plan-detail' plan.pk %}">{{ plan.name }}</a><br><small class="text-secondary">责任人 {{ plan.responsible_employee.name }} · 下次 {{ plan.next_maintenance_date|date:'Y-m-d' }}</small></div><span class="badge text-bg-secondary">{{ plan.get_status_display }}</span></div>{% empty %}<p class="text-secondary mb-0">尚未建立保养计划。</p>{% endfor %}</div></section>{% endif %}{% endif %}

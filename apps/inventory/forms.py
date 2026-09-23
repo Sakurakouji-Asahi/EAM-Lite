@@ -9,6 +9,7 @@ from __future__ import annotations
 import uuid
 
 from django import forms
+from apps.core.form_widgets import normalize_date_widgets
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.utils import timezone
@@ -23,6 +24,7 @@ from apps.masterdata.models import AssetCategory, Department, Employee, Location
 
 
 def _style(form):
+    normalize_date_widgets(form)
     for field in form.fields.values():
         if isinstance(field.widget, (forms.HiddenInput, forms.CheckboxInput)):
             continue
@@ -44,6 +46,7 @@ class InventoryTaskForm(forms.Form):
     )
     scope_type = forms.ChoiceField(
         label="盘点范围",
+        initial="department",
         choices=(
             ("company", "全公司"),
             ("department", "部门"),

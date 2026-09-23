@@ -8,6 +8,8 @@ from django.urls import reverse
 from apps.assets.models import Asset, AssetCodeHistory, AttachmentLink
 from apps.assets.services import submit_asset_for_finance, upload_asset_attachment
 from apps.audit.models import AuditLog
+from apps.coding.services import set_default_scheme
+from tests.test_sprint4_acceptance import _mark_initialized
 from apps.masterdata.models import AssetCodingScheme, Attachment, IssuedCode, SequenceCounter
 from tests.test_sprint3_support import (
     JPEG_BYTES,
@@ -18,6 +20,7 @@ from tests.test_sprint3_support import (
     grant_scope,
     jpeg_upload,
     make_asset,
+    make_active_scheme,
     make_category,
     make_company,
     make_custom_field,
@@ -45,6 +48,7 @@ def make_context(*, role="equipment", initialized=True):
 
 def form_data(category, department, employee, location, **overrides):
     data = {
+        "asset_action": "draft",  # This module exercises explicit draft editing.
         "asset_name": "HTTP 检具",
         "category": str(category.pk),
         "brand": "HTTP",
@@ -142,7 +146,7 @@ def test_create_edit_detail_and_dynamic_fields_work_without_financial_inputs(cli
     assert "红" in content
     assert "财务确认和财务资料将在 Sprint 4" not in content
     assert "当前步骤" in content
-    assert "继续补齐实物资料和资产照片" in content
+    assert "补齐实物资料后即可建立正式资产" in content
 
     edit_data = form_data(
         category,
@@ -221,7 +225,7 @@ def test_quantity_two_is_rejected_with_chinese_error_and_no_batch_entry(client):
     )
 
     assert response.status_code == 200
-    assert "V1 每条记录代表一件实物" in response.content.decode()
+    assert "每条档案代表一个独立管理对象" in response.content.decode()
     assert not Asset.objects.exists()
     assert "/split/" not in response.content.decode()
     assert "/partial-transfer/" not in response.content.decode()
@@ -290,7 +294,7 @@ def test_list_filters_each_approved_dimension(client, filter_name):
     )
     other_department = make_department(company, "D2")
     other_employee = make_employee(company, other_department, "E2")
-    other_category = make_category(company, "OTHER", category_type="other")
+    other_category = make_category(company, "OTHER")
     _site2, _area2, other_location = make_location_tree(company, "X")
     make_asset(
         actor=actor,
@@ -514,38 +518,26 @@ def test_unapproved_scan_status_is_hidden_from_detail_and_download(client, tmp_p
     assert not AuditLog.objects.filter(action="asset_attachment_download").exists()
 
 
-def test_submit_action_stops_at_pending_finance_without_formal_code_or_button(
-    client, tmp_path
-):
-    actor, company, department, employee, category, _site, _area, location = make_context()
-    asset = make_asset(
-        actor=actor,
-        company=company,
-        category=category,
-        department=department,
-        employee=employee,
-        location=location,
-    )
-    with override_settings(MEDIA_ROOT=tmp_path):
-        add_photo(actor, asset)
-        client.force_login(actor)
-        response = client.post(
-            reverse("assets:asset-submit", args=[asset.pk]), {"confirm": "on"}
-        )
-
+def test_submit_action_registers_without_finance_or_photo(client):
+    actor, company, department, employee, category, _site, _area, location = make_context(initialized=False)
+    admin = make_user("registration-code-admin", "system_admin")
+    scheme = make_active_scheme(actor=admin, company=company, key="HTTP-REGISTER")
+    set_default_scheme(actor=admin, scheme=scheme)
+    _mark_initialized(company, admin)
+    asset = make_asset(actor=actor, company=company, category=category,
+                       department=department, employee=employee, location=location)
+    client.force_login(actor)
+    response = client.post(reverse("assets:asset-submit", args=[asset.pk]),
+                           {"confirm": "on", "idempotency_key": "http-register"})
     assert response.status_code == 302
     asset.refresh_from_db()
-    assert asset.asset_status == "pending_finance"
-    assert asset.asset_code is None
-    assert asset.current_issued_code_id is None
+    assert asset.asset_status == "pending_label"
+    assert asset.asset_code and asset.current_issued_code_id
+    assert not asset.attachment_links.exists()
     detail = client.get(reverse("assets:asset-detail", args=[asset.pk]))
-    html = detail.content.decode()
-    assert "当前等待 finance 明确会计认定" in html
-    assert "确认并生成正式编号" not in html
-    assert reverse("finance:finance-confirm", args=[asset.pk]) not in html
-    assert SequenceCounter.objects.count() == 0
-    assert IssuedCode.objects.count() == 0
-    assert AssetCodeHistory.objects.count() == 0
+    assert "补拍照片" in detail.content.decode()
+    assert reverse("finance:finance-confirm", args=[asset.pk]) not in detail.content.decode()
+    assert SequenceCounter.objects.count() == IssuedCode.objects.count() == AssetCodeHistory.objects.count() == 1
 
 
 def test_submit_page_names_each_missing_asset_field_instead_of_repeating_generic_error(
@@ -559,13 +551,13 @@ def test_submit_page_names_each_missing_asset_field_instead_of_repeating_generic
         add_photo(actor, asset)
         client.force_login(actor)
         response = client.post(
-            reverse("assets:asset-submit", args=[asset.pk]), {"confirm": "on"}
+            reverse("assets:asset-submit", args=[asset.pk]), {"confirm": "on", "idempotency_key": "http-register"}
         )
 
     assert response.status_code == 200
     html = response.content.decode()
     for label in ("单位", "当前部门", "当前责任人", "当前位置"):
-        assert f"{label}：提交财务确认前必须填写此字段。" in html
+        assert f"{label}：建立正式实物档案前必须填写此字段。" in html
     assert "补充资产资料" in html
     assert reverse("assets:asset-edit", args=[asset.pk]) in html
     asset.refresh_from_db()
@@ -609,7 +601,11 @@ def test_edit_draft_can_fill_missing_department_employee_and_location(client):
 
 
 def test_repeat_http_submit_is_idempotent_and_one_audit(client, tmp_path):
-    actor, company, department, employee, category, _site, _area, location = make_context()
+    actor, company, department, employee, category, _site, _area, location = make_context(initialized=False)
+    admin = make_user("repeat-code-admin", "system_admin")
+    scheme = make_active_scheme(actor=admin, company=company, key="HTTP-REPEAT")
+    set_default_scheme(actor=admin, scheme=scheme)
+    _mark_initialized(company, admin)
     asset = make_asset(
         actor=actor,
         company=company,
@@ -622,10 +618,10 @@ def test_repeat_http_submit_is_idempotent_and_one_audit(client, tmp_path):
         add_photo(actor, asset)
         client.force_login(actor)
         url = reverse("assets:asset-submit", args=[asset.pk])
-        assert client.post(url, {"confirm": "on"}).status_code == 302
-        assert client.post(url, {"confirm": "on"}).status_code == 302
+        assert client.post(url, {"confirm": "on", "idempotency_key": "http-register"}).status_code == 302
+        assert client.post(url, {"confirm": "on", "idempotency_key": "http-register"}).status_code == 302
 
-    assert AuditLog.objects.filter(action="asset_submit_finance").count() == 1
+    assert AuditLog.objects.filter(action="asset_register").count() == 1
 
 
 def test_system_admin_has_only_requested_scheme_action_not_edit_action(client):
@@ -671,7 +667,7 @@ def test_finance_can_see_pending_asset_and_sprint4_formalization_route(client):
     assert detail.status_code == 200
     assert "待财务确认" in html
     assert "财务信息" in html
-    assert "进入财务确认" in html
+    assert "进入财务与折旧确认" in html
     assert reverse("finance:finance-confirm", args=[asset.pk]) in html
 
 
@@ -690,7 +686,7 @@ def test_action_gets_render_explicit_confirmation_forms(client, tmp_path):
     delete_page = client.get(reverse("assets:asset-delete", args=[asset.pk]))
 
     assert submit_page.status_code == delete_page.status_code == 200
-    assert "确认提交" in submit_page.content.decode()
+    assert "确认建档" in submit_page.content.decode()
     assert "删除原因" in delete_page.content.decode()
 
 

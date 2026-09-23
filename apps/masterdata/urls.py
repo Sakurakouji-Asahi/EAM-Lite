@@ -1,4 +1,5 @@
 from django.urls import path
+from apps.coding.views import standard_coding_setup
 
 from apps.masterdata import views
 
@@ -55,6 +56,7 @@ urlpatterns = [
     ),
     path("categories/", views.category_list, name="category-list"),
     path("coding-schemes/", views.coding_scheme_list, name="coding-scheme-list"),
+    path("coding-schemes/standard/", standard_coding_setup, name="standard-coding-setup"),
     path("coding-schemes/new/", views.coding_scheme_create, name="coding-scheme-create"),
     path("coding-schemes/<int:pk>/", views.coding_scheme_detail, name="coding-scheme-detail"),
     path("coding-schemes/<int:pk>/edit/", views.coding_scheme_edit, name="coding-scheme-edit"),

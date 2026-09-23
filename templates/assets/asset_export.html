@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}资产台账导出 - EAM-Lite{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3">资产台账导出</h1><p class="text-secondary mb-0">沿用台账筛选；生成文件时重新核验权限和当前数据。</p></div><a class="btn btn-outline-secondary" href="{% url 'assets:asset-list' %}?{{ filter_query }}">返回筛选结果</a></header>
+{% for error in errors %}<div class="alert alert-danger">{{ error }}</div>{% endfor %}
+{% if dataset %}
+<section class="card card-body mb-3"><h2 class="h5">共 {{ dataset.row_count }} 项资产</h2><p>数据截止 {{ dataset.data_snapshot_at|date:'Y-m-d H:i:s' }}，仅包含当前账号有权导出的实物资料。</p>
+<div class="d-flex gap-2 flex-wrap mb-3">{% for label,value in display_filters %}<span class="badge text-bg-light border">{{ label }}：{{ value }}</span>{% empty %}<span>当前业务资产，未附加其他筛选条件。</span>{% endfor %}</div>
+<form method="post">{% csrf_token %}<input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">{% for key,value in filters.items %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}<button class="btn btn-primary" type="submit">生成 Excel</button></form></section>
+<div class="card table-responsive"><table class="table mb-0"><thead><tr><th>编号/草稿号</th><th>名称</th><th>部门</th><th>责任人</th><th>位置</th><th>状态</th></tr></thead><tbody>{% for row in preview_rows %}<tr><td>{{ row.asset_code }}</td><td>{{ row.asset_name }}</td><td>{{ row.department }}</td><td>{{ row.responsible_employee }}</td><td>{{ row.location }}</td><td>{{ row.asset_status }}</td></tr>{% empty %}<tr><td colspan="6">当前筛选没有可导出的资产。</td></tr>{% endfor %}</tbody></table></div>
+{% if dataset.row_count > 100 %}<p class="text-secondary mt-2">页面预览前 100 项，Excel 包含全部筛选结果。</p>{% endif %}
+{% endif %}
+{% endblock %}

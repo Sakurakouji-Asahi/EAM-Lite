@@ -5,14 +5,17 @@ from __future__ import annotations
 import uuid
 
 from django import forms
+from apps.core.form_widgets import normalize_date_widgets
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.utils import timezone
 
 from apps.assets.lifecycle_permissions import can_lifecycle_action
+from apps.assets.form_options import link_assignment_options
 from apps.masterdata.models import AssetCodingScheme, Department, Employee, Location
 
 
 def _style(form):
+    normalize_date_widgets(form)
     for field in form.fields.values():
         if isinstance(field.widget, (forms.HiddenInput, forms.CheckboxInput)):
             continue
@@ -45,9 +48,9 @@ class ReasonedLifecycleForm(LifecycleActionForm):
     effective_at = forms.DateTimeField(
         label="生效时间", widget=forms.DateTimeInput(attrs={"type": "datetime-local"})
     )
-    reason = forms.CharField(label="原因", max_length=1000, widget=forms.Textarea)
+    reason = forms.CharField(label="原因", max_length=1000, widget=forms.Textarea(attrs={"rows": 3}))
     remark = forms.CharField(
-        label="备注", required=False, max_length=2000, widget=forms.Textarea
+        label="备注", required=False, max_length=2000, widget=forms.Textarea(attrs={"rows": 2})
     )
 
     def clean_effective_at(self):
@@ -100,6 +103,7 @@ class AssetTransferForm(ReasonedLifecycleForm):
             "默认带入当前责任人；转交时选择目标部门内的在职员工。"
         )
         self.fields["to_location"].help_text = "默认带入当前位置；仅在实物位置变化时修改。"
+        link_assignment_options(self, department="to_department", employee="to_responsible_employee", location="to_location")
 
     def clean(self):
         cleaned = super().clean()

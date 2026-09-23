@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from urllib.parse import urlencode
 from decimal import Decimal
 
 from django.contrib import messages
@@ -15,7 +16,9 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
 from apps.assets.models import Asset
+from apps.finance.readiness import pending_finance_assets, missing_finance_base_fields
 from apps.finance.forms import (
+    PendingFinanceFilterForm,
     AssetCategoryPolicyForm,
     ConfirmFormalizationForm,
     DepreciationBatchGenerateForm,
@@ -105,12 +108,11 @@ def _service_error(form, exc):
 
 def _pending_asset(company, pk):
     return get_object_or_404(
-        Asset.objects.select_related(
+        pending_finance_assets(Asset.objects.filter(company=company)).select_related(
             "company", "category", "department", "responsible_employee", "location"
         ),
         pk=pk,
         company=company,
-        asset_status=Asset.AssetStatus.PENDING_FINANCE,
     )
 
 
@@ -176,15 +178,36 @@ def _finance_initial(asset):
 def pending_finance_list(request):
     require_view_finance(request.user)
     company = _company()
-    assets = scoped_finance_assets(request.user, company).filter(
-        asset_status=Asset.AssetStatus.PENDING_FINANCE
-    ).select_related("category", "department", "responsible_employee")
+    form = PendingFinanceFilterForm(request.GET, company=company)
+    assets = pending_finance_assets(scoped_finance_assets(request.user, company)).select_related(
+        "category", "department", "responsible_employee", "finance", "registration"
+    ).order_by("submitted_at", "created_at", "pk")
+    query = {}
+    if form.is_valid():
+        data = form.cleaned_data
+        if data["q"]:
+            assets = assets.filter(Q(asset_code__icontains=data["q"]) | Q(asset_name__icontains=data["q"]))
+            query["q"] = data["q"]
+        if data["department"]:
+            assets = assets.filter(department=data["department"])
+            query["department"] = data["department"].pk
+        if data["data_status"]:
+            assets = assets.filter(finance__isnull=data["data_status"] == "not_entered")
+            query["data_status"] = data["data_status"]
+    else:
+        assets = assets.none()
+    page = Paginator(assets, 25).get_page(request.GET.get("page"))
+    for asset in page.object_list:
+        asset.finance_missing_fields = missing_finance_base_fields(asset)
     return render(
         request,
         "finance/pending_list.html",
         {
-            "assets": assets.order_by("submitted_at", "created_at"),
+            "assets": page.object_list,
+            "page_obj": page,
             "can_manage": can_manage_finance(request.user),
+            "filter_form": form,
+            "pagination_query": urlencode(query),
         },
     )
 
@@ -231,6 +254,7 @@ def finance_preview(request, pk):
                     asset=asset,
                     finance_data=form.finance_data(),
                     profile_data=form.profile_data(),
+                    commissioning_date=form.cleaned_data.get("commissioning_date"),
                 )
             except (ValidationError, ValueError) as exc:
                 _service_error(form, exc)
@@ -259,15 +283,17 @@ def finance_confirm(request, pk):
                     actor=request.user,
                     asset=asset,
                     data=form.finance_data(),
+                    commissioning_date=form.cleaned_data.get("commissioning_date"),
                     request=request,
                 )
-                messages.success(request, "财务基础资料草稿已保存，资产仍为待财务确认。")
+                messages.success(request, "财务资料已保存；折旧尚未确认，实物资产的使用不受影响。")
             elif action == "confirm":
                 asset = confirm_asset_finance(
                     actor=request.user,
                     asset=asset,
                     finance_data=form.finance_data(),
                     profile_data=form.profile_data(),
+                    commissioning_date=form.cleaned_data.get("commissioning_date"),
                     code_effective_date=form.cleaned_data["code_effective_date"],
                     code_effective_reason=form.cleaned_data["code_effective_reason"],
                     idempotency_key=form.cleaned_data["idempotency_key"],
@@ -276,7 +302,7 @@ def finance_confirm(request, pk):
                 )
                 messages.success(
                     request,
-                    f"财务正式化完成，正式编号 {asset.asset_code} 已永久占用；标签状态为待打印。",
+                    f"资产 {asset.asset_code} 的财务与折旧设置已确认，实物状态保持不变。",
                 )
                 return redirect("finance:asset-finance-detail", pk=asset.pk)
             else:

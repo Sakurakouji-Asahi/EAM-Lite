@@ -1,7 +1,7 @@
-"""Controlled Sprint 3 asset-master services.
+"""Controlled draft, physical-data and attachment services.
 
-This module deliberately stops at ``pending_finance``.  It never allocates an
-official code and never writes SequenceCounter, IssuedCode or AssetCodeHistory.
+Physical registration and code issuance live in ``apps.assets.registration``.
+The legacy pending-finance submission is retained for existing integrations.
 """
 
 from __future__ import annotations
@@ -56,6 +56,8 @@ ASSET_EDIT_FIELDS = (
     "commissioning_date",
     "is_maintenance_required",
     "notes",
+    "management_attribute", "coding_year", "coding_year_note", "component_of",
+    "vehicle_plate", "chassis_number", "calibration_number",
 )
 FINANCIAL_FIELD_NAMES = frozenset(
     {
@@ -256,6 +258,19 @@ def _validate_create_scope(actor, company, data):
     department = data.get("department")
     if not can_create_asset_draft(actor, company, department):
         raise PermissionDenied("您没有在此范围新建资产草稿的权限。")
+    _validate_component_scope(actor, company, data.get("component_of"))
+
+
+def _validate_component_scope(actor, company, parent):
+    if parent is None:
+        return
+    from apps.assets.permissions import can_view_asset_p1
+    if parent.company_id != company.pk or not can_view_asset_p1(actor, parent):
+        raise PermissionDenied("您没有查看或关联该主资产的权限。")
+    if parent.identity is None or parent.identity.subitem_number != 0:
+        raise ValidationError({"component_of": "主资产必须已经使用统一规则建立正式编号。"})
+    if parent.record_status != "active" or parent.asset_status not in {"pending_label", "in_use", "idle", "under_repair"}:
+        raise ValidationError({"component_of": "当前主资产状态不能新增组件。"})
 
 
 def _custom_value_payload(custom_field, value):
@@ -389,6 +404,7 @@ def update_asset_draft(
     # department before persisting, independently of ModelForm querysets.
     if not can_create_asset_draft(actor, asset.company, asset.department):
         raise PermissionDenied("您没有把资产改挂到目标部门的权限。")
+    _validate_component_scope(actor, asset.company, asset.component_of)
     if asset.category_id != old_category_id:
         existing_values = asset.custom_values.all()
         if custom_values is None and existing_values.exists():
@@ -514,17 +530,17 @@ def set_requested_coding_scheme(
 
 
 def _validate_submission(asset):
-    from apps.assets.models import AssetCustomField, AttachmentLink
+    from apps.assets.models import AssetCustomField
 
     errors = {}
     for field in ("asset_name", "category", "unit", "department", "responsible_employee", "location"):
         value = getattr(asset, field)
         if value is None or (isinstance(value, str) and not value.strip()):
-            errors[field] = "提交财务确认前必须填写此字段。"
+            errors[field] = "建立正式实物档案前必须填写此字段。"
     if asset.quantity != 1:
         errors["quantity"] = "V1 每条资产记录数量必须为 1。"
     if asset.asset_code is not None or asset.current_issued_code_id is not None:
-        errors["asset_code"] = "Sprint 3 提交不得包含正式编号。"
+        errors["asset_code"] = "该资产已有正式编号，不能重复建档。"
     if asset.responsible_employee_id and (
         asset.responsible_employee.department_id != asset.department_id
         or asset.responsible_employee.employment_status != "active"
@@ -534,19 +550,7 @@ def _validate_submission(asset):
     if asset.location_id and not asset.location.is_active:
         errors["location"] = "位置必须处于启用状态。"
     elif asset.location_id and asset.location.children.exists():
-        errors["location"] = "提交财务确认时必须选择位置树的叶级节点。"
-
-    has_photo = AttachmentLink.objects.filter(
-        asset=asset,
-        role__in=(AttachmentLink.Role.COVER, AttachmentLink.Role.PHOTO),
-        security_class=AttachmentLink.SecurityClass.A0,
-        status=AttachmentLink.Status.ACTIVE,
-        attachment__is_available=True,
-        attachment__malware_scan_status__in=("policy_limited", "clean"),
-        attachment__mime_type__startswith="image/",
-    ).exists()
-    if not has_photo:
-        errors["attachments"] = "提交财务确认前至少需要一张有效资产照片。"
+        errors["location"] = "实物建档时必须选择位置树的叶级节点。"
 
     required_fields = AssetCustomField.objects.filter(
         company=asset.company,

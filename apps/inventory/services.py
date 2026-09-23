@@ -40,9 +40,9 @@ from apps.inventory.permissions import (
 from apps.masterdata.permissions import current_company, role_names_for
 
 
-FORMAL_INVENTORY_STATUSES = frozenset(
-    {"pending_label", "in_use", "idle", "loaned", "under_repair", "pending_disposal"}
-)
+from apps.assets.domain import MANAGED_ASSET_STATUSES
+
+FORMAL_INVENTORY_STATUSES = frozenset(MANAGED_ASSET_STATUSES)
 OPERATION_AUDIT_PREFIX = "inventory.idempotency"
 
 
@@ -435,6 +435,29 @@ def _scope_assets(task, snapshot_at):
     return queryset.order_by("pk")
 
 
+def preview_inventory_assets(*, actor, task, snapshot_at=None):
+    """Read the same eligible, authorized population that publication will use."""
+    from apps.assets.permissions import scoped_assets
+    from apps.inventory.models import InventoryTask
+
+    company = _current_company(task.company)
+    try:
+        task = InventoryTask.objects.select_related("company", "scope_department", "scope_category", "scope_location").get(pk=task.pk, company=company)
+    except InventoryTask.DoesNotExist as exc:
+        raise PermissionDenied("盘点任务不存在或不属于当前公司。") from exc
+    require_publish_inventory_task(actor, task)
+    assets = _scope_assets(task, snapshot_at or timezone.now())
+    allowed = scoped_assets(actor, task.company).values("pk")
+    if assets.exclude(pk__in=allowed).exists():
+        raise PermissionDenied("盘点范围包含当前发布人无权查看的资产，请调整范围。")
+    if task.scope_type == "selected_assets":
+        requested = set(task.scope_definition_json.get("selected_asset_ids", ()))
+        found = {str(pk) for pk in assets.values_list("pk", flat=True)}
+        if requested != found:
+            raise ValidationError("已选资产包含非正式、已归档、越权或已变化对象。")
+    return assets
+
+
 @transaction.atomic
 def publish_inventory_task(*, actor, task, request=None):
     from apps.inventory.models import InventoryTask, InventoryTaskAsset
@@ -458,21 +481,7 @@ def publish_inventory_task(*, actor, task, request=None):
         task.company, [item.user for item in task.assignees.select_related("user")]
     )
     snapshot_at = timezone.now()
-    assets = list(_scope_assets(task, snapshot_at))
-    if task.scope_type == "selected_assets":
-        from apps.assets.permissions import scoped_assets
-
-        allowed_ids = set(
-            scoped_assets(actor, task.company).filter(
-                pk__in=[asset.pk for asset in assets]
-            ).values_list("pk", flat=True)
-        )
-        if allowed_ids != {asset.pk for asset in assets}:
-            raise PermissionDenied("已选资产包含当前发布人无权对象。")
-        requested = set(task.scope_definition_json.get("selected_asset_ids", ()))
-        found = {str(asset.pk) for asset in assets}
-        if requested != found:
-            raise ValidationError("已选资产包含非正式、已归档、越权或已变化对象。")
+    assets = list(preview_inventory_assets(actor=actor, task=task, snapshot_at=snapshot_at))
     _base_update(InventoryTask, task.pk, {
         "status": "in_progress", "snapshot_at": snapshot_at,
         "expected_asset_count": len(assets),

@@ -1,0 +1,9 @@
+{% if preview_error %}<div class="alert alert-danger">{{ preview_error }}</div>{% endif %}
+{% if preview_page.paginator %}
+<section class="card mb-3" aria-labelledby="inventory-preview-title">
+  <div class="card-header"><h2 class="h5 mb-0" id="inventory-preview-title">预计应盘 {{ preview_page.paginator.count }} 项</h2></div>
+  <div class="card-body"><p class="mb-0">{{ task.name }} · {{ task.get_scope_type_display }}。以下是当前预览，发布时会重新核验范围并保存正式快照。</p></div>
+  <div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>编号</th><th>资产名称</th><th>部门</th><th>责任人</th><th>位置</th><th>状态</th></tr></thead><tbody>{% for asset in preview_page %}<tr><td>{{ asset.asset_code }}</td><td>{{ asset.asset_name }}</td><td>{{ asset.department.name }}</td><td>{{ asset.responsible_employee.name }}</td><td>{{ asset.preview_location_path }}</td><td>{{ asset.get_asset_status_display }}</td></tr>{% empty %}<tr><td colspan="6">当前范围没有符合条件的正式资产。</td></tr>{% endfor %}</tbody></table></div>
+  {% if preview_page.paginator.num_pages > 1 %}<div class="card-footer">第 {{ preview_page.number }} / {{ preview_page.paginator.num_pages }} 页 {% if preview_page.has_previous %}<a class="btn btn-sm btn-outline-secondary" href="?preview_page={{ preview_page.previous_page_number }}">上一页</a>{% endif %} {% if preview_page.has_next %}<a class="btn btn-sm btn-outline-secondary" href="?preview_page={{ preview_page.next_page_number }}">下一页</a>{% endif %}</div>{% endif %}
+</section>
+{% endif %}

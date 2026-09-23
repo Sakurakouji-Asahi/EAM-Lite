@@ -1,40 +1,41 @@
-# EAM-Lite 低值易耗品与低值耐用品扩展包
+# EAM-Lite 低值物品模块说明
 
-本扩展包面向 EAM-Lite `main` 分支当前功能基线，供 Codex 按 Sprint 逐步实现。
+更新：2026-09-22。本文说明当前已整合的低值物品功能及历史阶段，不是待安装扩展包。开发规则见 [AGENTS.md](AGENTS.md)，AI 设计稿与实现状态见 [文档索引](docs/README.md)。
 
-## 核心架构结论
+日常登记从“逐件资产”或“数量物品”进入。新增档案支持留空自动编号和手工编号，详见 [物品管理方式与档案编号](docs/Item-Management-and-Numbering.md)。
+
+## 现有管理结构
 
 本扩展采用两条管理路径，避免破坏现有资产模型：
 
 1. **逐件管理的低值耐用品**
    - 继续使用现有 `Asset`、`AssetFinance`、二维码、调拨、盘点、处置和离职清退。
-   - 财务认定使用 `AssetFinance.accounting_treatment = controlled_non_fixed`。
+   - 新建使用首次管理属性 LV，建档后即可进入逐件耐用品列表；财务认定随后独立确认。未记录首次属性的旧资产兼容已确认的 `controlled_non_fixed` 口径。
    - 每条资产仍严格代表一件实物，`quantity = 1`。
-   - 不生成折旧配置，不参加固定资产折旧。
+   - 财务认定为 `controlled_non_fixed` 时不生成折旧配置、不参加固定资产折旧；首次 LV 与财务最终认定可以不同，认定变化不改号。
 
 2. **按数量管理的低值物品**
-   - 新建独立 `apps.supplies` 应用。
+   - 使用已存在的独立 `apps.supplies` 应用。
    - 管理低值易耗品以及不需要一物一码的低值耐用品。
    - 支持入库、领用、退回、仓库调拨、耐用品保管、盘点、离职清退、库存与领用报表。
    - 使用不可变库存流水和移动加权平均成本，不建立采购、供应商、发票或会计凭证模块。
 
 ## 文件说明
 
-- `docs/13-Low-Value-Goods-Requirements.md`：业务需求和范围基线。
+- `docs/13-Low-Value-Goods-Requirements.md`：AI 业务需求和范围参考。
 - `docs/14-Low-Value-Goods-Technical-Design.md`：架构、模型、服务、成本、权限和迁移设计。
 - `docs/15-Low-Value-Goods-Data-Dictionary.md`：字段、状态机和约束明细。
 - `docs/16-Low-Value-Goods-UAT.md`：功能验收场景。
 - `tasks/Sprint-13-...` 至 `tasks/Sprint-18-...`：逐 Sprint Codex 任务。
-- `CODEX-FIRST-INSTRUCTION.md`：可直接复制给 Codex 的首条执行指令。
-- `PATCH-NOTES.md`：合并到现有仓库文档时需要修改的最小位置。
+- `CODEX-FIRST-INSTRUCTION.md`：历史首条指令的归档入口，不再作为默认任务。
+- `PATCH-NOTES.md`：历史文档合并建议。
+- [操作手册](docs/17-Low-Value-Goods-Operations.md) 与 [历史验收证据](docs/18-Low-Value-Goods-UAT-Evidence.md)：已实现功能的操作和当时验证。
 
-## 使用顺序
+## 当前使用与维护
 
-1. 将本包内 `docs/`、`tasks/` 和根目录补充文件复制到 EAM-Lite 仓库根目录。
-2. 先审阅业务口径，尤其是“逐件低值耐用品”和“数量型低值耐用品”的区分。
-3. 把 `CODEX-FIRST-INSTRUCTION.md` 中的指令交给 Codex。
-4. 每次只执行一个 Sprint；Sprint 13 已建立基础档案，Sprint 14 已建立库存入库引擎，Sprint 15 已建立领退调拨、完整冲销与耐用品保管基础，Sprint 16 已完成耐用品保管生命周期和逐件资产集成。
-5. 后续仍须逐 Sprint 单独下达任务；不得从 Sprint 16 自动进入 Sprint 17。
+Sprint 13–18 的基础档案、入库、领退调拨、保管、盘点、清退及报表代码已经整合。日常维护按用户本次目标开展，原 Sprint 文件用于追溯阶段设计，不要求重新复制扩展包或重做既有模块。
+
+物品模式、数量成本和保管来源是现有数据语义。可根据实际需求优化流程，但涉及金额、责任关系或数据迁移时应说明影响；功能已存在不代表旧 AI 需求已被用户逐条确认。
 
 ## Sprint 14 已开放能力
 
@@ -48,7 +49,7 @@
 .\.venv\Scripts\python.exe manage.py reconcile_supply_balances --company <公司编码>
 ~~~
 
-核对命令发现差异时以非 0 状态退出，只报告流水汇总与余额缓存差异，不会修复、重建或写入库存。
+核对命令发现差异时以非 0 状态退出，报告单据、流水链完整性与余额缓存差异，不会修复、重建或写入库存。
 
 ## Sprint 15 已开放能力
 
@@ -74,12 +75,18 @@
 - 报损和报废减少在管数量与管理金额，不改变仓库库存、不生成会计凭证；
 - “耐用品期初保管”标准 `.xlsx` 模板、逐行校验和整批确认；确认直接建立根保管和 `opening` 流水，确认后不提供破坏性回滚；
 - 保管列表、来源类型筛选、详情来源链、完整流水及员工只读“我的耐用品”；
-- 逐件低值耐用品继续使用 `Asset + AssetFinance(controlled_non_fixed)`，资产列表可按会计认定筛选；
+- 逐件耐用品沿用 Asset 实物流程；首次 LV 的列表与后续财务认定分开，资产列表仍可按会计认定筛选，详见 [2026-09-12 改进记录](docs/Project-Improvements-2026-09-12.md)；
 - `controlled_non_fixed` 从折旧试算、Profile 动作、批次、理论试算及固定资产折旧查询中统一排除；
 - 服务级 `durable_management_totals()` 分开返回数量型仓库/在管金额与逐件受控非固定资产原值。
 
-Sprint 16 仍未开放仓库或保管盘点、盘点调整、数量型耐用品离职清退、综合报表或正式 Dashboard 指标。
+## Sprint 17–18 已整合能力
 
-## 明确不做
+- 仓库及保管盘点、差异处理和数量型耐用品离职清退；
+- 正式 Dashboard、12 张分页报表、同口径 XLSX 和导出审计；
+- 库存与保管的只读核对、dry-run 和受控缓存重建。
+
+日常操作见 [操作手册](docs/17-Low-Value-Goods-Operations.md)，测试与页面结果见 [当时的 UAT 记录](docs/18-Low-Value-Goods-UAT-Evidence.md)；这些记录不自动代表当前环境完成验收。
+
+## 当前实现边界
 
 本扩展不是通用 ERP 库存模块，不管理生产原料、BOM、批次保质期、采购订单、供应商结算、进项发票、自动会计凭证、T+ API 或自动摊销。

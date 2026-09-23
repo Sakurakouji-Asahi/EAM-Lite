@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}撤销登记 - EAM-Lite{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3 mb-1">撤销{% if kind == 'origin' %}来源{% else %}归还{% endif %}登记</h1><p class="text-secondary mb-0">{{ asset.asset_code }} · {{ asset.asset_name }}</p></div></header>
+<section class="card mb-3"><div class="card-body">{% if kind == 'origin' %}<p>{{ record.get_relation_type_display }}：{{ record.source_issued_code.display_code }} · {{ record.source_asset.asset_name }}</p>{% else %}<p>实际归还日期：{{ record.returned_on|date:"Y-m-d" }} · 接收方：{{ record.counterparty }}</p><p>合同或受托依据：{{ record.contract_reference }}<br>归还验收：{{ record.acceptance_evidence }}</p>{% endif %}<p class="mb-0">原登记依据：{{ record.reason }}</p></div></section>
+<p>{% if kind == 'origin' %}撤销后，该登记不再作为有效来源关系。{% else %}误登记的实物归还将恢复归还前状态及本次终止的保养计划；已完成的财务处置不随此操作撤销。{% endif %}原记录和撤销依据继续保留，随后可重新登记正确资料。</p>
+<form method="post" class="card card-body">{% csrf_token %}{{ form.idempotency_key }}{{ form.non_field_errors }}<label class="form-label" for="{{ form.reason.id_for_label }}">{{ form.reason.label }}</label>{{ form.reason }}{{ form.reason.errors }}<label class="my-3">{{ form.confirmed }} {{ form.confirmed.label }}</label>{{ form.confirmed.errors }}<div><button class="btn btn-danger" type="submit">确认撤销登记</button> <a class="btn btn-outline-secondary" href="{% url 'assets:asset-detail' asset.pk %}">返回</a></div></form>
+{% endblock %}

@@ -669,7 +669,7 @@ def test_setup_progress_recomputes_real_data_persists_and_blocks_unscoped_manage
     create_asset_category(
         actor=admin,
         company=company,
-        data={"code": "EQ", "name": "设备", "category_type": "equipment"},
+        data={"code": "EQ", "name": "设备"},
     )
     create_location(
         actor=admin,

@@ -1,5 +1,11 @@
 # EAM-Lite V1.2 低值物品技术设计
 
+> **AI 设计参考 · 2026-09-09**
+> 原文保留历史方案和案例，不代表用户逐条确认；强制措辞及固定 Sprint 限制不自动适用于当前任务。
+> 当前协作依据见 [AGENTS.md](../AGENTS.md) 与 [文档定位和状态](README.md)。
+
+当前实现对应：[领域计算](../apps/supplies/domain.py)、[服务](../apps/supplies/services.py)、[核对](../apps/supplies/reconciliation.py)、[导入](../apps/imports/services.py)、[报表](../apps/reports/supply_queries.py)。
+
 ## 1. 设计结论
 
 ### 1.1 不修改现有资产数量模型
@@ -940,7 +946,7 @@ UI 原则：
 
 ## 18. Excel 设计
 
-`apps/supplies/excel.py` 负责：
+当前实现复用 `apps.imports.services` 的模板、解析和行级校验，以及 `apps.reports.schemas`、`apps.reports.supply_queries`、`apps.reports.excel` 的报表定义、查询与文件生成。原设计中的独立 `apps/supplies/excel.py` 未建立，无需为匹配旧路径新建重复模块。相关职责为：
 
 - 模板生成；
 - 导入解析和行级校验；

@@ -13,6 +13,7 @@ from apps.masterdata.permissions import role_names_for
 # alias or expand the caller's underlying role scope.
 AUDIT_OBJECT_TYPE_REGISTRY = {
     "Asset": "资产",
+    "AssetBulkAssignment": "资产草稿批量补资料",
     "AssetCategory": "实物分类",
     "AssetCodeHistory": "资产编码历史",
     "AssetCodingScheme": "编码方案",
@@ -29,6 +30,11 @@ AUDIT_OBJECT_TYPE_REGISTRY = {
     "AssetLabelPrintItem": "标签打印明细",
     "AssetLoan": "资产借用",
     "AssetMovement": "资产变动",
+    "AssetCustodyReturn": "租入受托归还记录",
+    "AssetCustodyReturnReversal": "租入受托归还撤销记录",
+    "AssetOriginLink": "资产拆并来源",
+    "AssetOriginReversal": "资产来源撤销记录",
+    "AssetCompositionRevision": "资产组合清单历史",
     "AssetQrIdentity": "资产二维码身份",
     "AssetValueAdjustment": "资产价值调整",
     "AssetWorkUsage": "资产工作量",

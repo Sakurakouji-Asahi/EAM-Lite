@@ -63,6 +63,7 @@ MIDDLEWARE = [
     "apps.core.middleware.QrOpaqueOriginCsrfCompatibilityMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "apps.core.middleware.RequestRoleCacheMiddleware",
     "apps.operations.middleware.BackupWriteFreezeMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",

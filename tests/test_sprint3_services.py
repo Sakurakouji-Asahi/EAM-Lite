@@ -324,7 +324,7 @@ def test_non_admin_and_invalid_or_cross_company_scheme_are_rejected():
     assert IssuedCode.objects.count() == 0
 
 
-def test_submit_requires_all_physical_fields_leaf_photo_and_required_custom_values():
+def test_legacy_submit_requires_physical_and_custom_values_without_photo():
     actor, company, department, employee, category, location = make_context()
     required = make_custom_field(
         company, category, "REQUIRED", "text", required=True
@@ -340,10 +340,9 @@ def test_submit_requires_all_physical_fields_leaf_photo_and_required_custom_valu
 
     with pytest.raises(ValidationError) as missing:
         submit_asset_for_finance(actor=actor, asset=asset)
-    assert "attachments" in missing.value.message_dict
+    assert "attachments" not in missing.value.message_dict
     assert "custom_values" in missing.value.message_dict
 
-    add_photo(actor, asset)
     update_asset_draft(
         actor=actor,
         asset=asset,

@@ -205,7 +205,7 @@ def generate_print_batch(
             company=company, asset=asset, status="active"
         ).first()
         if identity is None:
-            raise ValidationError(f"资产 {asset.asset_code} 缺失财务确认创建的有效二维码身份。")
+            raise ValidationError(f"资产 {asset.asset_code} 缺失实物建档创建的有效二维码身份。")
         if identity.label_status == "attached":
             raise ValidationError(f"资产 {asset.asset_code} 已贴标，必须先执行换标。")
         if identity.label_status not in {"ready_to_print", "printed"}:
@@ -371,6 +371,7 @@ def confirm_label_attachment(
     target_status=None,
     idempotency_key,
     confirmation_method="scan",
+    identification_evidence="",
     request=None,
 ):
     from apps.assets.models import (
@@ -385,18 +386,28 @@ def confirm_label_attachment(
     key = str(idempotency_key or "").strip()
     if not key:
         raise ValidationError({"idempotency_key": "确认贴标必须提供幂等键。"})
+    from apps.masterdata.models import Company
+    company = Company.objects.select_for_update().get(pk=company.pk)
     method = str(confirmation_method or "").strip().casefold()
     if method not in {
         "scan",
         "scan_opaque_origin",
         "web",
         "web_opaque_origin",
+        "electronic",
+        "alternative",
     }:
         raise ValidationError({"confirmation_method": "贴标确认方式无效。"})
     asset = Asset.objects.select_for_update(of=("self",)).select_related(
         "department", "responsible_employee", "location"
     ).get(pk=asset.pk, company=company)
     require_label_action(actor, asset)
+    nonphysical = method in {"electronic", "alternative"}
+    evidence = str(identification_evidence or "").strip()
+    if nonphysical and (not evidence or len(evidence) > 1000):
+        raise ValidationError({"identification_evidence": "请填写 1—1000 字的电子档案或替代标识依据。"})
+    if method == "electronic" and asset.management_attribute != "IA":
+        raise ValidationError({"confirmation_method": "电子台账免贴标适用于 IA 无形资产；实物无法贴标时请选择替代标识。"})
     qr_candidate = AssetQrIdentity.objects.filter(
         asset=asset,
         status="active",
@@ -445,14 +456,15 @@ def confirm_label_attachment(
     ):
         raise PermissionDenied("所扫二维码不是该资产当前有效标签。")
     normalized_target = str(target_status or "")
+    request_payload = {
+        "asset_id": str(asset.pk), "qr_identity_id": str(qr.pk),
+        "qr_version": qr.version, "target_status": normalized_target,
+    }
+    if nonphysical:
+        request_payload.update({"identification_method": method, "identification_evidence": evidence})
     request_hash = hashlib.sha256(
         json.dumps(
-            {
-                "asset_id": str(asset.pk),
-                "qr_identity_id": str(qr.pk),
-                "qr_version": qr.version,
-                "target_status": normalized_target,
-            },
+            request_payload,
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
@@ -472,6 +484,8 @@ def confirm_label_attachment(
         company=company, idempotency_key=key
     ).first()
     if existing:
+        if nonphysical:
+            raise ValidationError("该幂等键已用于其他标识确认记录。")
         if (
             existing.asset_id != asset.pk
             or existing.movement_type != "label_activation"
@@ -496,13 +510,20 @@ def confirm_label_attachment(
         return qr
     if qr.label_status == "attached" and asset.asset_status in {"in_use", "idle"}:
         raise ValidationError("该标签已经完成贴标；新请求不得冒充原幂等请求。")
-    if qr.label_status != "printed":
+    if qr.label_status != "printed" and not (nonphysical and qr.label_status == "ready_to_print"):
         raise ValidationError("当前二维码尚未执行打印操作。")
     if not asset.asset_code:
         raise ValidationError("确认贴标前资产必须已有正式编号。")
     if not all((asset.department_id, asset.responsible_employee_id, asset.location_id)):
         raise ValidationError("确认贴标前必须补齐部门、责任人和位置。")
     now = timezone.now()
+    previous_label_status = qr.label_status
+    if nonphysical:
+        AssetLabelAttachmentRequest.objects.create(
+            company=company, asset=asset, qr_identity=qr, idempotency_key=key,
+            request_hash=request_hash, target_status=normalized_target, completed_by=actor,
+            identification_method=method, identification_evidence=evidence,
+        )
     for batch in generated_batches:
         item = items_by_batch[batch.pk][0]
         _controlled_update(
@@ -538,6 +559,8 @@ def confirm_label_attachment(
             if method in {"web", "web_opaque_origin"}
             else "现场扫码确认首次贴标"
         )
+        if nonphysical:
+            confirmation_reason = ("电子台账确认启用：" if method == "electronic" else "替代标识确认启用：") + evidence
         movement = AssetMovement(
             company=company, asset=asset, movement_type="label_activation", effective_at=now,
             from_department=asset.department, to_department=asset.department,
@@ -560,17 +583,13 @@ def confirm_label_attachment(
                        {"label_status": "attached", "attached_at": now, "attached_by_id": actor.pk},
                        "eam_lite.controlled_qr_identity_mutation")
     qr.refresh_from_db()
-    AssetLabelAttachmentRequest.objects.create(
-        company=company,
-        asset=asset,
-        qr_identity=qr,
-        idempotency_key=key,
-        request_hash=request_hash,
-        target_status=normalized_target,
-        completed_by=actor,
-    )
-    _audit(actor=actor, action="asset_label.attached", instance=asset,
-           old_data={"asset_status": asset.asset_status, "label_status": "printed"},
+    if not nonphysical:
+        AssetLabelAttachmentRequest.objects.create(
+            company=company, asset=asset, qr_identity=qr, idempotency_key=key,
+            request_hash=request_hash, target_status=normalized_target, completed_by=actor,
+        )
+    _audit(actor=actor, action=f"asset_identity.{method}_confirmed" if nonphysical else "asset_label.attached", instance=asset,
+           old_data={"asset_status": asset.asset_status, "label_status": previous_label_status},
            new_data={
                "asset_status": new_status,
                "label_status": "attached",

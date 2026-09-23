@@ -8,6 +8,15 @@
       <p class="mb-0">{{ task.name }}</p>
     </header>
     {% include "inventory/_summary.html" %}
+    <details class="card card-body mb-3">
+      <summary>手机怎么扫码盘点？</summary>
+      <ol class="mt-2 mb-0">
+        <li>打开手机系统相机，对准资产二维码标签。</li>
+        <li>打开识别出的链接，按提示登录。</li>
+        <li>在资产页面点击“录入本次盘点”，核对现场信息后保存。</li>
+        <li>继续使用系统相机扫描下一件资产。</li>
+      </ol>
+    </details>
     {% if error %}
       <div class="alert {% if error_kind == 'non_task' %}alert-warning{% else %}alert-danger{% endif %}" role="alert">{{ error }}</div>
     {% endif %}

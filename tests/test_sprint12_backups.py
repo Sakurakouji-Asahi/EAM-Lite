@@ -35,7 +35,7 @@ from apps.operations.services import (
     verify_backup_set,
 )
 from apps.supplies.services import post_supply_document
-from tests.test_sprint1_services import PASSWORD, make_user
+from tests.test_sprint3_support import PASSWORD, make_user
 from tests.test_sprint4_acceptance import _base_context
 from tests.test_sprint15_support import (
     make_issue_document,

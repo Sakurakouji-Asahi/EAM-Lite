@@ -112,6 +112,19 @@ def can_create_asset_draft(user, company, department=None) -> bool:
     )
 
 
+def assignable_asset_departments(user, company):
+    """Department choices for physical draft edits, using asset write roles."""
+    from apps.masterdata.models import Department
+
+    queryset = Department.objects.filter(company=company, is_active=True)
+    roles = _roles(user)
+    if roles.intersection(ASSET_GLOBAL_WRITE_ROLES):
+        return queryset
+    if "department_manager" in roles:
+        return queryset.filter(pk__in=resolve_department_ids(user, company))
+    return queryset.none()
+
+
 def can_edit_asset_draft(user, asset) -> bool:
     if asset._state.adding or asset.asset_status != "draft":
         return False
@@ -131,7 +144,12 @@ def require_edit_asset_draft(user, asset) -> None:
 
 
 def can_submit_asset(user, asset) -> bool:
-    return asset.asset_status == "draft" and can_edit_asset_draft(user, asset)
+    return (
+        asset.asset_status in {"draft", "pending_finance"}
+        and asset.current_issued_code_id is None
+        and can_view_asset(user, asset)
+        and can_create_asset_draft(user, asset.company, asset.department)
+    )
 
 
 def can_withdraw_asset(user, asset) -> bool:
@@ -196,28 +214,18 @@ def require_view_attachment(user, link) -> None:
 
 
 def can_create_attachment_link(user, asset, security_class) -> bool:
+    if asset.record_status != "active" or not can_view_asset(user, asset):
+        return False
     if security_class == "A1":
-        return bool(
-            "finance" in _roles(user)
-            and asset.asset_status in {"draft", "pending_finance"}
-        )
-    return security_class == "A0" and can_edit_asset_draft(user, asset)
+        return "finance" in _roles(user)
+    return (
+        security_class == "A0"
+        and can_view_asset_p1(user, asset)
+        and can_create_asset_draft(user, asset.company, asset.department)
+    )
 
 
 def can_void_attachment_link(user, link) -> bool:
     if link.status != "active" or link.asset_id is None:
         return False
-    if link.security_class == "A1":
-        return bool(
-            "finance" in _roles(user)
-            and link.asset.asset_status in {"draft", "pending_finance"}
-        )
-    if link.asset.asset_status == "pending_finance":
-        return bool(
-            can_view_asset(user, link.asset)
-            and (
-                "finance" in _roles(user)
-                or link.asset.submitted_by_id == getattr(user, "pk", None)
-            )
-        )
-    return can_edit_asset_draft(user, link.asset)
+    return can_create_attachment_link(user, link.asset, link.security_class)

@@ -1,5 +1,9 @@
 # EAM-Lite Sprint 12 运维手册
 
+> **操作参考 · 2026-09-09**
+> 本文描述相关版本的操作方式；执行前核对当前代码、环境与用户授权，历史状态不代表现有实例。
+> 当前协作依据见 [AGENTS.md](../AGENTS.md) 与 [文档定位和状态](README.md)。
+
 本手册固定 V1.1 的生产形态：Docker Compose + Gunicorn + Caddy + PostgreSQL 18。
 生产只部署到批准的公司 LAN，不开放公网，不使用 `manage.py runserver`。
 

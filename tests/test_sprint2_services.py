@@ -54,7 +54,6 @@ def make_category(company, code="EQ"):
         code=code,
         normalized_code=code.casefold(),
         name=code,
-        category_type="equipment",
     )
 
 
@@ -465,7 +464,6 @@ def test_equipment_can_maintain_category_but_not_assign_its_coding_scheme():
         data={
             "code": "PLAIN",
             "name": "普通分类",
-            "category_type": "equipment",
         },
     )
     assert plain.pk is not None
@@ -478,7 +476,6 @@ def test_equipment_can_maintain_category_but_not_assign_its_coding_scheme():
             data={
                 "code": "FORBIDDEN",
                 "name": "越权分类",
-                "category_type": "equipment",
                 "default_coding_scheme": scheme,
             },
         )
@@ -490,7 +487,6 @@ def test_equipment_can_maintain_category_but_not_assign_its_coding_scheme():
         data={
             "code": "ADMIN",
             "name": "管理员分类",
-            "category_type": "equipment",
             "default_coding_scheme": scheme,
         },
     )

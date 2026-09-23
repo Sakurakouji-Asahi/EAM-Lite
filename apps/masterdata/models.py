@@ -552,14 +552,6 @@ class FixedAssetCategory(NormalizedCodeModel, TimeStampedModel):
 
 
 class AssetCategory(NormalizedCodeModel, TimeStampedModel):
-    class CategoryType(models.TextChoices):
-        EQUIPMENT = "equipment", "设备"
-        MOLD = "mold", "模具"
-        TOOL = "tool", "工具"
-        INSPECTION_TOOL = "inspection_tool", "检具"
-        OFFICE_EQUIPMENT = "office_equipment", "办公设备"
-        OTHER = "other", "其他"
-
     company = models.ForeignKey(
         Company,
         verbose_name="公司",
@@ -576,9 +568,6 @@ class AssetCategory(NormalizedCodeModel, TimeStampedModel):
         related_name="children",
     )
     category_level = models.PositiveIntegerField("分类层级", default=1, editable=False)
-    category_type = models.CharField(
-        "实物类型", max_length=32, choices=CategoryType.choices
-    )
     is_maintenance_required_default = models.BooleanField(
         "默认需要保养", default=False
     )
@@ -619,19 +608,6 @@ class AssetCategory(NormalizedCodeModel, TimeStampedModel):
             models.CheckConstraint(
                 condition=Q(category_level__gte=1),
                 name="ck_category_level_positive",
-            ),
-            models.CheckConstraint(
-                condition=Q(
-                    category_type__in=(
-                        "equipment",
-                        "mold",
-                        "tool",
-                        "inspection_tool",
-                        "office_equipment",
-                        "other",
-                    )
-                ),
-                name="ck_category_type_valid",
             ),
         ]
 
@@ -882,6 +858,9 @@ class AssetCodingSegment(models.Model):
         SEQUENCE = "sequence", "顺序号"
         CUSTOM_TEXT = "custom_text", "自定义固定文本"
         SEPARATOR = "separator", "分隔符"
+        MANAGEMENT_ATTRIBUTE = "management_attribute", "首次建档管理属性"
+        CODING_YEAR = "coding_year", "取得年份（编码用）"
+        SUBITEM_NUMBER = "subitem_number", "主资产或组件子项号"
 
     coding_scheme = models.ForeignKey(
         AssetCodingScheme,
@@ -936,6 +915,9 @@ class AssetCodingSegment(models.Model):
                         "sequence",
                         "custom_text",
                         "separator",
+                        "management_attribute",
+                        "coding_year",
+                        "subitem_number",
                     )
                 ),
                 name="ck_coding_segment_type_valid",
@@ -977,6 +959,9 @@ class AssetCodingSegment(models.Model):
                             "year",
                             "year_month",
                             "full_date",
+                            "management_attribute",
+                            "coding_year",
+                            "subitem_number",
                         ),
                         fixed_value__isnull=True,
                         sequence_length__isnull=True,
@@ -1005,6 +990,9 @@ class AssetCodingSegment(models.Model):
             self.SegmentType.YEAR,
             self.SegmentType.YEAR_MONTH,
             self.SegmentType.FULL_DATE,
+            self.SegmentType.MANAGEMENT_ATTRIBUTE,
+            self.SegmentType.CODING_YEAR,
+            self.SegmentType.SUBITEM_NUMBER,
         }
         if self.segment_type in fixed_types:
             value = self.fixed_value
@@ -1067,6 +1055,11 @@ class SequenceCounter(TimeStampedModel):
             models.UniqueConstraint(
                 fields=("company", "coding_scheme", "scope_key"),
                 name="uq_sequence_counter_scope",
+            ),
+            models.UniqueConstraint(
+                fields=("company", "scope_key"),
+                condition=Q(scope_key__startswith='{"standard":"asset_identity_v1",'),
+                name="uq_standard_counter_company_scope",
             ),
             models.CheckConstraint(
                 condition=Q(current_value__gte=-1), name="ck_sequence_counter_minimum"
@@ -1310,7 +1303,6 @@ class InitializationSetting(models.Model):
                         categories_configured=True,
                         locations_configured=True,
                         coding_scheme_configured=True,
-                        finance_rules_configured=True,
                         permissions_configured=True,
                         users_configured=True,
                         completed_by__isnull=False,

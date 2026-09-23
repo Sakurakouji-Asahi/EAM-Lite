@@ -102,24 +102,29 @@ _PAGE_LABELS = {
     "home": "首页",
     "task-center": "我的待办",
     "settings-center": "设置首页",
-    "assets:asset-list": "资产台账",
-    "assets:asset-create": "新增资产",
+    "assets:asset-list": "全部逐件资产",
+    "assets:asset-list-export": "资产台账导出",
+    "assets:asset-create": "新增逐件资产",
+    "assets:bulk-registration": "批量建档",
+    "assets:custody-return-reverse": "撤销归还登记",
+    "assets:origin-reverse": "撤销来源登记",
     "assets:asset-detail": "资产详情",
     "assets:label-queue": "标签与二维码",
     "supplies:dashboard": "库存总览",
     "supplies:document-list": "入库、领用与调拨",
     "supplies:stock-balance-list": "当前库存",
     "supplies:stock-ledger-list": "出入库明细",
-    "supplies:custody-list": "耐用品保管",
+    "supplies:custody-list": "耐用品数量保管",
     "supplies:my-custodies": "我的领用与保管",
-    "supplies:item-list": "物品档案",
+    "supplies:item-list": "全部数量物品",
+    "supplies:item-create": "新增数量物品",
     "supplies:reconciliation-help": "库存核对帮助",
     "inventory:task-list": "资产盘点",
     "supplies:count-task-list": "物品盘点",
     "maintenance:due-list": "保养任务",
     "maintenance:plan-list": "保养计划",
     "offboarding:clearance-list": "离职清退",
-    "finance:pending-list": "待财务确认",
+    "finance:pending-list": "待确认折旧",
     "finance:batch-list": "固定资产折旧",
     "reports:report-center": "报表中心",
     "reports:supply-report-index": "办公用品与低值品报表",
@@ -142,8 +147,8 @@ _PAGE_LABELS = {
     "finance:policy-list": "折旧政策",
     "finance:fixed-category-list": "固定资产类别",
     "finance:settings": "财务参数",
-    "supplies:individual-durable-list": "逐件低值耐用品",
-    "supplies:individual-durable-create": "新增逐件低值耐用品",
+    "supplies:individual-durable-list": "低值耐用品（逐件）",
+    "supplies:individual-durable-create": "新增低值耐用品（逐件）",
 }
 
 
@@ -195,10 +200,7 @@ def _is_individual_durable_entry(view_name: str, query) -> bool:
     if view_name in _INDIVIDUAL_DURABLE_VIEWS:
         return True
     if view_name == "assets:asset-list":
-        return bool(
-            query.get("accounting_treatment") == "controlled_non_fixed"
-            or query.get("view") == "individual_durable"
-        )
+        return query.get("view") == "individual_durable"
     if view_name == "assets:asset-create":
         return query.get("source") == "individual_durable"
     return False
@@ -226,6 +228,11 @@ def _active_item(view_name: str, active_section: str, query=None) -> str:
         if view_name.startswith("supplies:custody-") or view_name == "supplies:my-custodies":
             return "supply_custodies"
         if view_name.startswith("supplies:item-"):
+            if view_name in {"supplies:item-list", "supplies:item-create"}:
+                if query.get("item_type") == "durable_quantity":
+                    return "supply_durable_items"
+                if query.get("item_type") == "consumable":
+                    return "supply_consumables"
             return "supply_items"
         return "supply_stock"
     if active_section == "tasks":
@@ -312,21 +319,28 @@ def _page_label(view_name: str, active_section: str, query=None) -> str:
     query = query or {}
     if _is_individual_durable_entry(view_name, query):
         return (
-            "新增逐件低值耐用品"
+            "新增低值耐用品（逐件）"
             if view_name in {
                 "assets:asset-create",
                 "supplies:individual-durable-create",
             }
-            else "逐件低值耐用品"
+            else "低值耐用品（逐件）"
         )
+    if view_name in {"supplies:item-list", "supplies:item-create"}:
+        label = {
+            "durable_quantity": "低值耐用品（按数量）",
+            "consumable": "低值易耗品",
+        }.get(query.get("item_type"))
+        if label:
+            return f"新增{label}" if view_name.endswith("item-create") else label
     if view_name in _PAGE_LABELS:
         return _PAGE_LABELS[view_name]
     prefixes = (
         ("assets:", "资产详情与操作"),
         ("supplies:count-", "物品盘点"),
         ("supplies:document-", "入库、领用与调拨"),
-        ("supplies:custody-", "耐用品保管"),
-        ("supplies:", "办公用品与低值品"),
+        ("supplies:custody-", "耐用品数量保管"),
+        ("supplies:", "数量物品"),
         ("inventory:", "资产盘点"),
         ("maintenance:", "保养任务"),
         ("offboarding:", "离职清退"),
@@ -342,8 +356,8 @@ def _page_label(view_name: str, active_section: str, query=None) -> str:
         if view_name.startswith(prefix):
             return label
     return {
-        "assets": "资产管理",
-        "supplies": "办公用品与低值品",
+        "assets": "逐件资产",
+        "supplies": "数量物品",
         "tasks": "我的工作",
         "finance_reports": "报表与财务",
         "settings": "基础资料与设置",
@@ -455,8 +469,8 @@ def build_application_navigation(request) -> dict:
             active_section = "settings"
 
     section_labels = {
-        "assets": "资产管理",
-        "supplies": "办公用品与低值品",
+        "assets": "逐件资产",
+        "supplies": "数量物品",
         "tasks": "我的工作",
         "finance_reports": "报表与财务",
         "settings": "基础资料与设置",

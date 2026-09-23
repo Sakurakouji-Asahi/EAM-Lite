@@ -11,17 +11,9 @@ from django.utils import timezone
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
-FORMAL_NON_TERMINAL_ASSET_STATUSES = frozenset(
-    {
-        "pending_label",
-        "in_use",
-        "idle",
-        "loaned",
-        "under_repair",
-        "pending_disposal",
-    }
-)
-TERMINAL_ASSET_STATUSES = frozenset({"disposed", "sold", "other_disposed"})
+from apps.assets.domain import MANAGED_ASSET_STATUSES, TERMINAL_ASSET_STATUSES
+
+FORMAL_NON_TERMINAL_ASSET_STATUSES = frozenset(MANAGED_ASSET_STATUSES)
 ACTIVE_CLEARANCE_STATUSES = frozenset({"open", "blocked"})
 RESOLVED_ITEM_RESOLUTIONS = frozenset({"returned", "transferred", "disposed"})
 UNRESOLVED_ITEM_RESOLUTIONS = frozenset({"pending", "disposal_in_progress"})

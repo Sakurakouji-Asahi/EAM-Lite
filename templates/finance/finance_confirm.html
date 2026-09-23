@@ -1,18 +1,20 @@
 {% extends "base.html" %}
 {% load static %}
-{% block title %}财务确认 {{ asset }} - EAM-Lite{% endblock %}
+{% block title %}财务与折旧确认 {{ asset }} - EAM-Lite{% endblock %}
 {% block content %}
-  <nav aria-label="面包屑"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="{% url 'finance:pending-list' %}">待财务确认</a></li><li class="breadcrumb-item active">{{ asset.draft_number }}</li></ol></nav>
-  <h1 class="h3 mb-3">财务确认：{{ asset.asset_name }}</h1>
-  <div class="row g-4"><div class="col-12 col-xl-5"><div class="card shadow-sm"><div class="card-header">实物资料</div><div class="card-body"><dl class="row mb-0"><dt class="col-sm-5">草稿号</dt><dd class="col-sm-7">{{ asset.draft_number }}</dd><dt class="col-sm-5">实物分类</dt><dd class="col-sm-7">{{ asset.category }}</dd><dt class="col-sm-5">部门</dt><dd class="col-sm-7">{{ asset.department }}</dd><dt class="col-sm-5">责任人</dt><dd class="col-sm-7">{{ asset.responsible_employee }}</dd><dt class="col-sm-5">位置</dt><dd class="col-sm-7">{{ asset.location }}</dd><dt class="col-sm-5">达到可使用状态</dt><dd class="col-sm-7">{{ asset.commissioning_date|default:"未填写" }}</dd></dl></div></div></div>
+  <nav aria-label="面包屑"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="{% url 'finance:pending-list' %}">待确认折旧</a></li><li class="breadcrumb-item active">{{ asset.asset_code|default:asset.draft_number }}</li></ol></nav>
+  <h1 class="h3 mb-3">财务与折旧确认：{{ asset.asset_name }}</h1>
+  {% if asset.management_attribute %}<div class="alert alert-info">首次建档管理属性：<strong>{{ asset.get_management_attribute_display }}</strong>。请根据实际资料独立确认会计处理；选择不同的会计认定不会改变资产编号或二维码。</div>{% endif %}
+  <div class="row g-4"><div class="col-12 col-xl-5"><div class="card shadow-sm"><div class="card-header">实物资料</div><div class="card-body"><dl class="row mb-0"><dt class="col-sm-5">资产编号</dt><dd class="col-sm-7">{{ asset.asset_code|default:asset.draft_number }}</dd><dt class="col-sm-5">实物分类</dt><dd class="col-sm-7">{{ asset.category }}</dd><dt class="col-sm-5">部门</dt><dd class="col-sm-7">{{ asset.department }}</dd><dt class="col-sm-5">责任人</dt><dd class="col-sm-7">{{ asset.responsible_employee }}</dd><dt class="col-sm-5">位置</dt><dd class="col-sm-7">{{ asset.location }}</dd><dt class="col-sm-5">达到可使用状态</dt><dd class="col-sm-7">{{ asset.commissioning_date|default:"未填写" }}</dd></dl></div></div></div>
   <div class="col-12 col-xl-7"><div class="card shadow-sm"><div class="card-header">财务认定与折旧参数</div><div class="card-body">
-    <div class="alert alert-warning">正式编号确认后永久占用；预览与保存财务草稿均不会消耗编号或创建二维码。</div>
-    {% if not has_fixed_asset_categories %}<div class="alert alert-danger"><strong>尚未配置固定资产会计类别。</strong>选择“固定资产”前，请先<a class="alert-link" href="{% url 'finance:fixed-category-create' %}">新建会计类别</a>。</div>{% endif %}
-    {% if not asset.commissioning_date %}<div class="alert alert-warning"><strong>尚未填写达到可使用状态日期。</strong>选择“固定资产”时无法完成确认；请先<a class="alert-link" href="{% url 'assets:asset-withdraw' asset.pk %}">退回草稿补充</a>。</div>{% endif %}
-    <form method="post" novalidate id="finance-confirm-form">{% csrf_token %}
+    <div class="alert alert-info">实物建档无需等待财务。本页在发票等资料齐备后确认金额和折旧设置；已建立的编号、二维码和使用状态保持不变。未确认前不自动计提折旧。</div>
+    <p><a href="{% url 'assets:attachment-upload' asset.pk %}?role=invoice">补充发票或财务附件</a> · <a href="{% url 'assets:asset-detail' asset.pk %}">查看实物资产</a></p>
+    {% if not has_fixed_asset_categories %}<div class="alert alert-warning" data-fixed-asset-category-warning><strong>尚未配置固定资产会计类别。</strong>选择“固定资产”前，请先<a class="alert-link" href="{% url 'finance:fixed-category-create' %}">新建会计类别</a>。</div>{% endif %}
+    {% if not asset.commissioning_date %}<div class="alert alert-warning"><strong>尚未填写达到可使用状态日期。</strong>可直接在下方补充，无需退回实物草稿。</div>{% endif %}
+    <form method="post" action="{% url 'finance:finance-confirm' asset.pk %}" novalidate id="finance-confirm-form">{% csrf_token %}
       {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
       {% for field in form %}{% if not field.is_hidden %}<div class="mb-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}{% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>{% else %}{{ field }}{% endif %}{% endfor %}
-      {% if not preview_only %}<button class="btn btn-outline-primary" type="submit" name="action" value="save">保存财务资料</button> <button class="btn btn-danger" type="submit" name="action" value="confirm">确认并生成正式编号</button>{% endif %}
+      <button class="btn btn-outline-primary" type="submit" name="action" value="save">保存财务资料</button> <button class="btn btn-danger" type="submit" name="action" value="confirm">确认财务与折旧</button>
       <button class="btn btn-outline-secondary" type="submit" formaction="{% url 'finance:finance-preview' asset.pk %}">折旧试算</button>
     </form>
   </div></div></div></div>

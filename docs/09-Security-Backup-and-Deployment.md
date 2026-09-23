@@ -1,6 +1,12 @@
 # Security, Backup and Deployment Specification V1.1
 
-本文件定义 EAM-Lite V1 在公司局域网中的最低安全、部署、备份和恢复要求。局域网不是可信边界；HTTPS、后端权限、备份隔离和恢复演练都不能因“只连公司 Wi-Fi”而省略。
+> **AI 设计参考 · 2026-09-09**
+> 原文保留历史方案和案例，不代表用户逐条确认；强制措辞及固定 Sprint 限制不自动适用于当前任务。
+> 当前协作依据见 [AGENTS.md](../AGENTS.md) 与 [文档定位和状态](README.md)。
+
+当前实现对应：[设置](../config/settings.py)、[部署文件](../deploy/)、[备份恢复服务](../apps/operations/)、[本机运行说明](../README-本机使用版.md)。
+
+本文件保留公司 LAN 场景的安全、部署和恢复设计。当前另有仅本机 HTTP 和开发局域网扫码测试模式，具体限制由 config/settings.py、部署文件及本机脚本执行；不要把 LAN 方案的全部条款机械套到不同运行场景。后端权限、备份隔离和可恢复性需按实际环境验证。
 
 ## 1. V1 生产架构
 

@@ -39,6 +39,9 @@ SEGMENT_TYPES = frozenset(
         "sequence",
         "custom_text",
         "separator",
+        "management_attribute",
+        "coding_year",
+        "subitem_number",
     }
 )
 
@@ -209,6 +212,8 @@ def validate_scheme_structure(segments_or_scheme):
             raise ValidationError({"effective_to": "生效结束日不得早于开始日。"})
         if _get(segments_or_scheme, "is_default", False) and status != "active":
             raise ValidationError({"is_default": "只有有效版本可以成为默认方案。"})
+    from apps.coding.standard import validate_standard_structure
+    validate_standard_structure(segments_or_scheme, ordered)
     return ordered
 
 
@@ -326,6 +331,17 @@ def render_code(segments, context, sequence_value):
             part = _source_code(context, "company", label="公司")
         elif segment_type == "department_code":
             part = _source_code(context, "department", label="部门")
+        elif segment_type in {"management_attribute", "coding_year", "subitem_number"}:
+            from apps.coding.standard import validate_parts
+            attribute = _context_value(context, "management_attribute")
+            coding_year = _context_value(context, "coding_year")
+            subitem = _context_value(context, "subitem_number")
+            subitem = 0 if subitem is None else subitem
+            root_code = _get(_category_at_level(category, "major"), "code") if category is not None else None
+            root_code = _context_value(context, "identity_category_code") or root_code
+            validate_parts(attribute, root_code, coding_year, subitem)
+            part = {"management_attribute": attribute, "coding_year": f"{coding_year:04d}",
+                    "subitem_number": f"{subitem:02d}"}[segment_type]
         elif segment_type in {
             "major_category_code",
             "minor_category_code",
@@ -341,6 +357,8 @@ def render_code(segments, context, sequence_value):
                 "category_code": "leaf",
             }[segment_type]
             part = _get(_category_at_level(category, level), "code")
+            if segment_type == "major_category_code" and _context_value(context, "identity_category_code") is not None:
+                part = _context_value(context, "identity_category_code")
             if part is None or str(part) == "":
                 raise ValidationError({"category": "实物分类缺少编码。"})
         elif segment_type == "year":

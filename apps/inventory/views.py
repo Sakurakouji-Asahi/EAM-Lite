@@ -62,6 +62,7 @@ from apps.inventory.services import (
     create_inventory_surplus,
     create_inventory_task_draft,
     inventory_task_summary,
+    preview_inventory_assets,
     publish_inventory_task,
     resolve_inventory_difference,
     resolve_inventory_surplus,
@@ -289,7 +290,7 @@ def _task_form_data(request):
         return None
     data = request.POST.copy()
     selected = data.getlist("selected_asset_ids_ui")
-    if selected:
+    if selected or "selected_asset_ids_ui_present" in data:
         data["selected_asset_ids"] = ",".join(selected)
     return data
 
@@ -504,6 +505,20 @@ def _attachment_rows(user, task):
     ]
 
 
+def _publication_preview(request, task):
+    if not can_publish_inventory_task(request.user, task):
+        return {}
+    try:
+        assets = preview_inventory_assets(actor=request.user, task=task)
+        page = Paginator(assets, 25).get_page(request.GET.get("preview_page"))
+        from apps.assets.form_options import location_path
+        for asset in page:
+            asset.preview_location_path = location_path(asset.location)
+        return {"preview_page": page}
+    except ValidationError as exc:
+        return {"preview_error": "；".join(exc.messages)}
+
+
 @login_required
 def task_detail(request, pk):
     if request.method != "GET":
@@ -559,6 +574,7 @@ def task_detail(request, pk):
         {
             "task": task,
             "summary": summary,
+            **_publication_preview(request, task),
             "row_items": row_items,
             "assignees": task.assignees.select_related("user").order_by("user__username"),
             "surpluses": task.surpluses.select_related(
@@ -613,6 +629,7 @@ def _confirm_action(
             "button_label": button_label,
             "danger": danger,
             "error": error,
+            **_publication_preview(request, task),
         },
     )
 

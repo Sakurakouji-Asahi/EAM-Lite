@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}租入受托资产归还 - EAM-Lite{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3 mb-1">租入或受托资产归还</h1><p class="text-secondary mb-0">{{ asset.asset_code }} · {{ asset.asset_name }}</p></div></header>
+<div class="alert alert-info">归还后结束本公司的实物管理，原编号、二维码和历史资料继续保留。此操作不自动改变金额；涉及已确认固定资产财务或折旧历史时，请先完成既有财务处置，再补登记归还依据。</div>
+<form method="post" class="card"><div class="card-body">{% csrf_token %}{{ form.non_field_errors }}{% for field in form %}{% if field.is_hidden %}{{ field }}{% else %}<div class="mb-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }} *</label>{{ field }}{% for error in field.errors %}<div class="text-danger">{{ error }}</div>{% endfor %}</div>{% endif %}{% endfor %}<button class="btn btn-primary" type="submit">确认归还并保留历史</button> <a class="btn btn-outline-secondary" href="{% url 'assets:asset-detail' asset.pk %}">返回</a></div></form>
+{% endblock %}

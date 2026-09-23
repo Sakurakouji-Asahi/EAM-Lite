@@ -1,6 +1,16 @@
 # Database Design V1.1
 
-本文件定义 EAM-Lite V1.1 的逻辑数据模型和不可省略的数据库约束。字段名可以按 Django 规范做小幅调整，但数据含义、公司边界、唯一约束、删除策略、事务和不可变历史不得弱化。
+> 2026-09-14 后续变更：实物分类的 `category_type` 已从数据库和业务模型移除。下文相关字段与枚举属于历史设计，当前情况见 [移除记录](Remove-Physical-Type-2026-09-14.md)。
+
+> **AI 设计参考 · 2026-09-09**
+> 原文保留历史方案和案例，不代表用户逐条确认；强制措辞及固定 Sprint 限制不自动适用于当前任务。
+> 当前协作依据见 [AGENTS.md](../AGENTS.md) 与 [文档定位和状态](README.md)。
+
+> **用户确认的后续变化 · 2026-09-09：** 新资产先实物建档并生成编号，照片可后补；财务资料齐备后另行确认折旧。与下文旧阶段描述不一致时，以 [实物建档与财务分离](Asset-Registration-and-Finance-2026-09-09.md) 的明确变化为准，其他规则按相关性核对。
+
+当前实现对应：模型在 [apps](../apps/) 各模块，实际表结构由各模块 migrations 演进；模型定位见 [开发指南](Development-Guide.md)。
+
+本文件保留 V1.1 逻辑模型设计，并补充后续模块对应关系；不是要求重建同名字段的清单。调整现有结构时以数据兼容、权限隔离、事务及历史完整性为依据，通过跟踪迁移和测试落实。
 
 ## 1. 全局约定
 
@@ -210,7 +220,7 @@ is_default=true` 至多一行，当前可用性再由 Service 按上海业务日
 
 字段：
 
-`id, company_id, asset_code, current_issued_code_id, requested_coding_scheme_id, asset_status, record_status, asset_name, category_id, brand, model, manufacturer, serial_number, factory_number, historical_code, tracking_mode, quantity, unit, description, department_id, responsible_employee_id, location_id, acquisition_date, commissioning_date, is_maintenance_required, initialization_source, initialization_date, initialized_by_id, notes, created_by_id, created_at, updated_by_id, updated_at`。`asset_code` 在财务确认前为 NULL，不得用空字符串代替。`commissioning_date` 是达到可使用状态日期的唯一业务字段，财务确认时核对后锁定；不得在 `AssetFinance` 再存一份同义日期。
+`id, company_id, asset_code, current_issued_code_id, requested_coding_scheme_id, asset_status, record_status, asset_name, category_id, brand, model, manufacturer, serial_number, factory_number, historical_code, tracking_mode, quantity, unit, description, department_id, responsible_employee_id, location_id, acquisition_date, commissioning_date, is_maintenance_required, initialization_source, initialization_date, initialized_by_id, notes, created_by_id, created_at, updated_by_id, updated_at`。`asset_code` 在财务确认前为 NULL，不得用空字符串代替。`commissioning_date` 是达到可使用状态日期的唯一业务字段，允许财务确认前补充，确认后锁定；不得在 `AssetFinance` 再存一份同义日期。
 
 外键：
 
@@ -230,7 +240,7 @@ is_default=true` 至多一行，当前可用性再由 Service 按上海业务日
 - V1 `tracking_mode='single_item'` 且 `quantity=1`；不实现批量资产、部分调拨或部分处置。
 - `asset_code` 为 NULL 当且仅当 `current_issued_code_id` 为 NULL；非空时必须等于该登记的 `display_code`。使用可延迟 PostgreSQL constraint trigger 保证事务提交时一致，普通表单不得直接编辑该字段；另建 `UNIQUE(company_id,asset_code)`，永久防复用仍由 `IssuedCode` 的全状态唯一约束承担。
 - `draft`、`pending_finance` 必须没有正式编号；只有财务确认的 `pending_finance -> pending_label` 原子事务才正式发号并建立 QR 身份。`pending_label` 及其后状态必须有正式编号和 active QR 身份。
-- `pending_label` 及其后正式状态必须存在同公司、已确认的 OneToOne `AssetFinance`；无论会计处理为固定资产还是受控非固定资产，都必须有可用于处置和对账的原值。
+- 正式实物资产必须有同公司的不可变 `AssetRegistration`、编号与二维码记录；`AssetFinance` 可以暂不存在或尚未确认。财务确认后才要求原值、会计认定及相应折旧资料完整。
 - `requested_coding_scheme` 必须同公司且在正式化生效日可用，只能由 system_admin 在 draft/pending_finance 阶段设置；正式发号后锁定。为空时才按物理类别默认、公司默认顺序解析，不得静默替换已明确但失效的版本。
 - `in_use/idle/loaned/under_repair/pending_disposal` 必须有同公司部门、责任人和叶级位置。
 - 会计认定不存于 Asset，唯一来源是 `AssetFinance.accounting_treatment`；不能按 5,000 元自动写入或从物理分类推断。
@@ -242,7 +252,7 @@ is_default=true` 至多一行，当前可用性再由 Service 按上海业务日
 
 `AssetCustomField`：`id, company_id, category_id, name, code, field_type, required, options_json, display_order, is_active`；公司/类别 `PROTECT`；`UNIQUE(company_id, code)`。
 
-`field_type` 精确取值为 `text/decimal/date/boolean/select`。`select` 时 `options_json` 必须是至少含一项、去重后的非空字符串 JSON 数组；其他类型时 `options_json` 必须为 NULL。code 使用 NFKC 规范化后在公司内唯一，类别必须同公司。`required=true` 表示资产提交财务确认前必须存在合法值，不表示为每个草稿预建空 Value 行。
+`field_type` 精确取值为 `text/decimal/date/boolean/select`。`select` 时 `options_json` 必须是至少含一项、去重后的非空字符串 JSON 数组；其他类型时 `options_json` 必须为 NULL。code 使用 NFKC 规范化后在公司内唯一，类别必须同公司。`required=true` 表示资产实物建档前必须存在合法值，不表示为每个草稿预建空 Value 行。
 
 `AssetCustomValue`：`id, company_id, asset_id, custom_field_id, value_text, value_decimal, value_date, value_boolean`；`asset -> Asset CASCADE`（只有可删除草稿会触发）、`custom_field -> AssetCustomField PROTECT`；`UNIQUE(asset_id, custom_field_id)`；本行 CHECK 使用 `num_nonnulls(...)=1`，再由可延迟 PostgreSQL constraint trigger 校验该列与被引用 Field 的 field_type/选项对应；所有对象同公司。不得编写引用另一张表而 PostgreSQL 实际无法执行的普通 CHECK。
 
@@ -294,10 +304,10 @@ is_default=true` 至多一行，当前可用性再由 Service 按上海业务日
 
 约束：
 
-- `accounting_treatment` 允许 NULL 仅表示 draft/pending_finance 阶段尚未认定；数据库/API 不保存第三个字符串 `unconfirmed`。非空值只允许 `fixed_asset/controlled_non_fixed`，财务确认时必须非空。
-- `finance_confirmed_by_id/finance_confirmed_at` 必须同时为空或同时非空：两者为空且 Asset 仍为 draft/pending_finance 时，该行只是 finance 可编辑、业务查询不得当作已确认账面值的财务草稿；两者非空才是确认财务真源，并要求 Asset 已在同一事务转为 pending_label。财务草稿不得拥有 active Profile、Schedule 或任何 Entry。
+- `accounting_treatment` 允许 NULL，表示财务尚未确认；这与资产是否已经编号、贴标或使用独立。确认时选择 `fixed_asset/controlled_non_fixed`，不能由物理类别或金额自动推断。
+- 财务确认时记录 `finance_confirmed_by_id` 和 `finance_confirmed_at`；账号删除可将人员引用 SET_NULL，确认时间与事实保留。确认前仅为财务草稿，不得生成生效折旧配置或实际分录；确认后保留原实物状态和编号。
 - 确认时保存当时生效的 `recognition_threshold_snapshot`，用于以后解释警告口径；设置变更不回写历史快照。
-- 所有通过财务确认并进入正式状态的资产都必须有非空 `original_cost>=0`；`AssetFinance.original_cost` 是当前原值权威余额。`fixed_asset` 另要求固定资产类别、资本化日期、Asset.commissioning_date 及确认信息必填。
+- 已完成财务确认的资产必须有非空 `original_cost>=0`；未确认金额不以 0 代替。固定资产另要求会计分类、资本化日期、达到可使用状态日期和折旧配置完整。
 - `controlled_non_fixed` 时固定资产类别必须为空，且不得存在 active 折旧 Profile 或任何折旧 Entry；V1 的实际累计折旧和累计减值固定为 0，不创建减值类 Adjustment。其处置快照因此明确为 `book_value_snapshot = original_cost_snapshot - 0 - 0`，不会因缺少成本或折旧 Profile 而无法完成。
 - 若原值达到/超过确认时公司提示阈值却选择 `controlled_non_fixed`，`accounting_treatment_reason` 必填并随确认快照保存；阈值以后改变不得追溯清空该原因。
 - 残值、方法、寿命和起止规则的唯一来源是生效的 `AssetDepreciationProfile`，不在 AssetFinance 重复保存。
@@ -724,15 +734,12 @@ V1 只允许以下固定 registry；未知 key、错误 value_type、越权角�
 
 ## 17. V1.2 `apps.supplies` 扩展总览
 
-V1.2 的数量型低值物品使用独立 `apps.supplies`，不得写入或放宽
-`Asset.quantity`。Sprint 13 只建立：
+当前数量型低值物品使用独立 `apps.supplies`；`Asset.quantity=1` 仍是已有单件数据契约。
 
-- `SupplyCategory`：公司内规范化分类编码唯一的树形分类；
-- `SupplyWarehouse`：复用现有 `Location` 和 `Employee` 的仓库档案；
-- `SupplyItem`：仅允许 `consumable` / `durable_quantity` 的数量型物品档案；
-- 复用现有 `ImportBatch` / `ImportRow` 的 `item_master` 暂存与幂等确认。
+- 基础档案：`SupplyCategory`、`SupplyWarehouse`、`SupplyItem`；
+- 库存：`SupplyDocumentSequence`、`SupplyDocument`、`SupplyDocumentLine`、`SupplyStockBalance`、`SupplyStockLedger`；
+- 保管：`SupplyCustody`、`SupplyCustodyMovement`；
+- 盘点与清退：`SupplyCountTask`、`SupplyCountLine`、`EmployeeSupplyClearanceItem`；
+- 导入复用 `ImportBatch` / `ImportRow`，报表复用 reports 的查询、Excel 和审计。
 
-三类主档均显式保存公司边界，使用 UUID 主键、`PROTECT` 业务引用、
-规范化编码唯一约束及批准的检查约束。详细字段、后续单据/流水/余额/
-保管/盘点/清退模型及 Sprint 迁移顺序以 `docs/14`、`docs/15` 为准；
-Sprint 13 不创建任何库存余额、库存流水或过账单据表。
+上述模型已在 Sprint 13–18 及后续迁移中建立。实际字段和约束检查 `apps/supplies/models.py` 与 migrations；[技术参考](14-Low-Value-Goods-Technical-Design.md)、[字典参考](15-Low-Value-Goods-Data-Dictionary.md) 帮助理解原设计，不要求重新创建已有表。

@@ -98,7 +98,7 @@ def test_individual_asset_shortcut_waits_for_existing_asset_initialization(clien
 
     assert response.status_code == 200
     assert reverse("assets:asset-create").encode() not in response.content
-    assert "请先完成现有资产初始化".encode() in response.content
+    assert "完成逐件资产初始化后，即可建立逐件档案。".encode() in response.content
 
 
 def test_direct_cross_company_post_is_rejected_and_lists_are_paginated(client):

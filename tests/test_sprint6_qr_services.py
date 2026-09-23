@@ -424,6 +424,7 @@ def test_missing_responsibility_prevents_activation_and_rolls_back():
                 "SELECT set_config(%s, %s, true)",
                 ["eam_lite.controlled_asset_mutation", "on"],
             )
+    original_location = asset.location
     Asset._base_manager.filter(pk=asset.pk).update(location=None)
     asset.refresh_from_db()
     qr_identity.refresh_from_db()
@@ -442,6 +443,12 @@ def test_missing_responsibility_prevents_activation_and_rolls_back():
     assert asset.asset_status == "pending_label"
     assert qr_identity.label_status == "printed"
     assert not AssetMovement.objects.exists()
+    # Restore the deliberately invalid fixture before deferred constraints run.
+    if connection.vendor == "postgresql":
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT set_config('eam_lite.controlled_asset_mutation','on',true)")
+    Asset._base_manager.filter(pk=asset.pk).update(location=original_location)
+
 
 
 def test_attached_asset_cannot_reprint_until_token_rotation():
