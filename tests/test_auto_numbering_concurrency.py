@@ -228,7 +228,7 @@ def test_major_category_two_digit_range_respects_child_and_inactive_codes():
     result = create_asset_category(actor=actor, company=company, data={"name": "测试自动一级分类"})
     assert result.code == "03"
     child = create_asset_category(actor=actor, company=company, data={"name": "测试自动子类", "parent": result})
-    assert child.code == "CAT000001"
+    assert child.code == "03-01"
     for number in range(4, 99):
         AssetCategory.objects.create(company=company, code=f"{number:02d}", name=f"测试分类 {number}")
     with pytest.raises(ValidationError, match="全部占用"):

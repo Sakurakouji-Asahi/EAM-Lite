@@ -6,10 +6,12 @@ unique constraints and collision retries also protect against manual writes.
 """
 from __future__ import annotations
 
+import re
+
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, connections, router, transaction
 
-from apps.masterdata.normalization import normalize_identifier
+from apps.masterdata.normalization import clean_display_identifier, normalize_identifier
 
 
 # Model label -> (editable field, normalized field, default prefix).
@@ -25,6 +27,13 @@ NUMBER_FIELDS = {
     "supplies.supplyitem": ("item_code", "normalized_item_code", None),
 }
 
+HIERARCHICAL_NUMBER_MODELS = frozenset({
+    "masterdata.department",
+    "masterdata.location",
+    "masterdata.assetcategory",
+    "supplies.supplycategory",
+})
+
 
 def configure_auto_number_field(form):
     """Allow a blank new number without weakening model or edit validation."""
@@ -39,8 +48,10 @@ def configure_auto_number_field(form):
         field.required = False
         field.widget.attrs["placeholder"] = "留空自动生成，也可手工填写"
         field.help_text = "留空时在保存后自动生成；手工填写时使用所填编号，并检查是否重复。"
+        if instance._meta.label_lower in HIERARCHICAL_NUMBER_MODELS:
+            field.help_text += "选择上级后，自动编号采用“上级编码-两位序号”。"
         if instance._meta.label_lower == "masterdata.assetcategory":
-            field.help_text += "一级分类自动使用 01—99 的空闲两位数字；下级分类使用 CAT 加六位流水。"
+            field.help_text += "一级分类自动使用 01—99 的空闲两位数字。"
     else:
         field.required = True
 
@@ -86,6 +97,30 @@ the existing shared save helpers can retain a single validation path.
                 setattr(instance, field, candidate)
                 return
         raise ValidationError({field: "01—99 的一级分类编码已全部占用，请核对分类。"})
+
+    if label in HIERARCHICAL_NUMBER_MODELS and instance.parent_id is not None:
+        parent_code = clean_display_identifier(instance.parent.code)
+        if not parent_code:
+            raise ValidationError({"parent": "上级编码为空，无法生成下级编号。"})
+        max_length = instance._meta.get_field(field).max_length
+        if len(parent_code) + 3 > max_length:
+            raise ValidationError({field: "上级编码过长，无法追加两位下级序号；请核对编码。"})
+        parent_prefix = normalize_identifier(parent_code)
+        sibling_pattern = re.compile(rf"{re.escape(parent_prefix)}-([0-9]{{2}})\Z")
+        sibling_codes = queryset.filter(parent_id=instance.parent_id).values_list(
+            normalized_field, flat=True
+        )
+        last_number = max(
+            (int(match.group(1)) for code in sibling_codes
+             if (match := sibling_pattern.fullmatch(code))),
+            default=0,
+        )
+        for number in range(last_number + 1, 100):
+            candidate = f"{parent_code}-{number:02d}"
+            if not queryset.filter(**{normalized_field: normalize_identifier(candidate)}).exists():
+                setattr(instance, field, candidate)
+                return
+        raise ValidationError({field: "该上级下的两位序号已用完，请手工填写未使用的编号。"})
 
     if label == "supplies.supplyitem":
         prefix = {"durable_quantity": "LVD", "consumable": "LVC"}.get(instance.item_type)

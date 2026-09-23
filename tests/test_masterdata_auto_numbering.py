@@ -128,7 +128,7 @@ def test_physical_category_reserves_existing_numbers_and_child_uses_separate_pre
     generated = create_asset_category(actor=actor, company=company, data={"name": "新实物分类"})
     child = create_asset_category(actor=actor, company=company, data={"name": "下级分类", "parent": generated})
     assert generated.code == "02"
-    assert child.code == "CAT000001"
+    assert child.code == f"{generated.code}-01"
     assert child.parent_id == generated.pk and child.category_level == 2
 
 
