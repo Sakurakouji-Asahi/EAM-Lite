@@ -45,7 +45,7 @@
           <form class="d-none d-lg-flex flex-grow-1 mx-3" method="get" action="{% url 'assets:asset-list' %}" role="search" aria-label="全局资产搜索" data-global-asset-search>
             <div class="input-group input-group-sm">
               <label class="visually-hidden" for="global-asset-search">搜索资产</label>
-              <input class="form-control" id="global-asset-search" name="q" value="{{ request.GET.q|default:'' }}" placeholder="资产编号、草稿号或名称" autocomplete="off">
+              <input class="form-control" id="global-asset-search" name="q" value="{{ request.GET.q|default:'' }}" placeholder="资产编号、设备编号、草稿号或名称" autocomplete="off">
               <button class="btn btn-light" type="submit">搜索资产</button>
             </div>
           </form>

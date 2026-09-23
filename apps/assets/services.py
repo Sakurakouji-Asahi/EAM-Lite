@@ -25,6 +25,7 @@ from PIL import Image, UnidentifiedImageError
 from apps.assets.permissions import (
     can_create_asset_draft,
     can_create_attachment_link,
+    can_edit_asset_equipment_number,
     can_delete_asset_draft,
     can_set_requested_coding_scheme,
     can_submit_asset,
@@ -46,6 +47,7 @@ ASSET_EDIT_FIELDS = (
     "manufacturer",
     "serial_number",
     "factory_number",
+    "equipment_number",
     "historical_code",
     "unit",
     "description",
@@ -375,6 +377,36 @@ def create_asset_draft(
             "initialization_source": initialization_source,
             "custom_values": _custom_values_snapshot(asset),
         },
+        request=request,
+    )
+    return asset
+
+
+@transaction.atomic
+def update_asset_equipment_number(
+    *, actor, asset, equipment_number, reason, request=None
+):
+    asset = _lock_current_asset(asset)
+    if not can_edit_asset_equipment_number(actor, asset):
+        raise PermissionDenied("您没有补录或更正此资产设备编号的权限。")
+    value = str(equipment_number or "").strip()
+    explanation = str(reason or "").strip()
+    if len(value) > 200:
+        raise ValidationError({"equipment_number": "设备编号不能超过 200 个字符。"})
+    if not explanation or len(explanation) > 500:
+        raise ValidationError({"reason": "请填写不超过 500 个字符的补录或更正原因。"})
+    old_value = asset.equipment_number
+    if value == old_value:
+        return asset
+    asset.equipment_number = value
+    asset.updated_by = actor
+    _save(asset)
+    _audit(
+        actor=actor,
+        action="asset_equipment_number_update",
+        instance=asset,
+        old_data={"equipment_number": old_value},
+        new_data={"equipment_number": value, "reason": explanation},
         request=request,
     )
     return asset

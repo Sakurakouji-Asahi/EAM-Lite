@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}补录设备编号 - EAM-Lite{% endblock %}
+{% block content %}
+  <header class="app-page-header">
+    <div><h1 class="h3 mb-1">补录或更正设备编号</h1><p class="text-secondary mb-0">{{ asset.asset_code }} · {{ asset.asset_name }}</p></div>
+    <a class="btn btn-outline-secondary" href="{% url 'assets:asset-detail' asset.pk %}">返回资产</a>
+  </header>
+  <form method="post" class="card shadow-sm app-form-section">
+    <div class="card-body">
+      {% csrf_token %}
+      {% if form.non_field_errors %}<div class="alert alert-danger" role="alert">{{ form.non_field_errors }}</div>{% endif %}
+      <div class="mb-3">
+        <label class="form-label" for="{{ form.equipment_number.id_for_label }}">{{ form.equipment_number.label }}</label>
+        {{ form.equipment_number }}
+        {% if form.equipment_number.help_text %}<div class="form-text">{{ form.equipment_number.help_text }}</div>{% endif %}
+        {% for error in form.equipment_number.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="{{ form.reason.id_for_label }}">{{ form.reason.label }} <span class="required-mark" aria-hidden="true">*</span></label>
+        {{ form.reason }}
+        {% for error in form.reason.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+      </div>
+    </div>
+    <div class="card-footer d-flex gap-2"><button class="btn btn-primary" type="submit">保存设备编号</button><a class="btn btn-outline-secondary" href="{% url 'assets:asset-detail' asset.pk %}">取消</a></div>
+  </form>
+{% endblock %}

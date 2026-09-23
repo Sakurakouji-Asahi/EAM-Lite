@@ -137,6 +137,7 @@ class Asset(models.Model):
     manufacturer = models.CharField("厂家", max_length=200, blank=True)
     serial_number = models.CharField("序列号", max_length=200, blank=True)
     factory_number = models.CharField("出厂编号", max_length=200, blank=True)
+    equipment_number = models.CharField("设备编号", max_length=200, blank=True, default="")
     historical_code = models.CharField("历史参考编号", max_length=200, blank=True)
     tracking_mode = models.CharField(
         "追踪方式",

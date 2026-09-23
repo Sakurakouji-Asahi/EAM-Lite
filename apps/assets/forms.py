@@ -70,6 +70,7 @@ class AssetDraftForm(forms.ModelForm):
             "manufacturer",
             "serial_number",
             "factory_number",
+            "equipment_number",
             "historical_code",
             "unit",
             "description",
@@ -92,6 +93,7 @@ class AssetDraftForm(forms.ModelForm):
             "manufacturer": "厂家",
             "serial_number": "序列号",
             "factory_number": "出厂编号",
+            "equipment_number": "设备编号",
             "historical_code": "历史参考编号",
             "unit": "单位",
             "description": "说明",
@@ -108,6 +110,9 @@ class AssetDraftForm(forms.ModelForm):
             "notes": forms.Textarea(attrs={"rows": 3}),
             "acquisition_date": forms.DateInput(attrs={"type": "date"}),
             "commissioning_date": forms.DateInput(attrs={"type": "date"}),
+        }
+        help_texts = {
+            "equipment_number": "填写设备已有编号；系统自动生成的资产编号单独保留。",
         }
 
     def __init__(self, *args, actor=None, company=None, registration_requested=False, **kwargs):
@@ -253,6 +258,21 @@ class AssetDraftForm(forms.ModelForm):
                     else:
                         self.add_error(None, exc)
         return cleaned
+
+
+class AssetEquipmentNumberForm(forms.Form):
+    equipment_number = forms.CharField(
+        label="设备编号", max_length=200, required=False,
+        help_text="填写设备已有编号；留空可清除误录编号。",
+    )
+    reason = forms.CharField(
+        label="补录或更正原因", max_length=500,
+        widget=forms.Textarea(attrs={"rows": 2}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        _bootstrap_widgets(self)
 
 
 class RequestedCodingSchemeForm(forms.Form):

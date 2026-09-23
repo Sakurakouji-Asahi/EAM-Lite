@@ -143,6 +143,20 @@ def require_edit_asset_draft(user, asset) -> None:
         raise PermissionDenied("您没有维护此资产草稿的权限。")
 
 
+def can_edit_asset_equipment_number(user, asset) -> bool:
+    if (
+        asset is None
+        or asset._state.adding
+        or asset.record_status != "active"
+        or asset.current_issued_code_id is None
+    ):
+        return False
+    return (
+        can_view_asset_p1(user, asset)
+        and can_create_asset_draft(user, asset.company, asset.department)
+    )
+
+
 def can_submit_asset(user, asset) -> bool:
     return (
         asset.asset_status in {"draft", "pending_finance"}

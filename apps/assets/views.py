@@ -24,6 +24,7 @@ from apps.assets.forms import (
     AssetCustomValueForm,
     AssetDeleteForm,
     AssetDraftForm,
+    AssetEquipmentNumberForm,
     AssetSubmitForm,
     AssetWithdrawForm,
     RequestedCodingSchemeForm,
@@ -35,6 +36,7 @@ from apps.assets.permissions import (
     can_create_asset_draft,
     can_delete_asset_draft,
     can_edit_asset_draft,
+    can_edit_asset_equipment_number,
     can_set_requested_coding_scheme,
     can_submit_asset,
     can_view_asset_summary_fields,
@@ -60,6 +62,7 @@ from apps.assets.services import (
     set_requested_coding_scheme,
     submit_asset_for_finance,
     update_asset_draft,
+    update_asset_equipment_number,
     upload_asset_attachment,
     void_asset_attachment,
     withdraw_asset_to_draft,
@@ -165,7 +168,7 @@ def _form_sections(form):
     sections = [
         ("基本资料", ("asset_name", "category", "quantity", "unit", "serial_number"), False),
         ("使用信息", ("department", "responsible_employee", "location", "acquisition_date", "commissioning_date", "is_maintenance_required"), False),
-        ("更多实物资料（选填）", ("brand", "model", "manufacturer", "factory_number", "historical_code", "vehicle_plate", "chassis_number", "calibration_number", "description", "notes"), True),
+        ("更多实物资料（选填）", ("brand", "model", "manufacturer", "factory_number", "equipment_number", "historical_code", "vehicle_plate", "chassis_number", "calibration_number", "description", "notes"), True),
     ]
     if form.identity_enabled:
         sections.insert(1, ("编码资料", ("management_attribute", "component_of", "coding_year", "coding_year_note"), False))
@@ -501,6 +504,40 @@ def asset_edit(request, pk):
 
 
 @login_required
+def asset_equipment_number(request, pk):
+    company = asset_company_for_request()
+    asset = asset_or_404(request.user, company, pk)
+    if not can_edit_asset_equipment_number(request.user, asset):
+        raise PermissionDenied("您没有补录或更正此资产设备编号的权限。")
+    if request.method not in {"GET", "POST"}:
+        return HttpResponseNotAllowed(["GET", "POST"])
+    form = AssetEquipmentNumberForm(
+        request.POST or None,
+        initial={"equipment_number": asset.equipment_number},
+    )
+    if request.method == "POST" and form.is_valid():
+        try:
+            update_asset_equipment_number(
+                actor=request.user,
+                asset=asset,
+                equipment_number=form.cleaned_data["equipment_number"],
+                reason=form.cleaned_data["reason"],
+                request=request,
+            )
+        except ValidationError as exc:
+            _service_error(form, exc)
+        else:
+            messages.success(request, "设备编号已保存。")
+            return redirect("assets:asset-detail", pk=asset.pk)
+    return render(
+        request,
+        "assets/equipment_number_form.html",
+        {"asset": asset, "form": form},
+        status=400 if request.method == "POST" else 200,
+    )
+
+
+@login_required
 def asset_detail(request, pk):
     company = asset_company_for_request()
     asset = asset_or_404(request.user, company, pk)
@@ -603,6 +640,7 @@ def asset_detail(request, pk):
             ],
             "attachment_rows": attachment_rows,
             "can_edit": can_edit_asset_draft(request.user, asset),
+            "can_edit_equipment_number": can_edit_asset_equipment_number(request.user, asset),
             "can_submit": can_submit_asset(request.user, asset),
             "can_withdraw": can_withdraw_asset(request.user, asset),
             "can_delete": can_delete_asset_draft(request.user, asset),

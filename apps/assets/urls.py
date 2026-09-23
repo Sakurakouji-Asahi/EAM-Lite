@@ -26,6 +26,7 @@ urlpatterns = [
     path("<uuid:pk>/custody-returns/<uuid:record_pk>/reverse/", reverse_trace, {"kind": "custody"}, name="custody-return-reverse"),
     path("<uuid:pk>/origins/<uuid:record_pk>/reverse/", reverse_trace, {"kind": "origin"}, name="origin-reverse"),
     path("<uuid:pk>/edit/", views.asset_edit, name="asset-edit"),
+    path("<uuid:pk>/equipment-number/", views.asset_equipment_number, name="asset-equipment-number"),
     path("<uuid:pk>/submit/", views.asset_submit, name="asset-submit"),
     path("<uuid:pk>/withdraw/", views.asset_withdraw, name="asset-withdraw"),
     path("<uuid:pk>/delete/", views.asset_delete, name="asset-delete"),

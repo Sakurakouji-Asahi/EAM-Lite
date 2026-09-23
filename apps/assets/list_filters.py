@@ -102,7 +102,7 @@ def filter_asset_list(queryset, filters, *, actor, company):
     if query:
         search = Q(asset_code__icontains=query) | Q(asset_name__icontains=query) | Q(responsible_employee__name__icontains=query)
         if all_p1:
-            search |= Q(model__icontains=query) | Q(serial_number__icontains=query) | Q(factory_number__icontains=query)
+            search |= Q(model__icontains=query) | Q(serial_number__icontains=query) | Q(factory_number__icontains=query) | Q(equipment_number__icontains=query)
         draft = re.fullmatch(r"D-([0-9A-Fa-f]{1,8})", query)
         if draft:
             qs = qs.annotate(_draft_uuid=Cast("id", output_field=CharField()))

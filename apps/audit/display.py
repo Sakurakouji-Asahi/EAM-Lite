@@ -259,6 +259,7 @@ FIELD_LABELS = {
     "employment_status": "任职状态",
     "explicit_reprint": "明确重新打印",
     "factory_number": "出厂编号",
+    "equipment_number": "设备编号",
     "file_size": "文件大小",
     "finance_remark": "财务备注",
     "finance_rules_configured": "财务规则已配置",
