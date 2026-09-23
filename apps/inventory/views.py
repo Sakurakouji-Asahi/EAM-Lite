@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from urllib.parse import unquote, urlsplit
 
-from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core import signing
@@ -176,29 +174,10 @@ def _begin_scan_context(request, task, identity):
 
 
 def _submitted_qr_token(value):
-    """Accept the printed QR URL or its opaque token without retaining the URL."""
-    raw = str(value or "").strip()
-    parsed = urlsplit(raw)
-    if parsed.scheme or parsed.netloc:
-        expected = urlsplit(settings.QR_BASE_URL)
-        prefix = "/assets/scan/"
-        if (
-            parsed.scheme != expected.scheme
-            or parsed.netloc != expected.netloc
-            or parsed.query
-            or parsed.fragment
-            or not parsed.path.startswith(prefix)
-            or not parsed.path.endswith("/")
-        ):
-            return ""
-        token = unquote(parsed.path[len(prefix):-1])
-    else:
-        token = raw
-    if not 22 <= len(token) <= 128 or "/" in token or any(
-        character.isspace() or ord(character) < 32 for character in token
-    ):
-        return ""
-    return token
+    """Accept current token-only labels and earlier URL labels."""
+    from apps.assets.qr_services import token_from_scanned_payload
+
+    return token_from_scanned_payload(value)
 
 
 def _company():
@@ -672,9 +651,10 @@ def task_scan_entry(request, pk):
                     {
                         "task": task,
                         "summary": inventory_task_summary(task),
-                        "error": "请扫描标签上的完整二维码，或从资产二维码页面点击“录入本次盘点”。",
+                        "error": "二维码无效或无法识别，请重新扫描资产标签。",
                         "error_kind": "invalid",
                     },
+                    status=403,
                 )
             identity = AssetQrIdentity.objects.select_related("asset").filter(
                 company=task.company,

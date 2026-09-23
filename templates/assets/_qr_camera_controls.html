@@ -1,0 +1,10 @@
+<div class="mb-3" data-qr-camera-controls>
+  <div class="d-flex flex-wrap gap-2 mb-2">
+    <button class="btn btn-primary" type="button" data-qr-camera-start>打开相机扫码</button>
+    <button class="btn btn-outline-secondary" type="button" data-qr-camera-stop hidden>关闭相机</button>
+  </div>
+  <video class="w-100 rounded border mb-2" data-qr-camera-video autoplay muted playsinline hidden></video>
+  <label class="form-label" for="qr-camera-file">或从二维码照片识别</label>
+  <input class="form-control" id="qr-camera-file" type="file" accept="image/*" data-qr-camera-file>
+  <div class="form-text" data-qr-camera-status role="status" aria-live="polite">相机不可用时，可使用扫码枪或手动输入标签标识。</div>
+</div>

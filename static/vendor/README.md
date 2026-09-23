@@ -1,14 +1,16 @@
 # 本地第三方前端资源
 
-运行页面只引用本目录中的固定版本文件，不依赖公共 CDN。2026-09-09 文档整理时保留以下来源、许可证及 SHA-256，未修改资源文件；全项目组件说明见 [第三方声明](../../THIRD-PARTY-NOTICES.md)。
+运行页面只引用本目录中的固定版本文件，不依赖公共 CDN。以下记录来源、许可证及 SHA-256；全项目组件说明见 [第三方声明](../../THIRD-PARTY-NOTICES.md)。
 
 | 组件 | 版本 | 上游来源 | 许可证 |
 |---|---:|---|---|
 | Bootstrap | 5.3.8 | https://github.com/twbs/bootstrap/releases/tag/v5.3.8 | MIT，见 bootstrap/5.3.8/LICENSE |
 | HTMX | 2.0.10 | https://github.com/bigskysoftware/htmx/releases/tag/v2.0.10 | BSD-2-Clause，见 htmx/2.0.10/LICENSE |
+| ZXing Browser | 0.2.1 | https://github.com/zxing-js/browser/releases/tag/v0.2.1 | MIT，见 zxing-browser/0.2.1/LICENSE；内含 ZXing Library，Apache-2.0，见同目录 LIBRARY-LICENSE |
 
 下载文件的 SHA-256：
 
 - bootstrap.min.css：D85327D99C7A3EE1F9B5D0500D1370ACEA3AD2DB39C163C2F51F232BAEDBDEDE
 - bootstrap.bundle.min.js：E4FD49181388C48EC5040BD3FE66F57C29C8E67FCD8502B3354B96EC7AB47CC7
 - htmx.min.js：71EA67185BFA8C98C39D31717C6FCE5D852370FCDFD129DB4543774D3145C0DE
+- zxing-browser.min.js：066BC34EDFCDD4A33F0964AEEC967752A0DEA1CCAF36E58E319AC9FCB5070F6A

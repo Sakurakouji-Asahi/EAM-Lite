@@ -11,29 +11,6 @@
   font-family: system-ui, sans-serif;
 }
 
-.temporary-qr-warning {
-  margin: 0.75rem 0;
-  padding: 0.75rem 1rem;
-  border: 1px solid #f1aeb5;
-  border-radius: 0.5rem;
-  color: #58151c;
-  background: #f8d7da;
-  font-family: system-ui, sans-serif;
-  line-height: 1.6;
-}
-
-.durable-qr-origin-note {
-  margin: 0.75rem 0;
-  padding: 0.75rem 1rem;
-  border: 1px solid #9ec5fe;
-  border-radius: 0.5rem;
-  color: #084298;
-  background: #cfe2ff;
-  font-family: system-ui, sans-serif;
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
-
 .label-sheet {
   box-sizing: border-box;
   width: 194mm;
@@ -73,15 +50,6 @@
   font-size: 7pt;
   line-height: 1.22;
   overflow: hidden;
-}
-
-.temporary-qr-label {
-  margin-bottom: 0.4mm;
-  color: #b02a37;
-  font-size: 6pt;
-  font-weight: 700;
-  line-height: 1.1;
-  white-space: nowrap;
 }
 
 .company-name,

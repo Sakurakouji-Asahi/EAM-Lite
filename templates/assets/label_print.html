@@ -11,16 +11,10 @@
 <body>
   <header class="label-print-controls">
     <h1>{{ batch.batch_code }} · A4 标签预览</h1>
-    {% if qr_origin_is_temporary %}
-      <div class="temporary-qr-warning" role="alert">
-        <strong>本地验收标签：</strong>当前二维码使用本机 HTTP/IP 地址，不能作为迁移到其他电脑后的正式长期标签。请仅用于本地测试；最终服务器完成固定 DNS 和受信任 HTTPS 后必须重新生成并打印正式标签。
-      </div>
-    {% else %}
-      <div class="durable-qr-origin-note" role="note">二维码使用固定地址 {{ qr_base_url }}。打印前请用实际扫码设备确认该地址可打开；更换服务器时保持这个地址不变。</div>
-    {% endif %}
+    <p>二维码只包含资产的随机标识，不含服务器网址。更换服务器并恢复完整数据库后，使用新系统的“扫码资产”入口识别原标签。</p>
     <p>请使用浏览器打印（Ctrl+P），纸张选 A4、实际大小/100%、不要“适合页面”。打印操作已经记录，无需再次确认；实际贴到实物后再确认贴标。</p>
     <div id="qr-screen-scan-hint" class="screen-scan-hint">
-      <strong>手机扫码：</strong>手机先连接与电脑相同的 Wi-Fi，并在 Safari、Chrome 或系统浏览器中登录 EAM-Lite；再用系统相机扫码并选择“在浏览器中打开”。微信、支付宝等内置扫码可能会拦截局域网地址。屏幕识别困难时，将鼠标移到二维码上即可放大，或点击二维码在新窗口打开。
+      <strong>手机扫码：</strong>先在 EAM-Lite 中打开“扫码资产”，再使用页面相机扫描标签。手机系统相机单独扫描只会显示随机标识。屏幕识别困难时，将鼠标移到二维码上即可放大。
     </div>
     <p><a href="{% url 'assets:label-batch-detail' batch.pk %}">返回批次与贴标页</a></p>
   </header>
@@ -30,7 +24,6 @@
       {% for item in page.list %}
         <article class="qr-label">
           <div class="label-copy">
-            {% if qr_origin_is_temporary %}<div class="temporary-qr-label">本地验收 · 部署后重印</div>{% endif %}
             <div class="company-name">{{ item.label_snapshot_json.company_short_name }}</div>
             <div class="asset-name">{{ item.label_snapshot_json.asset_name }}</div>
             <div class="asset-code">{{ item.label_snapshot_json.asset_code }}</div>

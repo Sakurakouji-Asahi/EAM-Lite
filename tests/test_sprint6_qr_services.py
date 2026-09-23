@@ -110,13 +110,13 @@ def test_token_has_256_bits_of_urlsafe_entropy_and_is_not_asset_derived():
     assert context["company"].code not in qr_identity.public_token
 
 
-def test_qr_payload_contains_only_https_lan_root_and_opaque_token():
+def test_qr_payload_contains_only_opaque_token_without_server_address():
     context, asset, qr_identity = formal_asset_context("S6PAYLOAD")
     payload = build_qr_payload(qr_identity)
     svg = render_qr_svg(qr_identity)
 
-    assert payload.startswith("https://")
-    assert payload.endswith(f"/assets/scan/{qr_identity.public_token}/")
+    assert payload == qr_identity.public_token
+    assert "http" not in payload and "/" not in payload
     for forbidden in (
         asset.asset_name,
         asset.asset_code,

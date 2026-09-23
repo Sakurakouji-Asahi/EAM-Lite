@@ -13,7 +13,6 @@ from django.urls import reverse
 
 from apps.assets.models import Asset, AssetMovement, AssetQrIdentity
 from apps.assets.qr_services import (
-    build_qr_payload,
     confirm_label_attachment,
     confirm_print_batch,
     generate_print_batch,
@@ -155,8 +154,8 @@ def test_print_action_records_batch_and_opens_local_a4_snapshot_without_second_c
     assert f'href="{qr_url}"' in text
     assert f'src="{qr_url}"' in text
     assert 'target="_blank"' in text and 'rel="noopener"' in text
-    assert "手机先连接与电脑相同的 Wi-Fi" in text
-    assert "微信、支付宝等内置扫码可能会拦截局域网地址" in text
+    assert "先在 EAM-Lite 中打开“扫码资产”" in text
+    assert "手机系统相机单独扫描只会显示随机标识" in text
     assert "将鼠标移到二维码上即可放大" in text
     batch.refresh_from_db()
     qr_identity.refresh_from_db()
@@ -168,7 +167,7 @@ def test_print_action_records_batch_and_opens_local_a4_snapshot_without_second_c
 
 
 @override_settings(QR_BASE_URL_IS_DURABLE=False)
-def test_print_view_marks_machine_bound_qr_labels_as_temporary(client):
+def test_print_view_explains_url_free_qr_and_in_app_scanning(client):
     context, asset, _qr_identity = formal_asset_context("S6TEMPQR")
     batch = generate_print_batch(
         actor=context["finance"],
@@ -181,30 +180,9 @@ def test_print_view_marks_machine_bound_qr_labels_as_temporary(client):
     text = response.content.decode()
 
     assert response.status_code == 200
-    assert "本地验收标签" in text
-    assert "不能作为迁移到其他电脑后的正式长期标签" in text
-    assert "本地验收 · 部署后重印" in text
-
-
-@override_settings(QR_BASE_URL="https://eam.company.lan", QR_BASE_URL_IS_DURABLE=True)
-def test_print_view_shows_permanent_scan_address_for_pre_migration_labels(client):
-    context, asset, qr_identity = formal_asset_context("S6DURABLEQR")
-    batch = generate_print_batch(
-        actor=context["finance"],
-        assets=[asset],
-        idempotency_key="S6DURABLEQR-batch",
-    )
-    client.force_login(context["finance"])
-
-    response = client.get(reverse("assets:label-batch-print", args=[batch.pk]))
-    text = response.content.decode()
-
-    assert response.status_code == 200
-    assert "二维码使用固定地址 https://eam.company.lan" in text
-    assert "本地验收标签" not in text
-    assert build_qr_payload(qr_identity) == (
-        f"https://eam.company.lan/assets/scan/{qr_identity.public_token}/"
-    )
+    assert "二维码只包含资产的随机标识，不含服务器网址" in text
+    assert "系统相机单独扫描只会显示随机标识" in text
+    assert "本地验收 · 部署后重印" not in text
 
 
 def test_qr_svg_endpoint_is_authenticated_scoped_and_noncacheable(client):

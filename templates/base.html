@@ -51,6 +51,7 @@
           </form>
         {% endif %}
         <div class="app-topbar-actions">
+          <a class="btn btn-outline-light" href="{% url 'assets:qr-scan-entry' %}" data-topbar-asset-scan><span class="d-none d-sm-inline">扫码资产</span><span class="d-sm-none">扫码</span></a>
           {% if app_navigation.asset.can_create %}
             <a class="btn app-quick-create d-none d-md-inline-flex" href="{% url 'assets:asset-create' %}" data-topbar-asset-create>新增逐件资产</a>
           {% endif %}

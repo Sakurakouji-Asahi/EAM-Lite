@@ -160,10 +160,9 @@ BUSINESS_CURRENCY = read_env("BUSINESS_CURRENCY", "CNY").upper()
 if BUSINESS_CURRENCY != "CNY":
     raise ImproperlyConfigured("Sprint 0 的 BUSINESS_CURRENCY 必须为 CNY")
 
-# Printed QR codes are durable identifiers.  The deployment URL therefore
-# comes from configuration rather than the incoming Host header.  Production
-# must point this at the approved LAN HTTPS name; the local default keeps
-# development and automated tests deterministic without an external service.
+# New printed QR codes contain only the persistent random token. Keep this
+# origin for compatibility with older URL labels and secure scan form flows.
+# Production must still use the approved LAN HTTPS name for browser access.
 QR_BASE_URL = read_env("QR_BASE_URL", "https://localhost").rstrip("/")
 _qr_base = urlsplit(QR_BASE_URL)
 _allowed_qr_schemes = (

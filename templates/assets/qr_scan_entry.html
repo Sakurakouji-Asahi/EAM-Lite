@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}扫码识别资产 - EAM-Lite{% endblock %}
+{% block content %}
+  <article class="app-narrow-page app-narrow-page-sm">
+    <header class="mb-3">
+      <h1 class="h3">扫码识别资产</h1>
+      <p class="text-secondary mb-0">先打开本页，再扫描资产标签。标签只保存随机标识，由当前系统查找资产。</p>
+    </header>
+    {% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
+    <form class="card shadow-sm" method="post" data-qr-camera-form>
+      <div class="card-body">
+        {% csrf_token %}
+        {% include "assets/_qr_camera_controls.html" %}
+        <label class="form-label" for="asset-qr-payload">扫码枪输入或粘贴标识</label>
+        <input class="form-control form-control-lg" id="asset-qr-payload" name="payload" data-qr-camera-value autocomplete="off" required>
+      </div>
+      <div class="card-footer d-grid">
+        <button class="btn btn-primary btn-lg" type="submit">查看资产</button>
+      </div>
+    </form>
+  </article>
+  <script src="{% static 'vendor/zxing-browser/0.2.1/zxing-browser.min.js' %}" defer></script>
+  <script src="{% static 'js/qr-camera-scanner.js' %}" defer></script>
+{% endblock %}

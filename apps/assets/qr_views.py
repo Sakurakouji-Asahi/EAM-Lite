@@ -6,7 +6,6 @@ import secrets
 from decimal import Decimal
 from urllib.parse import urlencode
 
-from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -16,6 +15,7 @@ from django.db.models import Count, Max, Prefetch, Q, Sum
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_http_methods, require_POST
 
 from apps.assets.models import (
@@ -53,6 +53,7 @@ from apps.assets.qr_services import (
     generate_print_batch,
     render_qr_svg,
     rotate_qr_identity,
+    token_from_scanned_payload,
 )
 from apps.audit.services import request_audit_context, write_business_audit_log
 from apps.core.qr_csrf import build_qr_opaque_origin_bridge
@@ -387,8 +388,6 @@ def label_batch_print(request, pk):
         {
             "batch": batch,
             "items": items,
-            "qr_origin_is_temporary": not settings.QR_BASE_URL_IS_DURABLE,
-            "qr_base_url": settings.QR_BASE_URL,
         },
     )
 
@@ -624,6 +623,25 @@ def _scan_asset_or_response(request, token, *, include_inventory_entries=False):
         return None, _scan_response(response)
     identity = AssetQrIdentity.objects.get(pk=identity_stub.pk)
     return (asset, identity, inventory_entries, inventory_only_access), None
+
+
+@sensitive_post_parameters("payload")
+@require_http_methods(["GET", "POST"])
+def qr_scan_entry(request):
+    login_response = _require_login(request)
+    if login_response:
+        return _scan_response(login_response)
+    _company()
+    error = None
+    if request.method == "POST":
+        token = token_from_scanned_payload(request.POST.get("payload"))
+        if token:
+            return _scan_response(redirect("assets:qr-scan", token=token))
+        error = "无法识别资产二维码，请重新扫描或输入标签上的标识。"
+    return _scan_response(render(
+        request, "assets/qr_scan_entry.html", {"error": error},
+        status=400 if error else 200,
+    ))
 
 
 @require_http_methods(["GET"])

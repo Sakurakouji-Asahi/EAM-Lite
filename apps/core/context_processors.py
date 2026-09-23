@@ -110,6 +110,7 @@ _PAGE_LABELS = {
     "assets:origin-reverse": "撤销来源登记",
     "assets:asset-detail": "资产详情",
     "assets:label-queue": "标签与二维码",
+    "assets:qr-scan-entry": "扫码资产",
     "supplies:dashboard": "库存总览",
     "supplies:document-list": "入库、领用与调拨",
     "supplies:stock-balance-list": "当前库存",

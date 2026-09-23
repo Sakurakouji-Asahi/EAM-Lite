@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}扫码盘点 - {{ task.name }}{% endblock %}
 {% block content %}
   <article class="app-narrow-page app-narrow-page-sm inventory-scan-page">
@@ -8,24 +9,17 @@
       <p class="mb-0">{{ task.name }}</p>
     </header>
     {% include "inventory/_summary.html" %}
-    <details class="card card-body mb-3">
-      <summary>手机怎么扫码盘点？</summary>
-      <ol class="mt-2 mb-0">
-        <li>打开手机系统相机，对准资产二维码标签。</li>
-        <li>打开识别出的链接，按提示登录。</li>
-        <li>在资产页面点击“录入本次盘点”，核对现场信息后保存。</li>
-        <li>继续使用系统相机扫描下一件资产。</li>
-      </ol>
-    </details>
+    <p class="text-secondary">打开本页的相机，对准资产标签；识别后核对现场信息并保存。</p>
     {% if error %}
       <div class="alert {% if error_kind == 'non_task' %}alert-warning{% else %}alert-danger{% endif %}" role="alert">{{ error }}</div>
     {% endif %}
-    <form method="post" class="card shadow-sm inventory-scan-form">
+    <form method="post" class="card shadow-sm inventory-scan-form" data-qr-camera-form>
       <div class="card-body">
         {% csrf_token %}
+        {% include "assets/_qr_camera_controls.html" %}
         <label class="form-label" for="token">扫描资产标签</label>
-        <input class="form-control form-control-lg" id="token" name="token" autocomplete="off" autofocus required>
-        <div class="form-text">扫码枪可在此输入完整二维码。手机系统相机请直接打开二维码页面，再点击“录入本次盘点”；系统仍会核验登录、任务范围和当前标签。</div>
+        <input class="form-control form-control-lg" id="token" name="token" data-qr-camera-value autocomplete="off" required>
+        <div class="form-text">本系统也兼容此前包含网址的旧二维码；仍会核验登录、盘点范围和当前有效标签。</div>
       </div>
       <div class="card-footer d-grid gap-2 inventory-scan-actions">
         <button class="btn btn-success btn-lg inventory-mobile-action" type="submit">核对并录入</button>
@@ -34,4 +28,6 @@
       </div>
     </form>
   </article>
+  <script src="{% static 'vendor/zxing-browser/0.2.1/zxing-browser.min.js' %}" defer></script>
+  <script src="{% static 'js/qr-camera-scanner.js' %}" defer></script>
 {% endblock %}

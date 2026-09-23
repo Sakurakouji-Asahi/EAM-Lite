@@ -5,13 +5,13 @@ from __future__ import annotations
 import io
 import hashlib
 import json
+import re
 import secrets
 import uuid
-from urllib.parse import quote
+from urllib.parse import urlsplit
 
 import qrcode
 from qrcode.image.svg import SvgPathImage
-from django.conf import settings
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, connection, transaction
 from django.db.models.query import QuerySet
@@ -22,7 +22,7 @@ from apps.audit.services import request_audit_context, write_business_audit_log
 from apps.masterdata.permissions import current_company
 
 
-LABEL_TEMPLATE_VERSION = "a4-v1"
+LABEL_TEMPLATE_VERSION = "a4-v2"
 LABELS_PER_PAGE = 24
 QR_MINIMUM_PRINT_SIZE_MM = 20
 
@@ -33,7 +33,35 @@ def generate_public_token() -> str:
 
 
 def build_qr_payload(qr_identity) -> str:
-    return f"{settings.QR_BASE_URL}/assets/scan/{quote(qr_identity.public_token, safe='')}/"
+    # The printed label carries only the persistent random identity. The
+    # authenticated scanner page supplies the current server address.
+    return qr_identity.public_token
+
+
+_PUBLIC_TOKEN_PATTERN = re.compile(r"\A[A-Za-z0-9_-]{43}\Z")
+_LEGACY_SCAN_PATH = re.compile(r"\A/assets/scan/([A-Za-z0-9_-]{43})/\Z")
+
+
+def token_from_scanned_payload(value) -> str:
+    """Read a URL-free label or an earlier URL label without trusting its host."""
+    text = str(value or "").strip()
+    if _PUBLIC_TOKEN_PATTERN.fullmatch(text):
+        return text
+    try:
+        parsed = urlsplit(text)
+    except ValueError:
+        return ""
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        return ""
+    matched = _LEGACY_SCAN_PATH.fullmatch(parsed.path)
+    return matched.group(1) if matched else ""
 
 
 def render_qr_svg(qr_identity) -> str:

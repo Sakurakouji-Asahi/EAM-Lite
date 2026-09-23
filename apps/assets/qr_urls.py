@@ -48,6 +48,7 @@ urlpatterns = [
         qr_views.qr_web_attach,
         name="qr-web-attach",
     ),
+    path("scan/", qr_views.qr_scan_entry, name="qr-scan-entry"),
     path("scan/<str:token>/", qr_views.qr_scan, name="qr-scan"),
     path("scan/<str:token>/confirm/", qr_views.qr_attach, name="qr-attach"),
     path(
