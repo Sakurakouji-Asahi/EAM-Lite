@@ -144,7 +144,7 @@ TEMPLATE_REGISTRY = {
     "asset_initialization": TemplateDefinition(
         import_type="asset_initialization",
         label="资产初始化",
-        version="asset-initialization-v3",
+        version="asset-initialization-v4",
         sheet_name="资产初始化导入",
         has_example_sheet=True,
         columns=(
@@ -156,6 +156,7 @@ TEMPLATE_REGISTRY = {
             Column("厂家", "manufacturer"),
             Column("序列号", "serial_number"),
             Column("出厂编号", "factory_number"),
+            Column("设备编号", "equipment_number"),
             Column("历史参考编号", "historical_code"),
             Column("数量", "quantity", True),
             Column("单位", "unit", True),
@@ -256,9 +257,14 @@ def get_template_definition(import_type: str, *, company=None, version=None) -> 
     except KeyError as exc:
         raise ValidationError("不支持的导入类型。") from exc
     if version is not None and version != definition.version:
-        if import_type == "asset_initialization" and version == "asset-initialization-v2":
+        if import_type == "asset_initialization" and version in {
+            "asset-initialization-v2", "asset-initialization-v3",
+        }:
+            excluded = {"equipment_number"}
+            if version == "asset-initialization-v2":
+                excluded.update(IDENTITY_COLUMN_KEYS)
             definition = replace(definition, version=version, columns=tuple(
-                column for column in definition.columns if column.key not in IDENTITY_COLUMN_KEYS
+                column for column in definition.columns if column.key not in excluded
             ))
         else:
             raise ValidationError("批次模板版本已不再受支持，请重新下载模板并上传。")
@@ -924,6 +930,10 @@ def _cell_is_formula(cell):
 
 def _worksheet_limits_error(workbook):
     for worksheet in workbook.worksheets:
+        # XLSX permits omitting the optional dimension hint. The archive's
+        # actual cell coordinates have already passed bounded XML checks.
+        if worksheet.max_row is None or worksheet.max_column is None:
+            worksheet.calculate_dimension(force=True)
         if (
             worksheet.max_row > MAX_WORKSHEET_ROWS
             or worksheet.max_column > MAX_WORKSHEET_COLUMNS
@@ -987,9 +997,16 @@ def _asset_upload_definition(data, definition):
     except Exception:
         return definition
     try:
-        if "填写说明" in workbook.sheetnames and _text(workbook["填写说明"]["B2"].value) == "asset-initialization-v2":
-            return replace(definition, version="asset-initialization-v2", columns=tuple(
-                column for column in definition.columns if column.key not in IDENTITY_COLUMN_KEYS
+        version = (
+            _text(workbook["填写说明"]["B2"].value)
+            if "填写说明" in workbook.sheetnames else ""
+        )
+        if version in {"asset-initialization-v2", "asset-initialization-v3"}:
+            excluded = {"equipment_number"}
+            if version == "asset-initialization-v2":
+                excluded.update(IDENTITY_COLUMN_KEYS)
+            return replace(definition, version=version, columns=tuple(
+                column for column in definition.columns if column.key not in excluded
             ))
         return definition
     finally:
@@ -2307,6 +2324,7 @@ def _normalize_asset_rows(*, actor, company, loaded_rows, definition):
                 "manufacturer": _text(values["manufacturer"]),
                 "serial_number": _text(values["serial_number"]),
                 "factory_number": _text(values["factory_number"]),
+                "equipment_number": _text(values.get("equipment_number")),
                 "historical_code": _text(values["historical_code"]),
                 "unit": _text(values["unit"]),
                 "description": attachment_note,
@@ -2326,7 +2344,7 @@ def _normalize_asset_rows(*, actor, company, loaded_rows, definition):
         prepared.append({"row_number": row_number, "raw": raw, "normalized": normalized, "errors": errors, "warnings": warnings})
 
     # Potential identity duplicates are warnings, never silent deduplication.
-    identity_fields = (("serial_number", "序列号"), ("factory_number", "出厂编号"), ("historical_code", "历史参考编号"))
+    identity_fields = (("serial_number", "序列号"), ("factory_number", "出厂编号"), ("equipment_number", "设备编号"), ("historical_code", "历史参考编号"))
     for key, label in identity_fields:
         seen = {}
         db_values = set(Asset.objects.filter(company=company).exclude(**{key: ""}).values_list(key, flat=True))

@@ -101,7 +101,7 @@ def test_current_import_round_trip_preserves_identity_and_registers_without_edit
     row = import_row(context, **{"首次管理属性": attribute, "取得年份": 2019, "取得年份依据": "验收单明确为 2019 年", "车牌号": "TEST-01", "车架号": "VIN-01", "校准编号": "CAL-01"})
     batch = validated(context, row)
     assert batch.status == "validated", list(batch.rows.values_list("errors_json", flat=True))
-    assert batch.template_version == "asset-initialization-v3"
+    assert batch.template_version == "asset-initialization-v4"
     assert not Asset.objects.exists()
     confirm_import_batch(actor=context["equipment"], batch=batch)
     asset = Asset.objects.get()
@@ -112,6 +112,23 @@ def test_current_import_round_trip_preserves_identity_and_registers_without_edit
     assert asset.asset_code == f"{attribute}-02-2019-000001-00"
     assert confirm_import_batch(actor=context["equipment"], batch=batch).status == "confirmed"
     assert Asset.objects.count() == 1
+
+
+def test_import_v4_keeps_equipment_number_and_v3_remains_readable(context):
+    current = validated(context, import_row(context, **{"设备编号": "EQ-IMPORT-001"}))
+    assert current.status == "validated", list(current.rows.values_list("errors_json", flat=True))
+    assert current.template_version == "asset-initialization-v4"
+    confirm_import_batch(actor=context["equipment"], batch=current)
+    assert Asset.objects.get().equipment_number == "EQ-IMPORT-001"
+
+    older = upload_and_validate_import(
+        actor=context["equipment"], company=context["company"],
+        import_type="asset_initialization",
+        uploaded_file=upload(context["company"], [import_row(context, **{"资产名称": "旧版资产"})], "asset-initialization-v3"),
+        idempotency_key="improvement-v3-compat",
+    )
+    assert older.status == "validated", list(older.rows.values_list("errors_json", flat=True))
+    assert older.template_version == "asset-initialization-v3"
 
 
 @pytest.mark.parametrize("changes,expected", [
