@@ -15,6 +15,8 @@
       <div class="temporary-qr-warning" role="alert">
         <strong>本地验收标签：</strong>当前二维码使用本机 HTTP/IP 地址，不能作为迁移到其他电脑后的正式长期标签。请仅用于本地测试；最终服务器完成固定 DNS 和受信任 HTTPS 后必须重新生成并打印正式标签。
       </div>
+    {% else %}
+      <div class="durable-qr-origin-note" role="note">二维码使用固定地址 {{ qr_base_url }}。打印前请用实际扫码设备确认该地址可打开；更换服务器时保持这个地址不变。</div>
     {% endif %}
     <p>请使用浏览器打印（Ctrl+P），纸张选 A4、实际大小/100%、不要“适合页面”。打印操作已经记录，无需再次确认；实际贴到实物后再确认贴标。</p>
     <div id="qr-screen-scan-hint" class="screen-scan-hint">

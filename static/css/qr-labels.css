@@ -22,6 +22,18 @@
   line-height: 1.6;
 }
 
+.durable-qr-origin-note {
+  margin: 0.75rem 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid #9ec5fe;
+  border-radius: 0.5rem;
+  color: #084298;
+  background: #cfe2ff;
+  font-family: system-ui, sans-serif;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
 .label-sheet {
   box-sizing: border-box;
   width: 194mm;

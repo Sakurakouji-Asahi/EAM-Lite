@@ -547,6 +547,30 @@ function Get-EamDevelopmentIdentity {
     }
 }
 
+function Resolve-EamDurableQrBaseUrl {
+    param([Parameter(Mandatory = $true)][string]$Candidate)
+
+    $url = $null
+    if (-not [System.Uri]::TryCreate($Candidate.Trim(), [System.UriKind]::Absolute, [ref]$url)) {
+        throw "固定二维码地址必须是完整的 HTTPS 域名。"
+    }
+    $hostname = $url.DnsSafeHost.ToLowerInvariant()
+    $parsedIp = $null
+    if (
+        $url.Scheme -ne "https" -or
+        -not $url.IsDefaultPort -or
+        $url.UserInfo -or $url.Query -or $url.Fragment -or
+        $url.AbsolutePath -ne "/" -or
+        $hostname -notmatch '^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])$' -or
+        $hostname -notmatch '\.' -or
+        $hostname -eq "localhost" -or $hostname.EndsWith(".localhost") -or
+        [System.Net.IPAddress]::TryParse($hostname, [ref]$parsedIp)
+    ) {
+        throw "固定二维码地址只能使用不含端口、路径、凭据和参数的 HTTPS 域名。"
+    }
+    return "https://$hostname"
+}
+
 function Write-EamComposeEnvironment {
     param(
         [Parameter(Mandatory = $true)]$State,
@@ -597,6 +621,12 @@ function Write-EamComposeEnvironment {
             $developmentAllowedHosts = "127.0.0.1,localhost,$DevelopmentLanAddress"
             $developmentTrustedOrigins = "http://127.0.0.1:8766,http://${DevelopmentLanAddress}:8766"
             $developmentQrBaseUrl = "http://${DevelopmentLanAddress}:8766"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($env:EAM_DEV_DURABLE_QR_BASE_URL)) {
+            $developmentQrBaseUrl = Resolve-EamDurableQrBaseUrl -Candidate $env:EAM_DEV_DURABLE_QR_BASE_URL
+            $durableQrHostname = ([System.Uri]$developmentQrBaseUrl).DnsSafeHost
+            $developmentAllowedHosts += ",$durableQrHostname"
+            $developmentTrustedOrigins += ",$developmentQrBaseUrl"
         }
         $lines += @(
             "EAM_DEV_BIND_ADDRESS=`"$developmentBindAddress`"",

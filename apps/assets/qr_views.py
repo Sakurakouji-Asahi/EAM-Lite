@@ -388,6 +388,7 @@ def label_batch_print(request, pk):
             "batch": batch,
             "items": items,
             "qr_origin_is_temporary": not settings.QR_BASE_URL_IS_DURABLE,
+            "qr_base_url": settings.QR_BASE_URL,
         },
     )
 
