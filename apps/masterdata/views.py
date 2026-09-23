@@ -824,7 +824,7 @@ def location_detail(request, pk):
         request,
         "location",
         obj,
-        ("code", "name", "parent", "level", "location_type", "is_active"),
+        ("code", "name", "parent", "level", "is_active"),
     )
 
 

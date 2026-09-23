@@ -244,17 +244,18 @@ class LocationForm(AuthorizedModelForm):
 
     class Meta:
         model = Location
-        fields = ("code", "name", "parent", "location_type")
+        fields = ("code", "name", "parent")
         labels = {
             "code": "位置编码",
             "name": "位置名称",
             "parent": "上级位置",
-            "location_type": "位置类型",
         }
-        help_texts = {"parent": "层级由父路径计算，数据库支持超过三层的树。"}
+        help_texts = {"parent": "按实际地点选择上级；资产使用没有下级的末级位置。"}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        if self.instance._state.adding:
+            self.instance.location_type = Location.LocationType.OTHER
         self.fields["parent"].queryset = Location.objects.filter(
             company=self.company, is_active=True
         ).order_by("level", "normalized_code")

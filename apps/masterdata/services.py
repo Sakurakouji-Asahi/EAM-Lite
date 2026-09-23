@@ -688,6 +688,8 @@ def _create_tree_master(
             "is_active",
         },
     )
+    if resource == "location" and "location_type" not in data:
+        instance.location_type = model.LocationType.OTHER
     if instance.parent_id:
         instance.parent = model.objects.select_for_update().get(pk=instance.parent_id)
     _validate_same_company(company, parent=instance.parent)
@@ -1355,7 +1357,7 @@ def compute_initialization_progress(company) -> dict[str, bool]:
             company=company, is_active=True
         ).exists(),
         "locations_configured": Location.objects.filter(
-            company=company, location_type="position", is_active=True
+            company=company, is_active=True, children__isnull=True
         ).exists(),
         "coding_scheme_configured": coding_configured,
         "finance_rules_configured": finance_configured,
