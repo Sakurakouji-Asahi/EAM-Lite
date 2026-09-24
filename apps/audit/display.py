@@ -38,6 +38,8 @@ ACTION_LABELS = {
     "asset_draft_delete": "删除资产草稿",
     "asset_submit_finance": "提交财务确认",
     "asset_register": "建立实物资产",
+    "asset_registration_reverse": "撤销实物建档",
+    "import_reverse": "撤销资产初始化导入",
     "asset_commissioning_confirm": "补充启用日期",
     "asset_withdraw_to_draft": "撤回为资产草稿",
     "asset_coding_scheme_select": "指定资产编码方案",
@@ -212,6 +214,10 @@ ACTION_LABELS = {
 
 
 FIELD_LABELS = {
+    "assets": "涉及资产",
+    "original_log_id": "原操作日志 ID",
+    "released_codes": "释放编号数量",
+    "result": "处理结果",
     "asset_ids": "资产清单",
     "assignment": "责任资料",
     "accounting_treatment": "会计认定",

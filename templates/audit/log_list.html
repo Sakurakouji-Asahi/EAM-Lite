@@ -6,7 +6,7 @@
 <header class="app-page-header">
   <div>
     <h1 class="h3 mb-1">操作日志</h1>
-    <p class="text-secondary mb-0">只读查询；所有时间按上海时区解释，变更摘要按当前字段权限再次脱敏。</p>
+    <p class="text-secondary mb-0">可从建档、资产初始化导入记录核对并撤销未投入使用的资产；原操作日志保留。时间按上海时区显示。</p>
   </div>
 </header>
 
@@ -49,6 +49,7 @@
           <th>变更前</th>
           <th>变更后</th>
           <th>关联 ID</th>
+          <th>操作</th>
         </tr>
       </thead>
       <tbody>
@@ -61,9 +62,10 @@
             <td>{% if log.old_data == '{}' %}<span class="text-secondary">无变更前数据</span>{% else %}<pre class="audit-json mb-0">{{ log.old_data }}</pre><details class="audit-technical"><summary>原始字段</summary><pre class="audit-json mb-0">{{ log.old_data_technical }}</pre></details>{% endif %}</td>
             <td>{% if log.new_data == '{}' %}<span class="text-secondary">无变更后数据</span>{% else %}<pre class="audit-json mb-0">{{ log.new_data }}</pre><details class="audit-technical"><summary>原始字段</summary><pre class="audit-json mb-0">{{ log.new_data_technical }}</pre></details>{% endif %}</td>
             <td><code class="small">{{ log.correlation_id }}</code></td>
+            <td class="text-nowrap">{% if log.is_undone %}<span class="text-secondary">已撤销</span>{% elif log.can_preview_undo %}<a class="btn btn-sm btn-outline-danger" href="{% url 'audit:operation-undo' log.id %}">撤销</a>{% else %}<span class="text-secondary">—</span>{% endif %}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="7" class="text-center text-secondary py-4">当前条件下没有操作日志。</td></tr>
+          <tr><td colspan="8" class="text-center text-secondary py-4">当前条件下没有操作日志。</td></tr>
         {% endfor %}
       </tbody>
     </table>

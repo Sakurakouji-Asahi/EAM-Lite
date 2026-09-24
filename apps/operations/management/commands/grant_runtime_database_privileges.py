@@ -9,6 +9,7 @@ from django.db import connection
 _ROLE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
 _NO_DELETE_MODELS = (
     "audit.AuditLog",
+    "audit.OperationUndo",
     "masterdata.IssuedCode",
     "assets.AssetCodeHistory",
     "assets.AssetRegistration",
@@ -42,6 +43,13 @@ _NO_DELETE_MODELS = (
     "operations.BackupDownloadGrant",
 )
 
+# These tables remain trigger-protected. Only an atomic, recorded undo plan
+# for an unused registration permits DELETE; TRUNCATE stays unavailable.
+_CONTROLLED_UNDO_DELETE_MODELS = (
+    "masterdata.IssuedCode", "assets.AssetCodeHistory",
+    "assets.AssetRegistration", "assets.AssetIdentity",
+)
+
 
 def _quote_identifier(value):
     return connection.ops.quote_name(value)
@@ -73,6 +81,9 @@ class Command(BaseCommand):
                 cursor.execute(
                     f"REVOKE DELETE, TRUNCATE ON TABLE {_quote_identifier(table)} FROM {quoted_role}"
                 )
+            for label in _CONTROLLED_UNDO_DELETE_MODELS:
+                table = _quote_identifier(apps.get_model(label)._meta.db_table)
+                cursor.execute(f"GRANT DELETE ON TABLE {table} TO {quoted_role}")
         self.stdout.write(
             self.style.SUCCESS(
                 f"已刷新 runtime 角色 {role} 的最小数据库权限。"

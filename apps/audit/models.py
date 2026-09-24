@@ -87,3 +87,21 @@ class AuditLog(models.Model):
 
     def __str__(self):
         return f"{self.action} {self.object_type}:{self.object_id}"
+
+
+class OperationUndo(models.Model):
+    """Append-only link from an original operation to its atomic reversal."""
+
+    original_log = models.OneToOneField(AuditLog, on_delete=models.PROTECT, related_name="undo")
+    reversal_log = models.ForeignKey(AuditLog, on_delete=models.PROTECT, related_name="undone_operations")
+    plan_json = models.JSONField(default=dict, encoder=DjangoJSONEncoder)
+    created_at = models.DateTimeField(auto_now_add=True)
+    objects = AuditLogQuerySet.as_manager()
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("撤销记录只允许追加。")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("撤销记录不能删除。")

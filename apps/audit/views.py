@@ -1,14 +1,15 @@
-"""Read-only HTTP endpoint for permission-scoped audit logs."""
+"""Permission-scoped audit history and explicit undo confirmations."""
 
 from __future__ import annotations
 
 from django.contrib.auth.decorators import login_required
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.contrib import messages
 from django.core.paginator import EmptyPage, PageNotAnInteger, Paginator
 from django.http import HttpResponseBadRequest, HttpResponseForbidden
-from django.shortcuts import render
+from django.shortcuts import render, get_object_or_404, redirect
 from django.views.decorators.cache import never_cache
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_http_methods
 
 from apps.audit.forms import AuditLogFilterForm
 from apps.audit.permissions import require_view_audit_logs
@@ -17,7 +18,10 @@ from apps.audit.query import (
     project_audit_log,
     visible_audit_actors,
 )
-from apps.masterdata.permissions import current_company
+from apps.masterdata.permissions import current_company, role_names_for
+from apps.audit.models import OperationUndo
+from apps.audit.permissions import scoped_audit_logs
+from apps.audit.undo import SUPPORTED, preview_undo, undo_operation
 
 
 _ALLOWED_QUERY_KEYS = frozenset(
@@ -90,9 +94,18 @@ def audit_log_list(request):
         response["Cache-Control"] = "private, no-store"
         response["X-Content-Type-Options"] = "nosniff"
         return response
-    page_obj.object_list = [
-        project_audit_log(log, user=request.user) for log in page_obj.object_list
-    ]
+    logs = list(page_obj.object_list)
+    undone = set(OperationUndo.objects.filter(original_log_id__in=[log.pk for log in logs]).values_list("original_log_id", flat=True))
+    projected = []
+    has_business_role = bool(role_names_for(request.user).intersection({"finance", "equipment", "warehouse"}))
+    for log in logs:
+        item = project_audit_log(log, user=request.user)
+        item["can_preview_undo"] = has_business_role and (log.object_type, log.action) in SUPPORTED and (
+            log.object_type != "ImportBatch" or log.new_data_json.get("import_type") == "asset_initialization"
+        )
+        item["is_undone"] = log.pk in undone
+        projected.append(item)
+    page_obj.object_list = projected
 
     query_data = form.data.copy()
     query_data.pop("page", None)
@@ -111,3 +124,27 @@ def audit_log_list(request):
 
 
 __all__ = ["audit_log_list"]
+
+
+@never_cache
+@login_required
+@require_http_methods(["GET", "POST"])
+def operation_undo(request, pk):
+    require_view_audit_logs(request.user)
+    company = current_company()
+    log = get_object_or_404(scoped_audit_logs(request.user, company), pk=pk)
+    context = {"log": project_audit_log(log, user=request.user)}
+    try:
+        if request.method == "POST":
+            undo_operation(actor=request.user, log=log, reason=request.POST.get("reason"),
+                           confirmation=request.POST.get("confirmation"), request=request)
+            messages.success(request, "已撤销操作，未使用的编号已释放；原操作日志已保留。")
+            return redirect("audit:log-list")
+        context.update(preview_undo(actor=request.user, log=log))
+    except ValidationError as exc:
+        context["error"] = "；".join(exc.messages)
+    response = render(request, "audit/undo_confirm.html", context,
+                      status=400 if request.method == "POST" and context.get("error") else 200)
+    response["Cache-Control"] = "private, no-store"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response

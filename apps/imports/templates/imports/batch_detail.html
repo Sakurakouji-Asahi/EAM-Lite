@@ -47,8 +47,10 @@
 <div class="alert alert-danger">本批次处理失败，未形成可确认结果。请根据错误原因修正后重新上传；不要重复使用本批次继续写入。</div>
 {% elif batch.status == 'cancelled' %}
 <div class="alert alert-secondary">本批次已取消，未创建业务数据，不能再确认。</div>
+{% elif batch.status == 'reversed' %}
+<div class="alert alert-secondary">本批导入已撤销，原文件和明细作为操作记录保留。需要重新导入时，请重新上传文件。</div>
 {% endif %}
-{% if batch.status != 'confirmed' and batch.status != 'cancelled' %}<form method="post" action="{% url 'imports:cancel' batch.pk %}" class="card card-body mt-3">{% csrf_token %}<label class="form-label" for="cancel-reason">取消原因</label><textarea class="form-control mb-2" id="cancel-reason" name="reason" required></textarea><button class="btn btn-outline-danger align-self-start" type="submit">取消本批次</button></form>{% endif %}
+{% if batch.status != 'confirmed' and batch.status != 'cancelled' and batch.status != 'reversed' %}<form method="post" action="{% url 'imports:cancel' batch.pk %}" class="card card-body mt-3">{% csrf_token %}<label class="form-label" for="cancel-reason">取消原因</label><textarea class="form-control mb-2" id="cancel-reason" name="reason" required></textarea><button class="btn btn-outline-danger align-self-start" type="submit">取消本批次</button></form>{% endif %}
 <div class="table-responsive mt-4">
 <table class="table table-sm table-bordered align-middle">
   <thead><tr><th>行</th><th>状态</th><th>原始数据</th><th>校验/测算预览</th><th>阻断错误</th><th>警告/人工核对</th><th>创建结果</th></tr></thead>

@@ -140,6 +140,7 @@ def project_audit_log(log, *, user):
     raw_old_data = json.dumps(old_data, ensure_ascii=False, indent=2, default=str)
     raw_new_data = json.dumps(new_data, ensure_ascii=False, indent=2, default=str)
     return {
+        "id": log.pk,
         "created_at": log.created_at,
         "actor": (
             (log.user.display_name or log.user.username) if log.user else "系统/已停用用户"

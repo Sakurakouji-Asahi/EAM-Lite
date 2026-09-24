@@ -2628,6 +2628,7 @@ def upload_and_validate_import(
                 template_version=definition.version,
                 file_sha256=digest,
             )
+            .exclude(status="reversed")
             .order_by("-uploaded_at")
             .first()
         )
@@ -2718,6 +2719,7 @@ def upload_and_validate_import(
                         template_version=definition.version,
                         file_sha256=digest,
                     )
+                    .exclude(status="reversed")
                     .order_by("-uploaded_at")
                     .first()
                 )

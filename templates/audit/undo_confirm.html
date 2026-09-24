@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}撤销操作 | EAM-Lite{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3 mb-1">撤销{{ log.action_label }}</h1><p class="text-secondary mb-0">原操作时间：{{ log.created_at|date:"Y-m-d H:i:s" }} · 操作者：{{ log.actor }}</p></div><a class="btn btn-outline-secondary" href="{% url 'audit:log-list' %}">返回操作日志</a></header>
+{% if error %}<div class="alert alert-warning">{{ error }}</div><a class="btn btn-outline-primary" href="">重新核对</a>
+{% elif already_undone %}<div class="alert alert-info">该操作已撤销，无需重复办理。</div>
+{% else %}
+<section class="card mb-3"><div class="card-body">
+<p>本次涉及 <strong>{{ plan.asset_count }}</strong> 条资产，释放 <strong>{{ plan.released_codes }}</strong> 个未使用编号。</p>
+{% if is_import %}<p>撤销本批导入及其建档，移除对应资产和财务草稿。原文件、导入明细和操作日志保留，同一文件可以重新上传。</p>{% else %}<p>资产退回草稿，保留已填写的资料，移除本次建档生成的二维码和编号。重新建档时按编码规则发号。</p>{% endif %}
+<p class="mb-0">仅释放同一编号范围末尾、尚未打印标签且未被后续业务使用的编号。</p>
+</div></section>
+<section class="card mb-3"><div class="table-responsive"><table class="table mb-0"><thead><tr><th>资产名称</th><th>当前编号</th></tr></thead><tbody>{% for asset in plan.assets %}<tr><td>{{ asset.name }}</td><td>{{ asset.code }}</td></tr>{% endfor %}</tbody></table></div></section>
+<form method="post">{% csrf_token %}<input type="hidden" name="confirmation" value="{{ confirmation }}"><label for="reason" class="form-label">撤销原因</label><textarea id="reason" name="reason" class="form-control mb-3" rows="2" maxlength="1000" required></textarea><button class="btn btn-danger" type="submit">确认撤销</button></form>
+{% endif %}
+{% endblock %}

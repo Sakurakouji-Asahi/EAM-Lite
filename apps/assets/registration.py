@@ -34,6 +34,12 @@ def _key(value):
     return result
 
 
+def _reject_reversed_key(company, key):
+    from apps.audit.undo import registration_key_was_undone
+    if registration_key_was_undone(company, key):
+        raise ValidationError("该建档请求已撤销，请刷新页面后重新建档。")
+
+
 def _normalized(value):
     if isinstance(value, Mapping):
         return {str(key): _normalized(item) for key, item in value.items()}
@@ -159,6 +165,7 @@ def create_registered_asset(
 ):
     company = lock_registration_company(company)
     normalized_key = _key(idempotency_key)
+    _reject_reversed_key(company, normalized_key)
     fingerprint = _fingerprint({"operation": "create", "data": data, "custom_values": custom_values or {}})
     existing = AssetRegistration.objects.select_related("asset__company", "asset__department").filter(
         company=company, idempotency_key=normalized_key,
@@ -182,6 +189,7 @@ def register_asset(
     company = lock_registration_company(asset.company)
     asset = _lock_asset(asset, company)
     normalized_key = _key(idempotency_key)
+    _reject_reversed_key(company, normalized_key)
     fingerprint = _fingerprint({
         "operation": "register", "asset": str(asset.pk),
         "code_effective_date": code_effective_date,

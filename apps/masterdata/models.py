@@ -1431,6 +1431,7 @@ class ImportBatch(models.Model):
         CONFIRMED = "confirmed", "已确认"
         FAILED = "failed", "处理失败"
         CANCELLED = "cancelled", "已取消"
+        REVERSED = "reversed", "已撤销"
 
     company = models.ForeignKey(
         Company,
@@ -1533,7 +1534,7 @@ class ImportBatch(models.Model):
                         confirmed_at__isnull=True,
                     )
                     | Q(
-                        status="confirmed",
+                        status__in=("confirmed", "reversed"),
                         validated_at__isnull=False,
                         error_rows=0,
                         confirmed_by__isnull=False,
@@ -1566,6 +1567,7 @@ class ImportBatch(models.Model):
                         "confirmed",
                         "failed",
                         "cancelled",
+                        "reversed",
                     )
                 ),
                 name="ck_import_batch_status_valid",
@@ -1668,7 +1670,7 @@ class ImportRow(models.Model):
         if self.validation_status == self.ValidationStatus.INVALID and not self.errors_json:
             raise ValidationError({"errors_json": "无效行必须包含至少一项错误。"})
         if self.validation_status == self.ValidationStatus.CREATED:
-            if self.batch.status != ImportBatch.Status.CONFIRMED:
+            if self.batch.status not in {ImportBatch.Status.CONFIRMED, ImportBatch.Status.REVERSED}:
                 raise ValidationError("只有已确认批次的行可以标记为已创建。")
             if not self.created_object_type or not self.created_object_id:
                 raise ValidationError("已创建行必须记录对象类型和对象标识。")
