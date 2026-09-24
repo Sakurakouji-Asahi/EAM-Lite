@@ -433,7 +433,7 @@ def department_list(request):
 
 @login_required
 def employee_list(request):
-    from apps.masterdata.directory import prepare_employee_directory
+    from apps.masterdata.directory import employee_department_tree, prepare_employee_directory
 
     require_view_masterdata(request.user, "employee")
     company = _company_or_404()
@@ -442,9 +442,10 @@ def employee_list(request):
         company,
         Employee.objects.select_related("department", "user"),
     )
-    department_options = list(Department.objects.filter(
-        company=company, pk__in=queryset.values("department_id")
-    ).order_by("normalized_code"))
+    department_options, department_descendants, department_labels = employee_department_tree(
+        scoped_departments(request.user, company).order_by("normalized_code"),
+        queryset.values_list("department_id", flat=True).distinct(),
+    )
     selected_department = request.GET.get("department", "").strip()
     filter_errors = []
     if selected_department:
@@ -453,7 +454,9 @@ def employee_list(request):
             filter_errors.append("部门无效或不在当前账号的可选范围内。")
             queryset = queryset.none()
         else:
-            queryset = queryset.filter(department=allowed[selected_department])
+            queryset = queryset.filter(
+                department_id__in=department_descendants[allowed[selected_department].pk]
+            )
     q = request.GET.get("q", "").strip()
     if q:
         queryset = queryset.filter(
@@ -470,6 +473,8 @@ def employee_list(request):
     queryset, positions, sources = prepare_employee_directory(
         queryset.order_by("normalized_employee_no"), position=position, source_mark=source_mark
     )
+    for employee in queryset:
+        employee.directory_department = department_labels[employee.department_id]
     if position and position not in positions:
         filter_errors.append("当前筛选范围内没有所选岗位，请重新选择或清除筛选。")
     if source_mark and source_mark not in sources:

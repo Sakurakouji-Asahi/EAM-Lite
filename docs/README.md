@@ -59,6 +59,7 @@
 - [批量建档、租入归还与登记更正](Asset-Registration-Corrections.md)
 - [当前资产编码规则与组件、来源操作](Asset-Coding-Standard.md)
 - [历史资产初始化与折旧状态](Asset-Initialization-Depreciation-2026-09-24.md)
+- [生产班组与人员部门](Department-Groups-2026-09-24.md)
 - [源码安装、配置、迁移、测试与模块定位](Development-Guide.md)
 - [按改动选择验证与交付](10-Definition-of-Done.md)
 - [Windows 本机使用、备份和更新](../README-本机使用版.md)

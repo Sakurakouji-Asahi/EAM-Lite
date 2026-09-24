@@ -259,6 +259,50 @@ def test_employee_directory_does_not_expose_out_of_scope_filter_options(context,
     assert response.context["filter_errors"] and response.context["objects"].count() == 0
 
 
+def test_employee_parent_filter_includes_visible_subgroups_without_direct_staff(context, client):
+    parent = make_department(context["company"], "PRODUCTION")
+    child = make_department(context["company"], "PRODUCTION-01", parent=parent)
+    leaf = make_department(context["company"], "PRODUCTION-01-01", parent=child)
+    first = make_employee(context["company"], child, "GROUP-STAFF")
+    second = make_employee(context["company"], leaf, "LEAF-STAFF")
+    client.force_login(context["admin"])
+    response = client.get(reverse("masterdata:employee-list"), {"department": parent.pk})
+    assert response.status_code == 200
+    assert not response.context["filter_errors"]
+    assert {e.pk for e in response.context["objects"]} == {first.pk, second.pk}
+    assert parent.pk in {d.pk for d in response.context["department_options"]}
+    assert f"{parent.name} / {child.name}" in response.content.decode()
+
+
+def test_employee_parent_filter_respects_scope_without_descendants(context, client):
+    parent = make_department(context["company"], "DIRECT-ONLY")
+    child = make_department(context["company"], "HIDDEN-GROUP", parent=parent)
+    visible = make_employee(context["company"], parent, "VISIBLE-GROUP-LEAD")
+    hidden = make_employee(context["company"], child, "HIDDEN-GROUP-STAFF")
+    actor = make_user("directory-parent-only", "department_manager")
+    grant_scope(actor, context["company"], parent, descendants=False)
+    client.force_login(actor)
+    response = client.get(reverse("masterdata:employee-list"), {"department": parent.pk})
+    assert {e.pk for e in response.context["objects"]} == {visible.pk}
+    assert child.pk not in {d.pk for d in response.context["department_options"]}
+    assert hidden.name not in response.content.decode()
+
+
+def test_employee_subgroup_scope_does_not_expose_unauthorized_ancestor(context, client):
+    parent = make_department(context["company"], "PRIVATE-PARENT")
+    child = make_department(context["company"], "VISIBLE-CHILD", parent=parent)
+    employee = make_employee(context["company"], child, "SUBGROUP-STAFF")
+    actor = make_user("directory-subgroup-only", "department_manager")
+    grant_scope(actor, context["company"], child)
+    client.force_login(actor)
+    response = client.get(reverse("masterdata:employee-list"))
+    assert {e.pk for e in response.context["objects"]} == {employee.pk}
+    assert parent.name not in response.content.decode()
+    rejected = client.get(reverse("masterdata:employee-list"), {"department": parent.pk})
+    assert rejected.context["filter_errors"]
+    assert rejected.context["objects"].count() == 0
+
+
 @pytest.mark.parametrize("form_class,field", [(InventoryTaskForm, "planned_start"), (MaintenancePlanForm, "first_due_date"), (SupplyCountTaskForm, "planned_start")])
 def test_date_initial_values_and_invalid_form_redisplay_stay_iso(context, form_class, field):
     with translation.override("zh-hans"):

@@ -1,6 +1,29 @@
 """Expose existing, explicitly labeled employee notes without rewriting them."""
 
 
+def employee_department_tree(departments, employee_department_ids):
+    """Build paths/filters from already permission-scoped department records."""
+    by_id = {department.pk: department for department in departments}
+    used_ids = set(employee_department_ids)
+    option_ids, labels, descendants = set(), {}, {}
+    for department_id in by_id:
+        chain, visited = [], set()
+        current_id = department_id
+        while current_id in by_id and current_id not in visited:
+            visited.add(current_id)
+            chain.append(current_id)
+            current_id = by_id[current_id].parent_id
+        labels[department_id] = " / ".join(by_id[pk].name for pk in reversed(chain))
+        for ancestor_id in chain:
+            descendants.setdefault(ancestor_id, set()).add(department_id)
+        if department_id in used_ids:
+            option_ids.update(chain)
+    options = [department for pk, department in by_id.items() if pk in option_ids]
+    for department in options:
+        department.directory_label = labels[department.pk]
+    return options, descendants, labels
+
+
 def employee_directory_metadata(remark):
     result = {"position": "", "source_mark": ""}
     labels = {"岗位": "position", "原表人员标记": "source_mark"}
