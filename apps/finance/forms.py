@@ -282,7 +282,7 @@ class FinanceDraftForm(FinanceBoundForm):
         label="实际接续日",
         required=False,
         widget=forms.DateInput(attrs={"type": "date"}),
-        help_text="旧资产期初余额截至后的实际接续起点；新资产留空时等于折旧起算日。",
+        help_text="旧资产期初余额截至后的接续起点；已提足资产可在原寿命结束后接续，后续不再计提。新资产留空时等于折旧起算日。",
     )
     expected_total_units = forms.DecimalField(
         label="预计总工作量", min_value=Decimal("0.000001"),
@@ -646,7 +646,8 @@ class ProfileEventForm(ReasonForm):
 
 class ProfileContinuationReviewForm(ReasonForm):
     actual_continuation_date = forms.DateField(
-        label="实际接续日", widget=forms.DateInput(attrs={"type": "date"})
+        label="实际接续日", widget=forms.DateInput(attrs={"type": "date"}),
+        help_text="已提足折旧、无剩余可折旧金额的旧资产，可在原预计寿命终点之后接续。",
     )
 
 

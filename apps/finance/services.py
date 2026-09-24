@@ -36,7 +36,7 @@ from apps.coding.issuance import (
     _insert_counter_if_missing,
     _issue_asset_code as _issue_code,
 )
-from apps.finance.permissions import require_manage_finance
+from apps.finance.permissions import require_manage_finance, require_view_finance_object
 from apps.finance.readiness import finance_confirmation_pending
 from apps.masterdata.permissions import current_company
 
@@ -857,6 +857,49 @@ def _domain():
     return domain
 
 
+def get_asset_depreciation_status(*, actor, asset):
+    """Read actual depreciation progress independently of physical/profile state."""
+    require_view_finance_object(actor, asset)
+    finance = _models()["AssetFinance"].objects.filter(
+        asset=asset, finance_confirmed_at__isnull=False,
+    ).first()
+    if finance is None:
+        return None
+    if finance.accounting_treatment != "fixed_asset":
+        return {"code": "not_applicable", "label": "不计提折旧"}
+    today = timezone.localdate()
+    profile = asset.depreciation_profiles.exclude(status="draft").filter(
+        effective_from__lte=today,
+    ).filter(
+        Q(effective_to__isnull=True) | Q(effective_to__gte=today)
+    ).order_by("-version").first()
+    if profile is None:
+        return None
+    if profile.actual_continuation_review_required or profile.actual_continuation_date is None:
+        return {"code": "review_required", "label": "接续日待复核"}
+    actual_ad = asset.depreciation_entries.aggregate(total=Sum("amount"))["total"] or ZERO_MONEY
+    position = _domain().depreciation_position(
+        original_cost=finance.original_cost,
+        accumulated_depreciation=actual_ad,
+        impairment_balance=finance.impairment_balance_cache,
+        salvage_value=_calculate_profile_salvage(profile, finance.original_cost),
+    )
+    code = position.status
+    labels = {
+        "fully_depreciated": "已提足折旧",
+        "not_fully_depreciated": "未提足折旧",
+        "no_depreciable_balance": "无剩余可折旧金额",
+        "no_depreciation": "不计提折旧",
+    }
+    if code == "not_fully_depreciated" and profile.method == "no_depreciation":
+        code = "no_depreciation"
+    return {
+        "code": code, "label": labels[code],
+        "salvage_value": position.salvage_value,
+        "remaining_amount": position.remaining_amount,
+    }
+
+
 def _profile_spec(*, asset, finance_data, profile_data, policy):
     domain = _domain()
     values = dict(profile_data or {})
@@ -967,7 +1010,7 @@ def _profile_spec(*, asset, finance_data, profile_data, policy):
             raise ValidationError(
                 {"actual_continuation_date": "实际接续日不得早于原折旧起算日。"}
             )
-        if actual_continuation_date > natural_end_date:
+        if actual_continuation_date > natural_end_date and opening_bv > salvage:
             raise ValidationError(
                 {"actual_continuation_date": "实际接续日不得晚于原预计寿命终点。"}
             )
@@ -1439,11 +1482,11 @@ def review_profile_actual_continuation_date(
         start_date=profile.start_date,
         useful_life_months=profile.useful_life_months,
     )
-    if continuation > natural_end:
+    salvage = _calculate_profile_salvage(profile, finance.original_cost)
+    if continuation > natural_end and profile.opening_book_value > salvage:
         raise ValidationError(
             {"actual_continuation_date": "实际接续日不得晚于原预计寿命终点。"}
         )
-    salvage = _calculate_profile_salvage(profile, finance.original_cost)
     if continuation == natural_end and profile.opening_book_value > salvage:
         raise ValidationError(
             {
@@ -2409,7 +2452,25 @@ def generate_depreciation_batch(*, actor, company, period_start, period_end, ide
         usage_units = None
         manual_amount = manual_reason = manual_by = manual_at = None
         usages = []
-        if period_fraction == 0:
+        floor = _calculate_profile_salvage(profile, cutoff_cost)
+        position = _domain().depreciation_position(
+            original_cost=cutoff_cost,
+            accumulated_depreciation=cutoff_ad,
+            impairment_balance=cutoff_impairment,
+            salvage_value=floor,
+        )
+        if profile.method == "units_of_production":
+            usages = _batch_work_usages(
+                Usage=Usage, profile=profile,
+                period_start=period_start, period_end=period_end,
+            )
+        if position.remaining_amount == ZERO_MONEY:
+            status = "skipped"
+            skip_reason = (
+                "已提足折旧" if position.status == "fully_depreciated"
+                else "无剩余可折旧金额"
+            )
+        elif period_fraction == 0:
             status = "skipped"
             skip_reason = "折旧事件/寿命规则下当期无资格"
         elif profile.posting_period == "yearly" and profile.annual_posting_month != period_start.month:
@@ -2431,12 +2492,6 @@ def generate_depreciation_batch(*, actor, company, period_start, period_end, ide
                 planned = manual_amount
                 raw = manual_amount
         elif profile.method == "units_of_production":
-            usages = _batch_work_usages(
-                Usage=Usage,
-                profile=profile,
-                period_start=period_start,
-                period_end=period_end,
-            )
             if not usages:
                 status, error = "error", "缺少财务明确录入的当期工作量"
             else:
@@ -2507,8 +2562,7 @@ def generate_depreciation_batch(*, actor, company, period_start, period_end, ide
                 planned, raw = event_line.planned_amount, event_line.calculated_unrounded
                 period_fraction = event_line.eligible_fraction
         opening = cutoff_book
-        floor = _calculate_profile_salvage(profile, cutoff_cost)
-        db = max(opening - floor, ZERO_MONEY)
+        db = position.remaining_amount
         if profile.method == "units_of_production" and status == "ready" and planned is None:
             planned = db
         if planned > db:

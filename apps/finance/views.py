@@ -61,6 +61,7 @@ from apps.finance.services import (
     create_value_adjustment,
     deactivate_fixed_asset_category,
     generate_depreciation_batch,
+    get_asset_depreciation_status,
     ensure_asset_is_depreciable,
     preview_asset_depreciation,
     record_work_usage,
@@ -348,6 +349,7 @@ def asset_finance_detail(request, pk):
             "entries": entries,
             "actual_ad": actual_ad,
             "book_value": book_value,
+            "depreciation_state": get_asset_depreciation_status(actor=request.user, asset=asset),
             "can_manage": can_manage_finance(request.user),
         },
     )

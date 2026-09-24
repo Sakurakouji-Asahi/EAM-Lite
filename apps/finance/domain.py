@@ -565,6 +565,40 @@ class ActualBalances:
     book_value: Decimal
 
 
+@dataclass(frozen=True)
+class DepreciationPosition:
+    status: str
+    book_value: Decimal
+    salvage_value: Decimal
+    remaining_amount: Decimal
+
+
+@_decimal_calculation
+def depreciation_position(
+    *, original_cost, accumulated_depreciation, impairment_balance, salvage_value
+) -> DepreciationPosition:
+    """Derive depreciation progress from actual balances, not profile lifecycle."""
+    cost = _nonnegative_money(original_cost, field_name="原值")
+    accumulated = _nonnegative_money(accumulated_depreciation, field_name="累计折旧")
+    impairment = _nonnegative_money(impairment_balance, field_name="累计减值")
+    salvage = calculate_salvage(
+        original_cost=cost, salvage_mode=SALVAGE_AMOUNT, salvage_amount=salvage_value
+    )
+    book = money(cost - accumulated - impairment)
+    if book < ZERO:
+        raise DepreciationError("累计折旧和减值不得使账面价值小于 0。")
+    remaining = money(max(book - salvage, ZERO))
+    if remaining > ZERO:
+        status = "not_fully_depreciated"
+    elif accumulated > ZERO and accumulated >= cost - salvage:
+        status = "fully_depreciated"
+    else:
+        # A write-down or a cost equal to salvage does not mean depreciation
+        # itself has exhausted the depreciable original cost.
+        status = "no_depreciable_balance"
+    return DepreciationPosition(status, book, salvage, remaining)
+
+
 @_decimal_calculation
 def validate_opening_balances(
     *,
@@ -1042,7 +1076,7 @@ def generate_schedule(
     )
     if continuation_date < start_date:
         raise DepreciationError("实际接续日不得早于原折旧起算日。")
-    if continuation_date > natural_end:
+    if continuation_date > natural_end and canonical_opening_book > salvage:
         raise DepreciationError("实际接续日不得晚于原预计寿命终点。")
     if (
         specification.method != METHOD_NO_DEPRECIATION
@@ -1383,6 +1417,7 @@ __all__ = [
     "ActualBalances",
     "DDBCandidates",
     "DepreciationError",
+    "DepreciationPosition",
     "METHOD_DOUBLE_DECLINING_BALANCE",
     "METHOD_MANUAL",
     "METHOD_NO_DEPRECIATION",
@@ -1412,6 +1447,7 @@ __all__ = [
     "calculate_life_end",
     "calculate_salvage",
     "decimal_value",
+    "depreciation_position",
     "depreciation_year_period",
     "double_declining_candidates",
     "eligible_days",

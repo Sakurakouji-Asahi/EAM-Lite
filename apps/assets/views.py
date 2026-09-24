@@ -70,6 +70,7 @@ from apps.assets.services import (
 from apps.audit.services import request_audit_context, write_business_audit_log
 from apps.finance.permissions import can_manage_finance
 from apps.finance.readiness import finance_confirmation_pending
+from apps.finance.services import get_asset_depreciation_status
 from apps.assets.registration import create_registered_asset, register_asset
 from apps.masterdata.models import (
     AssetCategory,
@@ -632,6 +633,10 @@ def asset_detail(request, pk):
             "can_financial": can_financial,
             "can_manage_financial": can_manage_financial,
             "finance_pending": finance_pending,
+            "depreciation_state": (
+                get_asset_depreciation_status(actor=request.user, asset=asset)
+                if can_financial else None
+            ),
             "location_path": _tree_path(asset.location),
             "category_path": _tree_path(asset.category),
             "custom_values": [

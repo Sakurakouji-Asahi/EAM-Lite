@@ -142,6 +142,7 @@
       {% if can_financial %}
         <section class="card shadow-sm mb-3" aria-labelledby="finance-title">
           <div class="card-header"><h2 class="h5 mb-0" id="finance-title">财务信息</h2></div>
+          {% if depreciation_state %}<div class="card-body pb-0"><p class="mb-2">折旧状态：<strong>{{ depreciation_state.label }}</strong></p></div>{% endif %}
           <div class="card-body">{% if finance_pending %}<p class="mb-2">财务与折旧设置尚未确认；可等待发票等资料齐备后办理，不影响实物管理。</p>{% if can_manage_financial %}<a class="btn btn-sm btn-primary" href="{% url 'finance:finance-confirm' asset.pk %}">进入财务与折旧确认</a>{% else %}<span class="text-secondary">等待财务人员处理。</span>{% endif %}{% elif asset.asset_status != 'draft' %}<p class="mb-2">财务数据和实际折旧来自独立受控记录。</p><a class="btn btn-sm btn-outline-primary" href="{% url 'finance:asset-finance-detail' asset.pk %}">查看资产财务</a>{% endif %}</div>
         </section>
       {% endif %}
