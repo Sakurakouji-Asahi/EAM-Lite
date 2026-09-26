@@ -61,4 +61,3 @@ def finance_confirmation_initial(asset):
             }
         )
     return initial
-
