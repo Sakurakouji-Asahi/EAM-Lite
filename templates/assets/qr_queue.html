@@ -1,77 +1,30 @@
-{% extends "base.html" %}
+{% extends "base.html" %}{% load static %}
 {% block title %}标签打印队列 - EAM-Lite{% endblock %}
 {% block content %}
-  <header class="app-page-header align-items-start">
-    <div>
-      <h1 class="h3 mb-1">标签打印队列</h1>
-      <p class="text-secondary mb-0">点击生成后立即记录打印操作并打开 A4 预览；实际贴到实物后再确认贴标。</p>
-    </div>
-    <a class="btn btn-outline-secondary" href="{% url 'assets:label-batch-list' %}">打印批次</a>
-  </header>
-
-  <form method="get" class="card card-body app-filter-card mb-3">
-    <input type="hidden" name="status" value="{{ selected_status }}">
-    <div class="row g-2 align-items-end">
-      <div class="col-12 col-md">
-        <label class="form-label" for="label-search">搜索标签资产</label>
-        <input class="form-control" id="label-search" type="search" name="q" value="{{ query }}" placeholder="编号、名称、序列号、部门或责任人">
-      </div>
-      <div class="col-12 col-md-auto d-grid d-md-flex gap-2">
-        <button class="btn btn-primary" type="submit">搜索</button>
-        {% if query %}<a class="btn btn-outline-secondary" href="?status={{ selected_status }}">清除搜索</a>{% endif %}
-      </div>
-    </div>
-  </form>
-
-  <nav class="nav nav-pills mb-3" aria-label="标签状态筛选">
-    {% for value, label in status_choices %}
-      <a class="nav-link {% if selected_status == value %}active{% endif %}" href="?status={{ value }}{% if query %}&amp;q={{ query|urlencode }}{% endif %}">{{ label }}</a>
-    {% endfor %}
-  </nav>
-
-  <form method="post" class="card shadow-sm">
-    {% csrf_token %}
-    <input type="hidden" name="status" value="{{ selected_status }}">
-    <input type="hidden" name="q" value="{{ query }}">
-    <input type="hidden" name="page" value="{{ page_obj.number }}">
-    {{ form.idempotency_key }}
-    {% if form.non_field_errors %}<div class="alert alert-danger m-3 mb-0">{{ form.non_field_errors }}</div>{% endif %}
-    {% if form.asset_ids.errors %}<div class="alert alert-danger m-3 mb-0">{{ form.asset_ids.errors }}</div>{% endif %}
-    <div class="table-responsive">
-      <table class="table table-hover align-middle mb-0">
-        <thead class="table-light"><tr><th>选择</th><th>二维码</th><th>编号</th><th>名称</th><th>部门</th><th>责任人</th><th>位置</th><th>标签状态</th><th>最近打印</th><th>操作</th></tr></thead>
-        <tbody>
-          {% for row in rows %}
-            <tr>
-              <td>{% if row.selectable %}<input class="form-check-input" type="checkbox" name="asset_ids" value="{{ row.asset.pk }}" aria-label="选择 {{ row.asset.asset_code }}">{% else %}—{% endif %}</td>
-              <td><a href="{% url 'assets:asset-current-qr' row.asset.pk %}" target="_blank" rel="noopener noreferrer" title="查看 {{ row.asset.asset_code }} 的二维码"><img class="qr-table-thumb" src="{% url 'assets:asset-current-qr' row.asset.pk %}" width="72" height="72" loading="lazy" decoding="async" alt="{{ row.asset.asset_code }} 的当前二维码"></a></td>
-              <td>{{ row.asset.asset_code }}</td>
-              <td>{{ row.asset.asset_name }}</td>
-              <td>{{ row.asset.department.name|default:"—" }}</td>
-              <td>{{ row.asset.responsible_employee.name|default:"—" }}</td>
-              <td>{{ row.location_path }}</td>
-              <td>{{ row.qr_identity.get_label_status_display }}</td>
-              <td>{{ row.last_printed_at|date:"Y-m-d H:i"|default:"尚未打印" }}</td>
-              <td><div class="d-flex flex-wrap gap-2">{% if row.qr_identity.label_status == 'printed' %}<a class="btn btn-sm btn-primary" href="{% url 'assets:qr-web-attach' row.asset.pk %}">Web 确认贴标</a>{% elif row.qr_identity.label_status == 'attached' %}<a class="btn btn-sm btn-outline-danger" href="{% url 'assets:qr-rotate' row.asset.pk %}">换标</a>{% endif %}<a class="btn btn-sm btn-outline-primary" href="{% url 'assets:asset-detail' row.asset.pk %}">查看资产</a></div></td>
-            </tr>
-          {% empty %}
-            <tr><td colspan="10"><div class="app-empty-state"><strong>{% if query %}没有匹配“{{ query }}”的标签资产{% else %}当前状态下没有标签资产{% endif %}</strong><span>可调整搜索词或切换上方标签状态。</span>{% if query %}<a class="btn btn-sm btn-outline-secondary" href="?status={{ selected_status }}">清除搜索</a>{% endif %}</div></td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    <div class="card-body border-top py-2">{% include "_pagination.html" %}</div>
-    {% if selected_status != 'attached' %}
-      <div class="card-body border-top">
-        <div class="row g-3">
-          <div class="col-12"><strong>本批次可选字段</strong>（默认始终包含公司简称、名称、正式编号、部门和二维码）</div>
-          <div class="col-12 col-md-auto form-check ms-2">{{ form.include_responsible_employee }} <label class="form-check-label" for="{{ form.include_responsible_employee.id_for_label }}">{{ form.include_responsible_employee.label }}</label></div>
-          <div class="col-12 col-md-auto form-check ms-2">{{ form.include_location }} <label class="form-check-label" for="{{ form.include_location.id_for_label }}">{{ form.include_location.label }}</label></div>
-          <div class="col-12 col-md-auto form-check ms-2">{{ form.include_model }} <label class="form-check-label" for="{{ form.include_model.id_for_label }}">{{ form.include_model.label }}</label></div>
-          {% if selected_status == 'printed' %}<div class="col-12 form-check ms-2">{{ form.explicit_reprint }} <label class="form-check-label" for="{{ form.explicit_reprint.id_for_label }}">我明确要求重新打印；沿用当前 Token 并新增批次记录</label></div>{% endif %}
-        </div>
-      </div>
-      <div class="card-footer"><button class="btn btn-primary" type="submit">打印二维码并打开 A4 预览</button></div>
-    {% endif %}
-  </form>
+<header class="app-page-header"><div><h1 class="h3 mb-1">标签打印队列</h1><p class="text-secondary mb-0">先选择资产和标签内容，再生成 A4 打印页。生成时记录打印操作，实际贴好后再确认贴标。</p></div><a class="btn btn-outline-secondary" href="{% url 'assets:label-batch-list' %}">打印批次</a></header>
+<form method="get" class="card card-body mb-3 app-filter-card"><input type="hidden" name="status" value="{{ selected_status }}"><div class="row g-3 align-items-end">
+{% for field in filter_form %}<div class="{% if field.name == 'q' %}col-12 col-md-5{% elif field.name == 'department' %}col-12 col-md-3{% else %}col-6 col-md-2{% endif %}"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</div>{% endfor %}
+<div class="col-6 col-md-2 d-flex gap-2"><button class="btn btn-primary" type="submit">查询</button><a class="btn btn-outline-secondary" href="{% url 'assets:label-queue' %}">清除</a></div></div></form>
+<nav class="nav nav-pills mb-3" aria-label="标签状态筛选">{% for tab in tabs %}<a class="nav-link {% if selected_status == tab.value %}active{% endif %}" href="?{{ tab.query }}">{{ tab.label }} <span class="small">({{ tab.count }})</span></a>{% endfor %}</nav>
+<div id="bulk-workspace" data-selection-key="{{ selection_key }}">
+{{ all_filtered_ids|json_script:"bulk-filtered-ids" }}
+<form method="post" class="card shadow-sm" id="bulk-selection-form" data-selection-field="asset_ids">{% csrf_token %}
+{% for key,value in filter_values.items %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}<input type="hidden" name="page" value="{{ page_obj.number }}">{{ form.idempotency_key }}
+{% if form.non_field_errors %}<div class="alert alert-danger m-3 mb-0">{{ form.non_field_errors }}</div>{% endif %}{% if form.asset_ids.errors %}<div class="alert alert-danger m-3 mb-0">{{ form.asset_ids.errors }}</div>{% endif %}{% if form.idempotency_key.errors %}<div class="alert alert-danger m-3">{{ form.idempotency_key.errors }}</div>{% endif %}
+{% if selected_status != 'attached' %}
+<div class="card-header d-flex flex-wrap align-items-center gap-2"><strong>批量打印</strong><span id="bulk-selected-count" class="small" aria-live="polite"></span><button type="button" class="btn btn-sm btn-outline-secondary" id="bulk-clear-selection">清除选择</button><button type="button" class="btn btn-sm btn-outline-primary" id="bulk-select-filtered" {% if not can_select_filtered %}disabled{% endif %}>选中全部筛选结果（{{ all_filtered_count }} 项）</button><span class="small text-secondary">每批最多 200 项，可跨页选择。</span></div>
+<div class="alert alert-danger m-3" id="bulk-selection-error" role="alert" hidden></div>
+{% endif %}
+<div class="table-responsive app-work-table" role="region" aria-label="可打印资产列表" tabindex="0"><table class="table table-hover align-middle mb-0"><thead><tr><th>{% if selected_status != 'attached' %}<input type="checkbox" id="bulk-select-all" aria-label="选择本页全部标签">{% else %}选择{% endif %}</th><th>二维码</th><th>资产编号 / 名称</th><th>设备编号 / 型号</th><th>部门 / 责任人</th><th>位置</th><th>标签状态</th><th>最近打印</th><th>操作</th></tr></thead><tbody>
+{% for row in rows %}<tr><td>{% if row.selectable %}<input class="form-check-input" type="checkbox" name="asset_ids" value="{{ row.asset.pk }}" aria-label="选择 {{ row.asset.asset_code }}" {% if row.selected %}checked{% endif %}>{% else %}—{% endif %}</td>
+<td><a href="{% url 'assets:asset-current-qr' row.asset.pk %}" target="_blank" rel="noopener noreferrer" title="查看 {{ row.asset.asset_code }} 的二维码"><img class="qr-table-thumb" src="{% url 'assets:asset-current-qr' row.asset.pk %}" width="72" height="72" loading="lazy" decoding="async" alt="{{ row.asset.asset_code }} 的当前二维码"></a></td>
+<td><a class="text-nowrap" href="{% url 'assets:asset-detail' row.asset.pk %}">{{ row.asset.asset_code }}</a><br>{{ row.asset.asset_name }}</td><td>{{ row.asset.equipment_number|default:"—" }}<br><small>{{ row.asset.model|default:"—" }}</small></td><td>{{ row.asset.department.name|default:"—" }}<br><small>{{ row.asset.responsible_employee.name|default:"—" }}</small></td><td>{{ row.location_path }}</td><td>{{ row.qr_identity.get_label_status_display }}</td><td class="text-nowrap">{{ row.last_printed_at|date:"Y-m-d H:i"|default:"尚未打印" }}</td><td>{% if row.qr_identity.label_status == 'printed' %}<a class="btn btn-sm btn-primary" href="{% url 'assets:qr-web-attach' row.asset.pk %}">确认贴标</a>{% elif row.qr_identity.label_status == 'attached' %}<a class="btn btn-sm btn-outline-danger" href="{% url 'assets:qr-rotate' row.asset.pk %}">换标</a>{% endif %}</td></tr>
+{% empty %}<tr><td colspan="9"><div class="app-empty-state"><strong>当前条件下没有标签资产</strong><span>可调整部门、搜索条件或标签状态。</span></div></td></tr>{% endfor %}
+</tbody></table></div>
+<div class="card-body border-top py-2">{% include "_pagination.html" %}</div>
+{% if selected_status != 'attached' %}<div class="card-body border-top"><strong>标签内容</strong><p class="small text-secondary mb-2">固定包含公司简称、名称、正式编号、部门和二维码。</p><div class="d-flex flex-wrap gap-4">
+<label class="form-check">{{ form.include_responsible_employee }} <span class="form-check-label">{{ form.include_responsible_employee.label }}</span></label><label class="form-check">{{ form.include_location }} <span class="form-check-label">{{ form.include_location.label }}</span></label><label class="form-check">{{ form.include_model }} <span class="form-check-label">{{ form.include_model.label }}</span></label>
+</div>{% if selected_status == 'printed' %}<label class="form-check mt-2">{{ form.explicit_reprint }} <span class="form-check-label">我确认重新打印，沿用当前二维码并新增打印记录。</span></label>{% endif %}</div><div class="card-footer"><button class="btn btn-primary" type="submit">生成打印页并记录打印</button></div>{% endif %}
+</form></div>
+<script src="{% static 'js/bulk-registration.js' %}?v=20260926-labels" defer></script>
 {% endblock %}

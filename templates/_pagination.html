@@ -11,10 +11,9 @@
           {% if page_obj.has_next %}<li class="page-item"><a class="page-link" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page={{ page_obj.next_page_number }}">下一页</a></li>{% endif %}
         </ul>
       </nav>
-      <form method="get" class="d-flex align-items-center gap-2">
-        {% for key,value in request.GET.items %}{% if key != 'page' %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endif %}{% endfor %}
-        <label class="small text-secondary">跳转到页 <input class="form-control form-control-sm d-inline-block app-page-jump" type="number" name="page" min="1" max="{{ page_obj.paginator.num_pages }}" value="{{ page_obj.number }}" required></label><button class="btn btn-sm btn-outline-secondary" type="submit">跳转</button>
-      </form>
+      <div class="d-flex align-items-center gap-2" data-page-jump data-page-query="{{ pagination_query }}">
+        <label class="small text-secondary">跳转到页 <input class="form-control form-control-sm d-inline-block app-page-jump" type="number" data-page-jump-value min="1" max="{{ page_obj.paginator.num_pages }}" value="{{ page_obj.number }}" required disabled></label><button class="btn btn-sm btn-outline-secondary" type="button" data-page-jump-go disabled>跳转</button>
+      </div>
     {% endif %}
   </div>
 {% endif %}

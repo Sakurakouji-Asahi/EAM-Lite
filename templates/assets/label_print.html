@@ -16,7 +16,7 @@
     <div id="qr-screen-scan-hint" class="screen-scan-hint">
       <strong>手机扫码：</strong>先在 EAM-Lite 中打开“扫码资产”，再使用页面相机扫描标签。手机系统相机单独扫描只会显示随机标识。屏幕识别困难时，将鼠标移到二维码上即可放大。
     </div>
-    <p><a href="{% url 'assets:label-batch-detail' batch.pk %}">返回批次与贴标页</a></p>
+    <p><a href="{% url 'assets:label-batch-detail' batch.pk %}">返回批次与贴标页</a> · <a href="{{ queue_url }}">{% if selection_key %}返回原筛选的打印队列{% else %}返回标签打印队列{% endif %}</a></p>
   </header>
   {% regroup items by page_no as pages %}
   {% for page in pages %}
@@ -39,5 +39,6 @@
       {% endfor %}
     </section>
   {% endfor %}
+{% if selection_key %}<div id="bulk-workspace" data-selection-key="{{ selection_key }}" hidden>{{ cleared_asset_ids|json_script:"bulk-cleared-ids" }}</div><script src="{% static 'js/bulk-registration.js' %}?v=20260926-labels" defer></script>{% endif %}
 </body>
 </html>

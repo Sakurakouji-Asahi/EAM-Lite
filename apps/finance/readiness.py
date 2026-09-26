@@ -40,7 +40,12 @@ def filter_pending_finance_assets(queryset, filters):
     """Shared selection rules for the paginated list and all-matching preview."""
     queryset = pending_finance_assets(queryset)
     if filters.get("q"):
-        queryset = queryset.filter(Q(asset_code__icontains=filters["q"]) | Q(asset_name__icontains=filters["q"]))
+        queryset = queryset.filter(
+            Q(asset_code__icontains=filters["q"])
+            | Q(asset_name__icontains=filters["q"])
+            | Q(equipment_number__icontains=filters["q"])
+            | Q(model__icontains=filters["q"])
+        )
     if filters.get("department"):
         from apps.masterdata.hierarchy import descendant_ids
         from apps.masterdata.models import Department

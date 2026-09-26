@@ -219,9 +219,18 @@ def finance_preview(request, pk):
 def finance_confirm(request, pk):
     require_manage_finance(request.user)
     company = _company()
-    asset = _pending_asset(company, pk)
     if request.method not in {"GET", "POST"}:
         return HttpResponseNotAllowed(["GET", "POST"])
+    completed = scoped_finance_assets(request.user, company).filter(
+        pk=pk, finance__finance_confirmed_at__isnull=False,
+    ).first()
+    if completed is not None:
+        if request.method == "POST":
+            messages.info(request, "该资产已完成财务确认，本次提交未修改数据；如需更正，请在财务资料页办理调整。")
+        else:
+            messages.info(request, "该资产已完成财务确认，已打开财务资料。")
+        return redirect("finance:asset-finance-detail", pk=completed.pk)
+    asset = _pending_asset(company, pk)
     action = request.POST.get("action") if request.method == "POST" else None
     form = _finance_form(request, asset=asset, confirm=action == "confirm")
     if request.method == "POST" and form.is_valid():

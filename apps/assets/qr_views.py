@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import secrets
 from decimal import Decimal
 from urllib.parse import urlencode
@@ -12,12 +13,13 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.storage import default_storage
 from django.core.paginator import Paginator
 from django.db.models import Count, Max, Prefetch, Q, Sum
-from django.http import FileResponse, Http404, HttpResponse
+from django.http import FileResponse, Http404, HttpResponse, QueryDict
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_http_methods, require_POST
 
+from apps.assets.bulk_support import MAX_BULK_ASSETS
 from apps.assets.models import (
     Asset,
     AssetLabelPrintBatch,
@@ -34,6 +36,7 @@ from apps.assets.permissions import (
 from apps.assets.qr_forms import (
     LabelAttachmentForm,
     LabelPrintForm,
+    LabelQueueFilterForm,
     PrintResultForm,
     SingleLabelPrintForm,
     TokenRotationForm,
@@ -62,6 +65,9 @@ from apps.maintenance.permissions import (
     can_view_maintenance_asset_summary,
 )
 from apps.maintenance.services import due_maintenance_plans
+from apps.masterdata.hierarchy import descendant_ids
+from apps.masterdata.location_tree import LocationTree
+from apps.masterdata.models import Department
 from apps.masterdata.permissions import current_company, role_names_for
 
 
@@ -188,7 +194,7 @@ def _maintenance_context(user, asset):
     }
 
 
-def _queue_assets(user, company, *, query=""):
+def _queue_assets(user, company, *, query="", department=None):
     active_identities = AssetQrIdentity.objects.filter(status="active").annotate(
         last_printed_at=Max("print_items__batch__printed_at")
     ).order_by("version")
@@ -202,8 +208,16 @@ def _queue_assets(user, company, *, query=""):
             Q(asset_code__icontains=query)
             | Q(asset_name__icontains=query)
             | Q(serial_number__icontains=query)
+            | Q(equipment_number__icontains=query)
+            | Q(model__icontains=query)
             | Q(department__name__icontains=query)
             | Q(responsible_employee__name__icontains=query)
+        )
+    if department is not None:
+        queryset = queryset.filter(
+            department_id__in=descendant_ids(
+                Department, company=company, identifier=department.pk
+            )
         )
     return list(
         scoped_printable_assets(user, company, queryset)
@@ -216,6 +230,32 @@ def _queue_assets(user, company, *, query=""):
 def _current_qr(asset):
     rows = getattr(asset, "active_qr_rows", ())
     return rows[0] if rows else None
+
+
+def _queue_filter_state(user, company, data):
+    form = LabelQueueFilterForm(data, actor=user, company=company)
+    valid = form.is_valid()
+    status = data.get("status") or "ready_to_print"
+    if status not in QUEUE_STATUSES:
+        status = "ready_to_print"
+    clean = form.cleaned_data if valid else {}
+    department = clean.get("department")
+    values = {
+        "status": status,
+        "q": clean.get("q", ""),
+        "department": str(department.pk) if department else "",
+        "page_size": clean.get("page_size") or 25,
+    }
+    selection_material = urlencode({key: values[key] for key in ("status", "q", "department")})
+    digest = hashlib.sha256(selection_material.encode()).hexdigest()
+    return {
+        "form": form,
+        "valid": valid,
+        "department": department,
+        "values": values,
+        "query": urlencode({key: value for key, value in values.items() if value}),
+        "selection_key": f"eam-labels:{company.pk}:{user.pk}:{digest if valid else 'invalid'}",
+    }
 
 
 def _batch_for_user(user, company, pk):
@@ -241,58 +281,47 @@ def label_queue(request):
         return login_response
     company = _company()
     _require_label_role(request.user)
-    selected_status = (
-        request.POST.get("status") if request.method == "POST" else request.GET.get("status")
-    ) or "ready_to_print"
-    if selected_status not in QUEUE_STATUSES:
-        selected_status = "ready_to_print"
-    query = (
-        request.POST.get("q") if request.method == "POST" else request.GET.get("q")
-    ) or ""
-    query = query.strip()[:200]
-    all_assets = _queue_assets(request.user, company, query=query)
-
-    rows = []
-    printable_assets = []
+    data = request.POST if request.method == "POST" else request.GET
+    state = _queue_filter_state(request.user, company, data)
+    selected_status = state["values"]["status"]
+    query = state["values"]["q"]
+    all_assets = (
+        _queue_assets(request.user, company, query=query, department=state["department"])
+        if state["valid"] else []
+    )
+    rows, printable_assets = [], []
+    counts = {status: 0 for status in QUEUE_STATUSES}
     for asset in all_assets:
-        qr_identity = _current_qr(asset)
-        if qr_identity is None:
+        qr = _current_qr(asset)
+        if qr is None:
             continue
-        if qr_identity.label_status in {"ready_to_print", "printed"}:
+        if qr.label_status in counts:
+            counts[qr.label_status] += 1
+        if qr.label_status in {"ready_to_print", "printed"}:
             printable_assets.append(asset)
-        if qr_identity.label_status == selected_status:
-            rows.append(
-                {
-                    "asset": asset,
-                    "qr_identity": qr_identity,
-                    "last_printed_at": qr_identity.last_printed_at,
-                    "selectable": qr_identity.label_status != "attached",
-                    "location_path": _location_path(asset.location),
-                }
-            )
-
-    page_number = (
-        request.POST.get("page") if request.method == "POST" else request.GET.get("page")
-    )
-    page_obj = Paginator(rows, 25).get_page(page_number)
-
-    form = LabelPrintForm(
-        request.POST or None,
-        assets=printable_assets,
-    )
-    if request.method == "POST" and form.is_valid():
-        selected_ids = form.cleaned_data["asset_ids"]
-        selected_assets = [
-            asset for asset in printable_assets if str(asset.pk) in selected_ids
-        ]
+        if qr.label_status == selected_status:
+            rows.append({
+                "asset": asset,
+                "qr_identity": qr,
+                "last_printed_at": qr.last_printed_at,
+                "selectable": qr.label_status != "attached",
+            })
+    page_obj = Paginator(rows, state["values"]["page_size"]).get_page(data.get("page"))
+    locations = LocationTree(company)
+    selected_ids = set(request.POST.getlist("asset_ids")) if request.method == "POST" else set()
+    for row in page_obj.object_list:
+        row["location_path"] = locations.path(row["asset"].location_id) or "—"
+        row["selected"] = str(row["asset"].pk) in selected_ids
+    form = LabelPrintForm(request.POST or None, assets=printable_assets)
+    if request.method == "POST" and state["valid"] and form.is_valid():
+        selected = set(form.cleaned_data["asset_ids"])
+        selected_assets = [asset for asset in printable_assets if str(asset.pk) in selected]
         try:
             batch = generate_print_batch(
                 actor=request.user,
                 assets=selected_assets,
                 idempotency_key=form.cleaned_data["idempotency_key"],
-                include_responsible_employee=form.cleaned_data[
-                    "include_responsible_employee"
-                ],
+                include_responsible_employee=form.cleaned_data["include_responsible_employee"],
                 include_location=form.cleaned_data["include_location"],
                 include_model=form.cleaned_data["include_model"],
                 explicit_reprint=form.cleaned_data["explicit_reprint"],
@@ -302,26 +331,24 @@ def label_queue(request):
             _service_error(form, exc)
         else:
             messages.success(request, f"打印批次 {batch.batch_code} 已记录并打开 A4 预览。")
-            return redirect("assets:label-batch-print", pk=batch.pk)
-
-    return render(
-        request,
-        "assets/qr_queue.html",
-        {
-            "form": form,
-            "rows": page_obj.object_list,
-            "page_obj": page_obj,
-            "pagination_query": urlencode(
-                {
-                    "status": selected_status,
-                    **({"q": query} if query else {}),
-                }
-            ),
-            "query": query,
-            "selected_status": selected_status,
-            "status_choices": AssetQrIdentity.LabelStatus.choices[1:],
-        },
-    )
+            destination = reverse("assets:label-batch-print", args=[batch.pk])
+            return redirect(destination + "?" + urlencode({"queue": state["query"]}))
+    tabs = [
+        {"label": label, "value": status, "count": counts[status],
+         "query": urlencode({**state["values"], "status": status})}
+        for status, label in AssetQrIdentity.LabelStatus.choices[1:]
+    ]
+    all_ids = [str(row["asset"].pk) for row in rows if row["selectable"]]
+    response = render(request, "assets/qr_queue.html", {
+        "form": form, "filter_form": state["form"], "filter_values": state["values"],
+        "rows": page_obj.object_list, "page_obj": page_obj, "pagination_query": state["query"],
+        "query": query, "selected_status": selected_status, "status_choices": AssetQrIdentity.LabelStatus.choices[1:],
+        "tabs": tabs, "selection_key": state["selection_key"], "all_filtered_count": len(all_ids),
+        "all_filtered_ids": all_ids if len(all_ids) <= MAX_BULK_ASSETS else [],
+        "can_select_filtered": 0 < len(all_ids) <= MAX_BULK_ASSETS,
+    })
+    response["Cache-Control"] = "private, no-store"
+    return response
 
 
 @require_http_methods(["GET"])
@@ -382,12 +409,22 @@ def label_batch_print(request, pk):
     )
     if not items or any(not _item_has_current_printable_identity(item) for item in items):
         raise PermissionDenied("批次含已失效或非当前二维码身份，不得继续打印。")
+    queue_query = request.GET.get("queue", "")
+    queue_state = (
+        _queue_filter_state(request.user, company, QueryDict(queue_query))
+        if queue_query and len(queue_query) <= 8192 else None
+    )
+    if queue_state and not queue_state["valid"]:
+        queue_state = None
     return render(
         request,
         "assets/label_print.html",
         {
             "batch": batch,
             "items": items,
+            "queue_url": reverse("assets:label-queue") + ("?" + queue_state["query"] if queue_state else ""),
+            "selection_key": queue_state["selection_key"] if queue_state else "",
+            "cleared_asset_ids": [str(item.qr_identity.asset_id) for item in items],
         },
     )
 

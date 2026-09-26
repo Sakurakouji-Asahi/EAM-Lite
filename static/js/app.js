@@ -29,6 +29,24 @@
     document.querySelectorAll("form[data-eam-submitting]").forEach(resetSubmittingState);
   });
 
+  document.querySelectorAll("[data-page-jump]").forEach(container => {
+    const input = container.querySelector("[data-page-jump-value]");
+    const button = container.querySelector("[data-page-jump-go]");
+    if (!input || !button) return;
+    const go = () => {
+      if (!input.reportValidity()) return;
+      const url = new URL(window.location.href);
+      if (container.dataset.pageQuery) url.search = container.dataset.pageQuery;
+      url.searchParams.set("page", String(Number(input.value)));
+      window.location.assign(url.pathname + url.search);
+    };
+    input.disabled = button.disabled = false;
+    button.addEventListener("click", go);
+    input.addEventListener("keydown", event => {
+      if (event.key === "Enter") { event.preventDefault(); go(); }
+    });
+  });
+
   document.querySelectorAll("[data-menu-search]").forEach((input) => {
     const navigation = input.closest("nav");
     const links = Array.from(navigation.querySelectorAll("a.app-nav-link"));

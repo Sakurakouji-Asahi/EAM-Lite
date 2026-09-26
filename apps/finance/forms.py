@@ -41,7 +41,7 @@ def _bootstrap_widgets(form):
 
 
 class PendingFinanceFilterForm(forms.Form):
-    q = forms.CharField(label="资产编号或名称", max_length=200, required=False)
+    q = forms.CharField(label="资产编号、设备编号或名称", max_length=200, required=False)
     department = forms.ModelChoiceField(label="部门（含下属班组）", queryset=None, required=False)
     data_status = forms.ChoiceField(label="资料状态", required=False, choices=(
         ("", "全部待确认"), ("not_entered", "尚未填写财务资料"), ("saved", "已保存财务资料"),

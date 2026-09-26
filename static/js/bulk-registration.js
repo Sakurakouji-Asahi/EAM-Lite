@@ -21,11 +21,13 @@
   save();
   const form = document.getElementById("bulk-selection-form");
   if (!form) return;
+  const fieldName = form.dataset.selectionField || "assets";
   const all = document.getElementById("bulk-select-all");
-  const rows = Array.from(form.querySelectorAll('input[type="checkbox"][name="assets"]'));
+  const rows = Array.from(form.querySelectorAll('input[type="checkbox"]')).filter(row => row.name === fieldName);
   rows.filter(row => row.checked).forEach(row => selected.add(row.value));
   const count = document.getElementById("bulk-selected-count");
   const error = document.getElementById("bulk-selection-error");
+  if (!all || !count || !error) return;
   const showError = message => { error.textContent = message; error.hidden = !message; };
   const sync = () => {
     save();
@@ -53,6 +55,13 @@
   document.getElementById("bulk-clear-selection").addEventListener("click", () => {
     selected.clear(); showError(""); sync();
   });
+  const filtered = document.getElementById("bulk-filtered-ids");
+  const selectFiltered = document.getElementById("bulk-select-filtered");
+  if (filtered && selectFiltered) selectFiltered.addEventListener("click", () => {
+    const ids = JSON.parse(filtered.textContent);
+    if (!ids.length || ids.length > maxSelection) { showError("请缩小筛选范围，每批最多200项。"); return; }
+    selected = new Set(ids); showError(""); sync();
+  });
   form.addEventListener("submit", event => {
     if (form.dataset.filteredSelection === "true" &&
         event.submitter?.name === "selection_scope" && event.submitter.value === "filtered") return;
@@ -64,7 +73,7 @@
     selected.forEach(id => {
       if (!visible.has(id)) {
         const field = document.createElement("input");
-        field.type = "hidden"; field.name = "assets"; field.value = id;
+        field.type = "hidden"; field.name = fieldName; field.value = id;
         field.dataset.crossPageSelection = "true"; form.appendChild(field);
       }
     });
