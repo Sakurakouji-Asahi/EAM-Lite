@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}待确认折旧 - EAM-Lite{% endblock %}
 {% block content %}
 <header class="app-page-header">
@@ -12,22 +13,36 @@
     <div class="col-12 col-md-3 d-flex gap-2"><button class="btn btn-primary" type="submit">查询</button><a class="btn btn-outline-secondary" href="{% url 'finance:pending-list' %}">清除筛选</a></div>
   </div>
 </form>
+{% if can_manage %}
+<div id="bulk-workspace" data-selection-key="{{ selection_key }}">
+<form method="post" action="{% url 'finance:bulk-confirmation' %}" id="bulk-selection-form" data-filtered-selection="true">{% csrf_token %}
+<input type="hidden" name="action" value="preview">
+{% for key,value in bulk_filters.items %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+<div class="card card-body mb-3">
+<strong class="mb-2">批量财务确认</strong>
+<div class="d-flex flex-wrap align-items-center gap-2"><span id="bulk-selected-count" class="small" aria-live="polite"></span><button class="btn btn-sm btn-outline-secondary" type="button" id="bulk-clear-selection">清除选择</button><button class="btn btn-primary" type="submit">核对所选资产</button><button class="btn btn-outline-primary" type="submit" name="selection_scope" value="filtered" {% if not page_obj.paginator.count %}disabled{% endif %}>核对全部筛选结果（{{ page_obj.paginator.count }} 项）</button></div>
+<p class="small text-secondary mt-2 mb-0">每批最多 200 项。先核对已保存的会计认定、金额和折旧参数，再统一确认。</p>
+<div id="bulk-selection-error" class="text-danger mt-2" role="alert" hidden></div>
+</div>
+{% endif %}
 <div class="table-responsive shadow-sm">
   <table class="table table-hover mb-0">
-    <thead><tr><th>资产编号</th><th>名称</th><th>实物分类</th><th>部门</th><th>责任人</th><th>购置日期</th><th>正式建档时间</th><th>待补基础资料</th><th>操作</th></tr></thead>
+    <thead><tr>{% if can_manage %}<th><input type="checkbox" id="bulk-select-all" aria-label="选择本页全部资产"></th>{% endif %}<th>资产编号</th><th>名称</th><th>实物分类</th><th>部门</th><th>责任人</th><th>购置日期</th><th>正式建档时间</th><th>待补基础资料</th><th>操作</th></tr></thead>
     <tbody>
       {% for asset in assets %}
       <tr>
+        {% if can_manage %}<td><input type="checkbox" name="assets" value="{{ asset.pk }}" aria-label="选择 {{ asset.asset_name }}"></td>{% endif %}
         <td>{{ asset.asset_code|default:asset.draft_number }}</td><td>{{ asset.asset_name }}</td><td>{{ asset.category }}</td><td>{{ asset.department|default:"—" }}</td><td>{{ asset.responsible_employee|default:"—" }}</td><td>{{ asset.acquisition_date|date:"Y-m-d"|default:"—" }}</td>
         <td>{% if asset.registration %}{{ asset.registration.registered_at|date:"Y-m-d H:i" }}{% else %}尚未正式建档{% endif %}</td>
         <td>{% if asset.finance_missing_fields %}<span class="text-warning-emphasis">{{ asset.finance_missing_fields|join:"、" }}</span>{% else %}待财务复核{% endif %}</td>
         <td>{% if can_manage %}<a class="btn btn-sm btn-primary text-nowrap" href="{% url 'finance:finance-confirm' asset.pk %}">确认财务与折旧</a>{% else %}<a class="btn btn-sm btn-outline-primary text-nowrap" href="{% url 'assets:asset-detail' asset.pk %}">查看实物资料</a>{% endif %}</td>
       </tr>
       {% empty %}
-      <tr><td colspan="9"><div class="app-empty-state"><strong>{% if pagination_query or filter_form.errors %}没有符合条件的待确认资产{% else %}当前没有待确认折旧的资产{% endif %}</strong><span>已建立但尚未确认折旧的资产会出现在这里。</span><a class="btn btn-sm btn-outline-primary" href="{% url 'assets:asset-list' %}">查看资产总账</a></div></td></tr>
+      <tr><td colspan="{% if can_manage %}10{% else %}9{% endif %}"><div class="app-empty-state"><strong>{% if pagination_query or filter_form.errors %}没有符合条件的待确认资产{% else %}当前没有待确认折旧的资产{% endif %}</strong><span>已建立但尚未确认折旧的资产会出现在这里。</span><a class="btn btn-sm btn-outline-primary" href="{% url 'assets:asset-list' %}">查看资产总账</a></div></td></tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
+{% if can_manage %}</form></div><script src="{% static 'js/bulk-registration.js' %}" defer></script>{% endif %}
 {% include "_pagination.html" %}
 {% endblock %}

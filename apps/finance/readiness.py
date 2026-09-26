@@ -36,6 +36,21 @@ def pending_finance_assets(queryset):
     )
 
 
+def filter_pending_finance_assets(queryset, filters):
+    """Shared selection rules for the paginated list and all-matching preview."""
+    queryset = pending_finance_assets(queryset)
+    if filters.get("q"):
+        queryset = queryset.filter(Q(asset_code__icontains=filters["q"]) | Q(asset_name__icontains=filters["q"]))
+    if filters.get("department"):
+        queryset = queryset.filter(department=filters["department"])
+    if filters.get("data_status"):
+        queryset = queryset.filter(finance__isnull=filters["data_status"] == "not_entered")
+    if filters.get("import_batch"):
+        ids = list(filters["import_batch"].rows.filter(created_object_type="Asset").values_list("created_object_id",flat=True))
+        queryset = queryset.filter(pk__in=ids)
+    return queryset
+
+
 def finance_confirmation_pending(asset):
     if asset.record_status != "active":
         return False

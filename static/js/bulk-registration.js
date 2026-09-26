@@ -54,6 +54,8 @@
     selected.clear(); showError(""); sync();
   });
   form.addEventListener("submit", event => {
+    if (form.dataset.filteredSelection === "true" &&
+        event.submitter?.name === "selection_scope" && event.submitter.value === "filtered") return;
     if (!selected.size || selected.size > maxSelection) {
       event.preventDefault(); showError("请先选择1—200件资产。"); return;
     }

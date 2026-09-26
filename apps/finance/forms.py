@@ -46,13 +46,17 @@ class PendingFinanceFilterForm(forms.Form):
     data_status = forms.ChoiceField(label="资料状态", required=False, choices=(
         ("", "全部待确认"), ("not_entered", "尚未填写财务资料"), ("saved", "已保存财务资料"),
     ))
+    import_batch = forms.ModelChoiceField(label="导入批次", queryset=None, required=False)
 
     def __init__(self, *args, company, **kwargs):
-        from apps.masterdata.models import Department
+        from apps.masterdata.models import Department, ImportBatch
 
         super().__init__(*args, **kwargs)
         self.fields["department"].queryset = Department.objects.filter(company=company).order_by("normalized_code")
         self.fields["department"].empty_label = "全部部门"
+        self.fields["import_batch"].queryset = ImportBatch.objects.filter(
+            company=company,import_type="asset_initialization",status="confirmed").order_by("-uploaded_at")
+        self.fields["import_batch"].empty_label = "全部来源"
         _bootstrap_widgets(self)
 
 

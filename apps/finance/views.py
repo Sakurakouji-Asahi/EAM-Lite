@@ -16,7 +16,8 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 
 from apps.assets.models import Asset
-from apps.finance.readiness import pending_finance_assets, missing_finance_base_fields
+from apps.finance.readiness import pending_finance_assets, missing_finance_base_fields, filter_pending_finance_assets
+from apps.finance.confirmation_initial import finance_confirmation_initial as _finance_initial
 from apps.finance.forms import (
     PendingFinanceFilterForm,
     AssetCategoryPolicyForm,
@@ -117,84 +118,19 @@ def _pending_asset(company, pk):
     )
 
 
-def _finance_initial(asset):
-    finance = AssetFinance.objects.filter(asset=asset).first()
-    draft_profile = (
-        asset.depreciation_profiles.select_related("depreciation_policy")
-        .filter(status="draft")
-        .order_by("version")
-        .first()
-    )
-    initial = {
-        "idempotency_key": uuid.uuid4().hex,
-        "code_effective_date": timezone.localdate(),
-        "opening_actual_accumulated_depreciation": Decimal("0.00"),
-        "opening_impairment": Decimal("0.00"),
-    }
-    if finance is not None:
-        for field in (
-            "accounting_treatment",
-            "accounting_treatment_reason",
-            "original_cost",
-            "fixed_asset_category",
-            "capitalization_date",
-            "finance_remark",
-        ):
-            initial[field] = getattr(finance, field)
-        initial["opening_impairment"] = finance.impairment_balance_cache
-    if draft_profile is not None:
-        finance_opening_impairment = (
-            finance.original_cost
-            - draft_profile.opening_actual_accumulated_depreciation
-            - draft_profile.opening_book_value
-            if finance is not None
-            else Decimal("0.00")
-        )
-        initial.update(
-            {
-                "depreciation_policy": draft_profile.depreciation_policy,
-                "useful_life_months": draft_profile.useful_life_months,
-                "salvage_mode": draft_profile.salvage_mode,
-                "salvage_rate": draft_profile.salvage_rate,
-                "salvage_amount": draft_profile.salvage_amount,
-                "method": draft_profile.method,
-                "posting_period": draft_profile.posting_period,
-                "start_rule": draft_profile.start_rule,
-                "stop_rule": draft_profile.stop_rule,
-                "specified_start_date": draft_profile.start_date,
-                "actual_continuation_date": draft_profile.actual_continuation_date,
-                "expected_total_units": draft_profile.expected_total_units,
-                "work_unit": draft_profile.work_unit,
-                "annual_posting_month": draft_profile.annual_posting_month,
-                "opening_actual_accumulated_depreciation": (
-                    draft_profile.opening_actual_accumulated_depreciation
-                ),
-                "opening_impairment": finance_opening_impairment,
-            }
-        )
-    return initial
-
-
 @login_required
 def pending_finance_list(request):
     require_view_finance(request.user)
     company = _company()
     form = PendingFinanceFilterForm(request.GET, company=company)
-    assets = pending_finance_assets(scoped_finance_assets(request.user, company)).select_related(
+    assets = scoped_finance_assets(request.user, company).select_related(
         "category", "department", "responsible_employee", "finance", "registration"
     ).order_by("submitted_at", "created_at", "pk")
     query = {}
     if form.is_valid():
         data = form.cleaned_data
-        if data["q"]:
-            assets = assets.filter(Q(asset_code__icontains=data["q"]) | Q(asset_name__icontains=data["q"]))
-            query["q"] = data["q"]
-        if data["department"]:
-            assets = assets.filter(department=data["department"])
-            query["department"] = data["department"].pk
-        if data["data_status"]:
-            assets = assets.filter(finance__isnull=data["data_status"] == "not_entered")
-            query["data_status"] = data["data_status"]
+        assets = filter_pending_finance_assets(assets,data)
+        query = {key:getattr(value,"pk",value) for key,value in data.items() if value}
     else:
         assets = assets.none()
     page = Paginator(assets, 25).get_page(request.GET.get("page"))
@@ -209,6 +145,8 @@ def pending_finance_list(request):
             "can_manage": can_manage_finance(request.user),
             "filter_form": form,
             "pagination_query": urlencode(query),
+            "selection_key": f"eam-bulk-finance:{company.pk}:{request.user.pk}:{query.get('import_batch','')}",
+            "bulk_filters": query,
         },
     )
 

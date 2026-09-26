@@ -7,6 +7,7 @@
 {{ cleared_asset_ids|json_script:"bulk-cleared-ids" }}
 {% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
 {% if result %}
+{% if can_manage_finance %}<p><a class="btn btn-outline-primary" href="{% url 'finance:pending-list' %}{% if import_batch %}?import_batch={{ import_batch|urlencode }}{% endif %}">前往财务待办批量确认</a></p>{% endif %}
 <section class="card mb-3"><div class="card-header">办理结果：成功 {{ result.success_count }} 件，未完成 {{ result.error_count }} 件</div><div class="list-group list-group-flush">
 {% for row in result.rows %}<div class="list-group-item">{% if row.asset %}<a href="{% url 'assets:asset-detail' row.asset.pk %}">{{ row.asset.asset_code|default:row.asset.draft_number }} · {{ row.asset.asset_name }}</a>{% endif %} {% if row.error %}<span class="text-danger">{{ row.error }}</span>{% else %}<span class="text-success">已建档</span>{% endif %}</div>{% endfor %}</div></section>
 {% endif %}

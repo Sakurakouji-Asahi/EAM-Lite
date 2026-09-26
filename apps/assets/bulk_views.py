@@ -11,6 +11,7 @@ from apps.assets.draft_assignment import preview_draft_assignment, confirm_draft
 from apps.assets.permissions import can_create_asset_draft
 from apps.assets.access import asset_company_for_request
 from apps.masterdata.permissions import role_names_for
+from apps.finance.permissions import can_manage_finance
 
 
 @login_required
@@ -67,7 +68,7 @@ def bulk_registration(request):
         selected.update(context["assignment_result"]["asset_ids"])
     for asset in page:
         asset.bulk_selected = str(asset.pk) in selected
-    context.update({"page": page, "query": query, "import_batch": batch_id,
+    context.update({"page": page, "query": query, "import_batch": batch_id,"can_manage_finance":can_manage_finance(request.user),
         "selection_key": f"eam-bulk:{company.pk}:{request.user.pk}:{batch_id}"})
     response = render(request, "assets/bulk_registration.html", context)
     response["Cache-Control"] = "private, no-store"

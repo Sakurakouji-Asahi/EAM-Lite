@@ -1,12 +1,14 @@
 from django.urls import path
 
 from apps.finance import views
+from apps.finance.bulk_views import bulk_finance_confirmation
 
 
 app_name = "finance"
 
 urlpatterns = [
     path("pending/", views.pending_finance_list, name="pending-list"),
+    path("pending/bulk/", bulk_finance_confirmation, name="bulk-confirmation"),
     path("pending/<uuid:pk>/", views.finance_confirm, name="finance-confirm"),
     path("pending/<uuid:pk>/preview/", views.finance_preview, name="finance-preview"),
     path("assets/<uuid:pk>/", views.asset_finance_detail, name="asset-finance-detail"),

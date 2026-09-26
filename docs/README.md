@@ -1,6 +1,8 @@
 # 文档定位与当前状态
 
-更新：2026-09-24。当前协作规则是 [AGENTS.md](../AGENTS.md)，开发入口是 [README-CODEX.md](../README-CODEX.md)。本页用于识别材料性质，不新增业务要求。
+更新：2026-09-26。当前协作规则是 [AGENTS.md](../AGENTS.md)，开发入口是 [README-CODEX.md](../README-CODEX.md)。本页用于识别材料性质，不新增业务要求。
+
+2026-09-26：财务待办支持跨页多选及按筛选结果一次核对、批量确认，见 [批量财务确认](Bulk-Finance-Confirmation.md)。各项按已保存的金额和折旧参数办理，保留单项入口与原有权限。
 
 登记入口按“逐件资产”和“数量物品”区分。常用档案新增时可留空自动编号，也可手工填写，具体见 [物品管理方式与档案编号](Item-Management-and-Numbering.md)。
 
