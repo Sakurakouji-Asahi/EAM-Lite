@@ -2,50 +2,142 @@
 {% load static %}
 {% block title %}批量建档 - EAM-Lite{% endblock %}
 {% block content %}
-<header class="app-page-header"><div><h1 class="h3 mb-1">批量建档</h1><p class="text-secondary mb-0">选择草稿，补充并核对资料后建立正式编号。财务资料另行确认。</p></div><a class="btn btn-outline-secondary" href="{% url 'assets:asset-list' %}">返回台账</a></header>
+<header class="app-page-header">
+  <div><h1 class="h3 mb-1">批量建档</h1><p class="text-secondary mb-0">选择草稿，补充并核对资料后建立正式编号。财务资料另行确认。</p></div>
+  <a class="btn btn-outline-secondary" href="{% url 'assets:asset-list' %}">返回台账</a>
+</header>
 <div id="bulk-workspace" data-selection-key="{{ selection_key }}">
-{{ cleared_asset_ids|json_script:"bulk-cleared-ids" }}
-{% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
-{% if result %}
-{% if can_manage_finance %}<p><a class="btn btn-outline-primary" href="{% url 'finance:pending-list' %}{% if import_batch %}?import_batch={{ import_batch|urlencode }}{% endif %}">前往财务待办批量确认</a></p>{% endif %}
-<section class="card mb-3"><div class="card-header">办理结果：成功 {{ result.success_count }} 件，未完成 {{ result.error_count }} 件</div><div class="list-group list-group-flush">
-{% for row in result.rows %}<div class="list-group-item">{% if row.asset %}<a href="{% url 'assets:asset-detail' row.asset.pk %}">{{ row.asset.asset_code|default:row.asset.draft_number }} · {{ row.asset.asset_name }}</a>{% endif %} {% if row.error %}<span class="text-danger">{{ row.error }}</span>{% else %}<span class="text-success">已建档</span>{% endif %}</div>{% endfor %}</div></section>
-{% endif %}
-{% if assignment_result %}<div class="alert alert-success" role="status">{{ assignment_result.count }} 件草稿的补资料请求已完成。可继续核对并办理建档。</div>{% endif %}
-{% if assignment_preview %}
-<section class="card mb-3">
-  <div class="card-header">核对补充资料 · {{ assignment_preview.count }} 件草稿</div>
-  <div class="card-body"><p class="mb-0">补充说明：{{ assignment_preview.reason }}</p></div>
-  <div class="table-responsive"><table class="table mb-0"><thead><tr><th>草稿</th><th>修改前 → 修改后</th><th>核对结果</th></tr></thead><tbody>
-    {% for row in assignment_preview.rows %}<tr><td>{{ row.asset.draft_number }} · {{ row.asset.asset_name }}</td><td>{% for change in row.changes %}<div>{{ change.label }}：{{ change.before }} → {{ change.after }}</div>{% endfor %}</td><td>{% if row.error %}<span class="text-danger">{{ row.error }}</span>{% else %}可保存{% endif %}</td></tr>{% endfor %}
-  </tbody></table></div>
-  {% if assignment_preview.token %}<form method="post" class="card-body">{% csrf_token %}<input type="hidden" name="action" value="assignment_confirm"><input type="hidden" name="token" value="{{ assignment_preview.token }}"><button type="submit" class="btn btn-primary">确认补充 {{ assignment_preview.count }} 件草稿</button><span class="small text-secondary ms-2">确认后仍为草稿；预览后资料变化时，本批不保存。</span></form>
-  {% else %}<div class="card-body text-danger">有 {{ assignment_preview.error_count }} 件未通过核对，本批尚未保存。请调整资料后重新预览。</div>{% endif %}
-</section>
-{% endif %}
-{% if preview %}
-<section class="card mb-3"><div class="card-header">核对结果：可建档 {{ preview.ready_count }} 件，需补充资料 {{ preview.error_count }} 件</div><div class="table-responsive"><table class="table mb-0"><thead><tr><th>资产</th><th>分类／首次属性</th><th>部门／责任人</th><th>位置</th><th>核对结果</th></tr></thead><tbody>
-{% for row in preview.rows %}<tr><td>{{ row.asset.draft_number }} · {{ row.asset.asset_name }}</td><td>{{ row.asset.category.name }} / {{ row.asset.management_attribute }}</td><td>{{ row.asset.department.name }} / {{ row.asset.responsible_employee.name }}</td><td>{{ row.asset.location.name }}</td><td>{% if row.error %}<span class="text-danger">{{ row.error }}</span> <a href="{% url 'assets:asset-detail' row.asset.pk %}">补充资料</a>{% else %}可建档{% endif %}</td></tr>{% endfor %}
-</tbody></table></div>{% if preview.ready_count %}<form method="post" class="card-body">{% csrf_token %}<input type="hidden" name="action" value="confirm"><input type="hidden" name="token" value="{{ preview.token }}"><button type="submit" class="btn btn-primary">确认建档 {{ preview.ready_count }} 件</button><span class="small text-secondary ms-2">仅办理通过核对的资产；预览后资料发生变化时需重新核对。</span></form>{% endif %}</section>
-{% endif %}
-{% if not preview and not assignment_preview %}
-<form method="get" class="d-flex gap-2 mb-3"><input type="hidden" name="import_batch" value="{{ import_batch }}"><label class="visually-hidden" for="bulk-search">搜索待建档资产</label><input class="form-control" id="bulk-search" name="q" value="{{ query }}" placeholder="资产名称、型号、责任人"><button class="btn btn-outline-primary">查询</button></form>
-<form method="post" class="card" id="bulk-selection-form">{% csrf_token %}
-  <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2"><span>待建档资产 · {{ page.paginator.count }} 件</span><div class="d-flex flex-wrap align-items-center gap-2"><span id="bulk-selected-count" class="small" aria-live="polite"></span><button class="btn btn-sm btn-outline-secondary" type="button" id="bulk-clear-selection">清除选择</button><button class="btn btn-primary" type="submit" name="action" value="preview">核对所选资产</button></div></div>
-  <div id="bulk-selection-error" class="alert alert-danger m-3" role="alert" hidden></div>
-  <details class="card-body border-bottom" {% if assignment_form.errors %}open{% endif %}><summary>批量补充草稿资料</summary>
-    <p class="small text-secondary mt-2">只修改勾选的未建档草稿。留空的字段保持原值；更换部门时请同时核对责任人。</p>
-    {% for error in assignment_form.non_field_errors %}<div class="text-danger" role="alert">{{ error }}</div>{% endfor %}
-    <div class="row g-3 mt-0">{% for field in assignment_form %}<div class="col-12 col-md-6 col-xl-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% for error in field.errors %}<div class="text-danger small" role="alert">{{ error }}</div>{% endfor %}</div>{% endfor %}</div>
-    <button class="btn btn-outline-primary mt-3" type="submit" name="action" value="assignment_preview">预览所选草稿的资料变更</button>
-  </details>
-  <div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th><input type="checkbox" id="bulk-select-all" aria-label="选择本页全部资产"></th><th>草稿编号</th><th>资产名称</th><th>分类</th><th>部门</th><th>责任人</th><th>位置</th></tr></thead><tbody>
-  {% for asset in page %}<tr><td><input type="checkbox" name="assets" value="{{ asset.pk }}" aria-label="选择 {{ asset.asset_name }}" {% if asset.bulk_selected %}checked{% endif %}></td><td>{{ asset.draft_number }}</td><td><a href="{% url 'assets:asset-detail' asset.pk %}">{{ asset.asset_name }}</a></td><td>{{ asset.category.name }}</td><td>{{ asset.department.name|default:"未填写" }}</td><td>{{ asset.responsible_employee.name|default:"未填写" }}</td><td>{{ asset.location.name|default:"未填写" }}</td></tr>{% empty %}<tr><td colspan="7">没有符合条件的待建档资产。</td></tr>{% endfor %}
-  </tbody></table></div>
-</form>
-{% if page.paginator.num_pages > 1 %}<nav class="d-flex gap-3 my-3" aria-label="待建档资产分页">{% if page.has_previous %}<a href="?q={{ query|urlencode }}&amp;import_batch={{ import_batch|urlencode }}&amp;page={{ page.previous_page_number }}">上一页</a>{% endif %}<span>第 {{ page.number }} / {{ page.paginator.num_pages }} 页</span>{% if page.has_next %}<a href="?q={{ query|urlencode }}&amp;import_batch={{ import_batch|urlencode }}&amp;page={{ page.next_page_number }}">下一页</a>{% endif %}</nav>{% endif %}
-{% else %}<p><a class="btn btn-outline-secondary" href="{% url 'assets:bulk-registration' %}?q={{ query|urlencode }}&amp;import_batch={{ import_batch|urlencode }}">返回选择与补充资料</a></p>{% endif %}
+  {{ cleared_asset_ids|json_script:"bulk-cleared-ids" }}
+  {{ all_filtered_ids|json_script:"bulk-filtered-ids" }}
+  {% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
+  {% for field in filter_form.hidden_fields %}{% for error in field.errors %}<div class="alert alert-danger">{{ field.label }}：{{ error }}</div>{% endfor %}{% endfor %}
+
+  {% if result %}
+    {% if can_manage_finance %}<p><a class="btn btn-outline-primary" href="{% url 'finance:pending-list' %}{% if import_batch %}?import_batch={{ import_batch|urlencode }}{% endif %}">前往财务待办批量确认</a></p>{% endif %}
+    <section class="card mb-3">
+      <div class="card-header">办理结果：成功 {{ result.success_count }} 件，未完成 {{ result.error_count }} 件</div>
+      <div class="list-group list-group-flush">
+        {% for row in result.rows %}
+          <div class="list-group-item">
+            {% if row.asset %}<a href="{% url 'assets:asset-detail' row.asset.pk %}">{{ row.asset.asset_code|default:row.asset.draft_number }} · {{ row.asset.asset_name }}</a>{% endif %}
+            {% if row.error %}<span class="text-danger">{{ row.error }}</span>{% else %}<span class="text-success">已建档</span>{% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    </section>
+  {% endif %}
+  {% if assignment_result %}
+    <div class="alert alert-success" role="status">{{ assignment_result.count }} 件草稿的补资料请求已完成。{% if preview %}下方已核对建档条件，请检查后确认建档。{% else %}可继续核对并办理建档。{% endif %}</div>
+  {% endif %}
+
+  {% if assignment_preview %}
+    <section class="card mb-3">
+      <div class="card-header">核对补充资料 · {{ assignment_preview.count }} 件草稿</div>
+      <div class="card-body"><p class="mb-0">补充说明：{{ assignment_preview.reason }}</p></div>
+      <div class="table-responsive app-work-table">
+        <table class="table mb-0">
+          <thead><tr><th>草稿</th><th>修改前 → 修改后</th><th>核对结果</th></tr></thead>
+          <tbody>{% for row in assignment_preview.rows %}
+            <tr><td>{{ row.asset.draft_number }} · {{ row.asset.asset_name }}</td>
+              <td>{% for change in row.changes %}<div>{{ change.label }}：{{ change.before }} → {{ change.after }}</div>{% endfor %}</td>
+              <td>{% if row.error %}<span class="text-danger">{{ row.error }}</span>{% else %}可保存{% endif %}</td></tr>
+          {% endfor %}</tbody>
+        </table>
+      </div>
+      {% if assignment_preview.token %}
+        <form method="post" action="{{ selection_url }}" class="card-body">
+          {% csrf_token %}<input type="hidden" name="action" value="assignment_confirm"><input type="hidden" name="token" value="{{ assignment_preview.token }}">
+          <button type="submit" class="btn btn-primary">确认补充 {{ assignment_preview.count }} 件草稿</button>
+          <span class="small text-secondary ms-2">确认后仍为草稿；预览后资料变化时，本批不保存。</span>
+        </form>
+      {% else %}
+        <div class="card-body text-danger">有 {{ assignment_preview.error_count }} 件未通过核对，本批尚未保存。请调整资料后重新预览。</div>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  {% if preview %}
+    <section class="card mb-3">
+      <div class="card-header">核对结果：可建档 {{ preview.ready_count }} 件，需补充资料 {{ preview.error_count }} 件</div>
+      <div class="table-responsive app-work-table">
+        <table class="table mb-0">
+          <thead><tr><th>资产</th><th>分类／首次属性</th><th>部门／责任人</th><th>位置</th><th>核对结果</th></tr></thead>
+          <tbody>{% for row in preview.rows %}
+            <tr><td>{{ row.asset.draft_number }} · {{ row.asset.asset_name }}{% if row.asset.equipment_number %}<br><small>设备编号：{{ row.asset.equipment_number }}</small>{% endif %}</td>
+              <td>{{ row.asset.category.name }} / {{ row.asset.management_attribute }}</td>
+              <td>{{ row.asset.department.name }} / {{ row.asset.responsible_employee.name }}</td>
+              <td>{{ row.asset.bulk_location_path|default:"未填写" }}</td>
+              <td>{% if row.error %}<span class="text-danger">{{ row.error }}</span> <a href="{% url 'assets:asset-detail' row.asset.pk %}">补充资料</a>{% else %}可建档{% endif %}</td></tr>
+          {% endfor %}</tbody>
+        </table>
+      </div>
+      {% if preview.ready_count %}
+        <form method="post" action="{{ selection_url }}" class="card-body">
+          {% csrf_token %}<input type="hidden" name="action" value="confirm"><input type="hidden" name="token" value="{{ preview.token }}">
+          <button type="submit" class="btn btn-primary">确认建档 {{ preview.ready_count }} 件</button>
+          <span class="small text-secondary ms-2">仅办理通过核对的资产；预览后资料发生变化时需重新核对。</span>
+        </form>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  {% if not preview and not assignment_preview %}
+    <form method="get" class="card card-body mb-3 app-filter-card">
+      {% for field in filter_form.hidden_fields %}{{ field }}{% endfor %}
+      <div class="row g-3 align-items-end">
+        {% for field in filter_form.visible_fields %}
+          <div class="{% if field.name == 'q' %}col-12 col-md-5{% elif field.name == 'department' %}col-12 col-md-3{% else %}col-6 col-md-2{% endif %}">
+            <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}
+            {% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}
+          </div>
+        {% endfor %}
+        <div class="col-6 col-md-2 d-flex gap-2"><button type="submit" class="btn btn-primary">查询</button><a class="btn btn-outline-secondary" href="{{ clear_url }}">清除</a></div>
+      </div>
+    </form>
+    <form method="post" action="{{ selection_url }}" class="card" id="bulk-selection-form">
+      {% csrf_token %}
+      <div class="card-header d-flex flex-wrap align-items-center gap-2">
+        <strong>待建档资产 · {{ page.paginator.count }} 件</strong>
+        <span id="bulk-selected-count" class="small" aria-live="polite"></span>
+        <button class="btn btn-sm btn-outline-secondary" type="button" id="bulk-clear-selection">清除选择</button>
+        <button class="btn btn-sm btn-outline-primary" type="button" id="bulk-select-filtered" {% if not can_select_filtered %}disabled{% endif %}>选中全部筛选结果（{{ all_filtered_count }} 项）</button>
+        <button class="btn btn-primary ms-auto" type="submit" name="action" value="preview">核对所选资产</button>
+      </div>
+      {% if all_filtered_count > 200 %}<p class="small text-secondary mx-3 mt-3 mb-0">当前结果超过 200 项，请缩小筛选范围或勾选其中一批办理。</p>{% endif %}
+      <div id="bulk-selection-error" class="alert alert-danger m-3" role="alert" hidden></div>
+      <details class="card-body border-bottom" {% if assignment_form.errors %}open{% endif %}>
+        <summary>批量补充草稿资料</summary>
+        <p class="small text-secondary mt-2">只修改勾选的未建档草稿。留空的字段保持原值；更换部门时请同时核对责任人。</p>
+        {% for error in assignment_form.non_field_errors %}<div class="text-danger" role="alert">{{ error }}</div>{% endfor %}
+        <div class="row g-3 mt-0">
+          {% for field in assignment_form %}
+            <div class="col-12 col-md-6 col-xl-3">
+              <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}
+              {% for error in field.errors %}<div class="text-danger small" role="alert">{{ error }}</div>{% endfor %}
+            </div>
+          {% endfor %}
+        </div>
+        <button class="btn btn-outline-primary mt-3" type="submit" name="action" value="assignment_preview">预览所选草稿的资料变更</button>
+      </details>
+      <div class="table-responsive app-work-table">
+        <table class="table align-middle mb-0">
+          <thead><tr><th><input type="checkbox" id="bulk-select-all" aria-label="选择本页全部资产"></th><th>草稿号 / 名称</th><th>设备编号 / 型号</th><th>分类</th><th>部门 / 责任人</th><th>位置</th></tr></thead>
+          <tbody>{% for asset in page %}
+            <tr><td><input class="form-check-input" type="checkbox" name="assets" value="{{ asset.pk }}" aria-label="选择 {{ asset.asset_name }}" {% if asset.bulk_selected %}checked{% endif %}></td>
+              <td><small>{{ asset.draft_number }}</small><br><a href="{% url 'assets:asset-detail' asset.pk %}">{{ asset.asset_name }}</a></td>
+              <td>{{ asset.equipment_number|default:"—" }}<br><small>{{ asset.model|default:"—" }}</small></td>
+              <td>{{ asset.category.name }}</td>
+              <td>{{ asset.department.name|default:"未填写" }}<br><small>{{ asset.responsible_employee.name|default:"未填写" }}</small></td>
+              <td>{{ asset.bulk_location_path|default:"未填写" }}</td></tr>
+          {% empty %}<tr><td colspan="6"><div class="app-empty-state"><strong>没有符合条件的待建档资产</strong><span>可调整筛选条件；已经建档的资产请在台账中查看。</span></div></td></tr>{% endfor %}</tbody>
+        </table>
+      </div>
+      <div class="card-body border-top py-2">{% include "_pagination.html" %}</div>
+    </form>
+  {% else %}
+    <p><a class="btn btn-outline-secondary" href="{{ selection_url }}">返回选择与补充资料</a></p>
+  {% endif %}
 </div>
 <script src="{% static 'js/assignment-forms.js' %}" defer></script>
-<script src="{% static 'js/bulk-registration.js' %}" defer></script>
+<script src="{% static 'js/bulk-registration.js' %}?v=20260926-labels" defer></script>
 {% endblock %}
