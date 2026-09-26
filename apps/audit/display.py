@@ -39,6 +39,8 @@ ACTION_LABELS = {
     "asset_submit_finance": "提交财务确认",
     "asset_register": "建立实物资产",
     "asset_registration_reverse": "撤销实物建档",
+    "depreciation_profile_draft_save": "保存折旧参数草稿",
+    "depreciation_profile_draft_remove": "调整会计认定并撤除折旧草稿",
     "import_reverse": "撤销资产初始化导入",
     "asset_commissioning_confirm": "补充启用日期",
     "asset_withdraw_to_draft": "撤回为资产草稿",

@@ -273,14 +273,22 @@ def asset_list(request):
         and resolve_department_ids(request.user, company)
     )
     category_ids = base_queryset.values("category_id")
-    department_ids = base_queryset.exclude(department_id=None).values("department_id")
     employee_ids = base_queryset.exclude(responsible_employee_id=None).values(
         "responsible_employee_id"
     )
     from apps.masterdata.location_tree import LocationTree
     location_ids = base_queryset.exclude(location_id=None).values_list("location_id", flat=True)
     location_options = LocationTree(company).options(location_ids)
-    page = Paginator(queryset.order_by("-created_at", "id"), 25).get_page(
+    from apps.masterdata.directory import employee_department_tree
+    from apps.masterdata.permissions import scoped_departments
+    department_options, _, _ = employee_department_tree(
+        scoped_departments(request.user, company).order_by("normalized_code"),
+        base_queryset.exclude(department_id=None).values_list("department_id", flat=True),
+    )
+    page_size = request.GET.get("page_size", "25")
+    if page_size not in {"25", "50", "100", "200"}:
+        page_size = "25"
+    page = Paginator(queryset.order_by("-created_at", "id"), int(page_size)).get_page(
         request.GET.get("page")
     )
     for item in page:
@@ -296,6 +304,8 @@ def asset_list(request):
             "filters": filters,
             "filter_errors": filter_errors,
             "filter_query": filter_query,
+            "page_size": page_size,
+            "pagination_query": urlencode({**{key: value for key, value in filters.items() if value}, "page_size": page_size}),
             "extra_filters_open": any(filters.get(key) for key in ("fixed_asset_category", "maintenance_required", "label_status", "has_serial_number", "has_attachments", "initialized_from", "initialized_to", "created_from", "created_to")),
             "label_choices": CHOICES["label_status"].items(),
             "fixed_categories": FixedAssetCategory.objects.filter(company=company) if can_financial_filters else (),
@@ -303,9 +313,7 @@ def asset_list(request):
             "categories": AssetCategory.objects.filter(pk__in=category_ids).order_by(
                 "category_level", "normalized_code"
             ),
-            "departments": Department.objects.filter(pk__in=department_ids).order_by(
-                "normalized_code"
-            ),
+            "departments": department_options,
             "employees": Employee.objects.filter(pk__in=employee_ids).order_by(
                 "normalized_employee_no"
             ),

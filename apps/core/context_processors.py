@@ -125,8 +125,10 @@ _PAGE_LABELS = {
     "maintenance:due-list": "保养任务",
     "maintenance:plan-list": "保养计划",
     "offboarding:clearance-list": "离职清退",
-    "finance:pending-list": "待确认折旧",
+    "finance:pending-list": "财务确认",
     "finance:bulk-confirmation": "批量财务确认",
+    "finance:finance-confirm": "财务确认",
+    "finance:finance-preview": "折旧试算",
     "finance:batch-list": "固定资产折旧",
     "reports:report-center": "报表中心",
     "reports:supply-report-index": "办公用品与低值品报表",
@@ -259,7 +261,7 @@ def _active_item(view_name: str, active_section: str, query=None) -> str:
         if view_name.startswith("offboarding:"):
             return "offboarding"
     if active_section == "finance_reports":
-        if view_name.startswith("finance:pending-"):
+        if view_name.startswith("finance:pending-") or view_name in {"finance:finance-confirm", "finance:finance-preview", "finance:bulk-confirmation"}:
             return "pending_finance"
         if view_name.startswith("finance:batch-"):
             return "depreciation"

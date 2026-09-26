@@ -42,11 +42,13 @@ def _bootstrap_widgets(form):
 
 class PendingFinanceFilterForm(forms.Form):
     q = forms.CharField(label="资产编号或名称", max_length=200, required=False)
-    department = forms.ModelChoiceField(label="部门", queryset=None, required=False)
+    department = forms.ModelChoiceField(label="部门（含下属班组）", queryset=None, required=False)
     data_status = forms.ChoiceField(label="资料状态", required=False, choices=(
         ("", "全部待确认"), ("not_entered", "尚未填写财务资料"), ("saved", "已保存财务资料"),
     ))
     import_batch = forms.ModelChoiceField(label="导入批次", queryset=None, required=False)
+    page_size = forms.TypedChoiceField(label="每页显示", required=False, coerce=int,
+        choices=((25,"25 条"),(50,"50 条"),(100,"100 条"),(200,"200 条")), initial=25)
 
     def __init__(self, *args, company, **kwargs):
         from apps.masterdata.models import Department, ImportBatch
@@ -253,14 +255,15 @@ class FinanceDraftForm(FinanceBoundForm):
         help_text="留空时按实物分类默认、公司默认顺序解析。",
     )
     useful_life_months = forms.IntegerField(
-        label="使用年限（月）", min_value=1, required=False
+        label="使用年限（月）", min_value=1, required=False,
+        help_text="以月为单位，例如 5 年填写 60。",
     )
     salvage_mode = forms.ChoiceField(
         label="残值方式", choices=SalvageMode.choices, required=False
     )
     salvage_rate = forms.DecimalField(
         label="残值率", min_value=Decimal("0"), max_value=Decimal("1"),
-        max_digits=12, decimal_places=8, required=False,
+        max_digits=12, decimal_places=8, required=False, help_text="例如 5% 填写 0.05。",
     )
     salvage_amount = forms.DecimalField(
         label="固定残值金额", min_value=Decimal("0"), max_digits=18,

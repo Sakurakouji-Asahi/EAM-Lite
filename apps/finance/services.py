@@ -802,13 +802,15 @@ def _set_unconfirmed_commissioning_date(*, actor, asset, value, request=None):
 
 
 @transaction.atomic
-def save_asset_finance_draft(*, actor, asset, data, commissioning_date=None, request=None):
+def save_asset_finance_draft(*, actor, asset, data, profile_data=None, commissioning_date=None, request=None):
     require_manage_finance(actor)
     models = _models()
     Asset = models["Asset"]
     Finance = models["AssetFinance"]
-    asset = Asset.objects.select_for_update().select_related("company").get(pk=asset.pk)
-    _require_current_company(asset.company)
+    company_id = Asset.objects.values_list("company_id", flat=True).get(pk=asset.pk)
+    company = models["Company"].objects.select_for_update().get(pk=company_id)
+    _require_current_company(company)
+    asset = _for_update_self(Asset.objects.all()).select_related("company", "category").get(pk=asset.pk, company=company)
     if not finance_confirmation_pending(asset):
         raise ValidationError("只有尚未完成财务折旧确认的资产可以保存财务草稿。")
     _set_unconfirmed_commissioning_date(
@@ -847,8 +849,59 @@ def save_asset_finance_draft(*, actor, asset, data, commissioning_date=None, req
     _apply(finance, values, FINANCE_DRAFT_FIELDS)
     finance.full_clean()
     finance.save()
+    if profile_data is not None:
+        _save_unconfirmed_profile(actor=actor, asset=asset, finance=finance, profile_data=profile_data, request=request)
     _audit(actor=actor, action="asset_finance_draft_save", instance=finance, old=old, new={field: _serializable(getattr(finance, field)) for field in FINANCE_DRAFT_FIELDS if hasattr(finance, field)}, request=request)
     return finance
+
+
+def _save_unconfirmed_profile(*, actor, asset, finance, profile_data, request=None):
+    """Save reviewed draft parameters without posting balances or schedules."""
+    unknown = set(profile_data).difference(PROFILE_INPUT_FIELDS)
+    if unknown:
+        raise ValidationError({field: "不是折旧参数字段。" for field in unknown})
+    Profile = _models()["AssetDepreciationProfile"]
+    profiles = list(Profile.objects.select_for_update().filter(asset=asset).order_by("version"))
+    if len(profiles) > 1 or any(profile.status != "draft" for profile in profiles):
+        raise ValidationError("已有生效或多份折旧配置，请先复核，不能覆盖保存。")
+    profile = profiles[0] if profiles else None
+    if profile and (profile.schedules.exists() or profile.entries.exists() or profile.events.exists()):
+        raise ValidationError("折旧草稿已有后续记录，不能直接修改。")
+    old = ({field.attname: _serializable(getattr(profile, field.attname)) for field in profile._meta.concrete_fields}
+           if profile else {})
+    if finance.accounting_treatment == "controlled_non_fixed":
+        if any(value not in (None, "", ZERO_MONEY, 0) for value in profile_data.values()):
+            raise ValidationError("受控非固定资产不能保存折旧参数或期初折旧余额。")
+        if profile:
+            _audit(actor=actor, action="depreciation_profile_draft_remove", instance=profile,
+                   old=old, new={"reason": "会计认定改为受控非固定资产"}, request=request)
+            profile.delete()
+        return
+    if finance.accounting_treatment != "fixed_asset":
+        raise ValidationError("请先选择会计认定，再保存折旧资料。")
+    explicit_parameters = any(
+        value not in (None, "") and (
+            key not in {"opening_actual_accumulated_depreciation", "opening_impairment"}
+            or value != ZERO_MONEY
+        ) for key, value in profile_data.items()
+    )
+    if profile is None and not explicit_parameters:
+        # Keep basic finance entry available before policies are configured.
+        # Empty controls are defaults, not a request to create a profile.
+        return
+    values = dict(profile_data)
+    if profile:
+        values.setdefault("change_reason", profile.change_reason)
+    policy = resolve_depreciation_policy(asset=asset,
+        requested_policy=values.get("depreciation_policy") or values.get("depreciation_policy_id"), lock=True)
+    finance_values = {"original_cost": finance.original_cost, "fixed_asset_category": finance.fixed_asset_category}
+    _, _, resolved = _profile_spec(asset=asset, finance_data=finance_values, profile_data=values, policy=policy)
+    if profile is None:
+        profile = Profile(company=asset.company, asset=asset, version=1, created_by=actor)
+    _apply_resolved_profile(profile, policy=policy, resolved=resolved, status="draft")
+    _save(profile)
+    _audit(actor=actor, action="depreciation_profile_draft_save", instance=profile, old=old,
+           new={**resolved, "asset_id": str(asset.pk), "depreciation_policy_id": str(policy.pk), "status": "draft"}, request=request)
 
 
 def _domain():
@@ -1160,6 +1213,32 @@ def _validate_asset_physical(asset):
 
 
 
+def _apply_resolved_profile(profile, *, policy, resolved, status):
+    profile.depreciation_policy = policy
+    profile.method = resolved["method"]
+    profile.posting_period = resolved["posting_period"]
+    profile.start_rule = resolved["start_rule"]
+    profile.stop_rule = resolved["stop_rule"]
+    profile.start_date = resolved["start_date"]
+    profile.actual_continuation_date = resolved["actual_continuation_date"]
+    profile.actual_continuation_review_required = False
+    profile.useful_life_months = resolved["useful_life_months"]
+    profile.salvage_mode = resolved["salvage_mode"]
+    profile.salvage_rate = resolved["salvage_rate"]
+    profile.salvage_amount = resolved["salvage_amount"]
+    profile.opening_book_value = resolved["opening_book_value"]
+    profile.opening_actual_accumulated_depreciation = resolved[
+        "opening_actual_accumulated_depreciation"
+    ]
+    profile.expected_total_units = resolved["expected_total_units"]
+    profile.work_unit = resolved["work_unit"] or ""
+    profile.annual_posting_month = resolved["annual_posting_month"]
+    profile.effective_from = resolved["effective_from"]
+    profile.effective_to = resolved["effective_to"]
+    profile.status = status
+    profile.change_reason = resolved["change_reason"] or ""
+
+
 def _create_profile_and_schedule(
     *, actor, asset, policy, resolved, result, version=1, existing_profile=None
 ):
@@ -1185,29 +1264,7 @@ def _create_profile_and_schedule(
             version=version,
             created_by=actor,
         )
-    profile.depreciation_policy = policy
-    profile.method = resolved["method"]
-    profile.posting_period = resolved["posting_period"]
-    profile.start_rule = resolved["start_rule"]
-    profile.stop_rule = resolved["stop_rule"]
-    profile.start_date = resolved["start_date"]
-    profile.actual_continuation_date = resolved["actual_continuation_date"]
-    profile.actual_continuation_review_required = False
-    profile.useful_life_months = resolved["useful_life_months"]
-    profile.salvage_mode = resolved["salvage_mode"]
-    profile.salvage_rate = resolved["salvage_rate"]
-    profile.salvage_amount = resolved["salvage_amount"]
-    profile.opening_book_value = resolved["opening_book_value"]
-    profile.opening_actual_accumulated_depreciation = resolved[
-        "opening_actual_accumulated_depreciation"
-    ]
-    profile.expected_total_units = resolved["expected_total_units"]
-    profile.work_unit = resolved["work_unit"] or ""
-    profile.annual_posting_month = resolved["annual_posting_month"]
-    profile.effective_from = resolved["effective_from"]
-    profile.effective_to = resolved["effective_to"]
-    profile.status = "active"
-    profile.change_reason = resolved["change_reason"] or ""
+    _apply_resolved_profile(profile, policy=policy, resolved=resolved, status="active")
     _save(profile)
     if resolved["method"] in {"units_of_production", "manual"}:
         # These methods need an explicit value in every posting period.  Their

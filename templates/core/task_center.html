@@ -16,7 +16,7 @@
   </div>
   <div class="task-card-grid">
     {% if app_navigation.finance_reports.can_manage_finance %}
-      <a class="task-card" href="{% url 'finance:pending-list' %}" data-task-card="pending_finance"><span>待确认折旧</span><strong>{{ dashboard.pending.pending_finance|default:0 }}</strong><small>资料齐备后确认金额和折旧</small></a>
+      <a class="task-card" href="{% url 'finance:pending-list' %}" data-task-card="pending_finance"><span>财务确认</span><strong>{{ dashboard.pending.pending_finance|default:0 }}</strong><small>资料齐备后确认金额和折旧</small></a>
     {% endif %}
     {% if app_navigation.tasks.can_manage_labels %}
       <a class="task-card" href="{% url 'assets:label-queue' %}" data-task-card="pending_labels"><span>待贴标签</span><strong>{{ dashboard.pending.pending_label|default:0 }}</strong><small>打印二维码并逐项确认贴标</small></a>

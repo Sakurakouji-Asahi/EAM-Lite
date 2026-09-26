@@ -11,6 +11,7 @@ from apps.assets.classification import individual_durable_filter
 from apps.assets.permissions import ASSET_GLOBAL_P1_VIEW_ROLES, can_view_financial_fields, scoped_assets, scoped_assets_p1
 from apps.masterdata.models import AssetCategory, Department, Employee, FixedAssetCategory, Location
 from apps.masterdata.location_tree import LocationTree
+from apps.masterdata.hierarchy import descendant_ids
 from apps.masterdata.permissions import role_names_for, scoped_departments, scoped_employees
 
 FILTER_LABELS = {
@@ -112,6 +113,9 @@ def filter_asset_list(queryset, filters, *, actor, company):
         if filters.get(key):
             if key == "location":
                 qs = qs.filter(location_id__in=LocationTree(company).descendants(filters[key]))
+            elif key == "department":
+                model, field = MODEL_FILTERS[key]
+                qs = qs.filter(**{field + "__in": descendant_ids(model, company=company, identifier=filters[key])})
             else:
                 qs = qs.filter(**{field: filters[key]})
     if filters.get("asset_status"):

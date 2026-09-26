@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% load static %}
-{% block title %}待确认折旧 - EAM-Lite{% endblock %}
+{% block title %}财务确认 - EAM-Lite{% endblock %}
 {% block content %}
 <header class="app-page-header">
-  <div><h1 class="h3 mb-1">待确认折旧的资产</h1><p class="text-secondary mb-0">实物资产可以先建立和使用。资料齐备后确认会计认定及折旧设置。</p></div>
+  <div><h1 class="h3 mb-1">财务待确认</h1><p class="text-secondary mb-0">实物资产可以先建立和使用。资料齐备后确认会计认定及折旧设置。</p></div>
 </header>
 <form method="get" class="card card-body mb-3">
   <div class="row g-3 align-items-end">
@@ -25,7 +25,7 @@
 <div id="bulk-selection-error" class="text-danger mt-2" role="alert" hidden></div>
 </div>
 {% endif %}
-<div class="table-responsive shadow-sm">
+<div class="table-responsive shadow-sm app-work-table" role="region" aria-label="财务待办资产" tabindex="0">
   <table class="table table-hover mb-0">
     <thead><tr>{% if can_manage %}<th><input type="checkbox" id="bulk-select-all" aria-label="选择本页全部资产"></th>{% endif %}<th>资产编号</th><th>名称</th><th>实物分类</th><th>部门</th><th>责任人</th><th>购置日期</th><th>正式建档时间</th><th>待补基础资料</th><th>操作</th></tr></thead>
     <tbody>
@@ -38,7 +38,7 @@
         <td>{% if can_manage %}<a class="btn btn-sm btn-primary text-nowrap" href="{% url 'finance:finance-confirm' asset.pk %}">确认财务与折旧</a>{% else %}<a class="btn btn-sm btn-outline-primary text-nowrap" href="{% url 'assets:asset-detail' asset.pk %}">查看实物资料</a>{% endif %}</td>
       </tr>
       {% empty %}
-      <tr><td colspan="{% if can_manage %}10{% else %}9{% endif %}"><div class="app-empty-state"><strong>{% if pagination_query or filter_form.errors %}没有符合条件的待确认资产{% else %}当前没有待确认折旧的资产{% endif %}</strong><span>已建立但尚未确认折旧的资产会出现在这里。</span><a class="btn btn-sm btn-outline-primary" href="{% url 'assets:asset-list' %}">查看资产总账</a></div></td></tr>
+      <tr><td colspan="{% if can_manage %}10{% else %}9{% endif %}"><div class="app-empty-state"><strong>{% if pagination_query or filter_form.errors %}没有符合条件的待确认资产{% else %}当前没有财务待确认{% endif %}</strong><span>已建立但尚未确认折旧的资产会出现在这里。</span><a class="btn btn-sm btn-outline-primary" href="{% url 'assets:asset-list' %}">查看资产总账</a></div></td></tr>
       {% endfor %}
     </tbody>
   </table>

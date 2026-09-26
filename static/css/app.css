@@ -1814,3 +1814,24 @@ form[data-eam-submitting="true"] button[type="submit"]::after {
   border-radius: var(--eam-radius-sm);
   background: #fff;
 }
+
+/* Dense business lists retain their headings while the rows scroll. */
+.app-work-table { max-height: 65vh; overflow: auto; scrollbar-gutter: stable; }
+.app-work-table thead th { position: sticky; top: 0; z-index: 2; }
+.app-work-table .table { margin-bottom: 0; }
+.app-money { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.app-menu-search { display: block; padding: 0.2rem 0.3rem 0.8rem; }
+.app-menu-search .form-control { font-size: 0.78rem; min-height: 36px; }
+.app-nav [hidden] { display: none !important; }
+.app-page-jump { width: 5rem; margin-left: 0.4rem; }
+.app-action-bar { display: flex; flex-wrap: wrap; gap: 0.7rem; align-items: center; }
+.app-summary-list dt { color: var(--eam-muted); font-size: 0.78rem; font-weight: 500; }
+.app-summary-list dd { margin-bottom: 0.9rem; }
+.app-source-fields { min-width: 18rem; max-width: 28rem; margin-top: 0.6rem; font-size: 0.8rem; }
+.app-source-fields dd { overflow-wrap: anywhere; }
+[data-finance-field]:target { outline: 2px solid var(--eam-accent); outline-offset: 4px; }
+@media print {
+  .app-work-table { max-height: none; overflow: visible; }
+  .app-work-table thead th { position: static; }
+  .app-menu-search { display: none; }
+}

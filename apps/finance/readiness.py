@@ -42,7 +42,10 @@ def filter_pending_finance_assets(queryset, filters):
     if filters.get("q"):
         queryset = queryset.filter(Q(asset_code__icontains=filters["q"]) | Q(asset_name__icontains=filters["q"]))
     if filters.get("department"):
-        queryset = queryset.filter(department=filters["department"])
+        from apps.masterdata.hierarchy import descendant_ids
+        from apps.masterdata.models import Department
+        department = filters["department"]
+        queryset = queryset.filter(department_id__in=descendant_ids(Department, company=department.company, identifier=department.pk))
     if filters.get("data_status"):
         queryset = queryset.filter(finance__isnull=filters["data_status"] == "not_entered")
     if filters.get("import_batch"):

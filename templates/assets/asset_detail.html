@@ -69,7 +69,7 @@
         <div class="card-header"><h2 class="h5 mb-0" id="p0-title">识别摘要</h2></div>
         <div class="card-body">
           <dl class="row mb-0">
-            <dt class="col-sm-4 text-secondary">编号</dt><dd class="col-sm-8">{{ asset.asset_code|default:asset.draft_number }}</dd>
+            <dt class="col-sm-4 text-secondary">{% if asset.asset_code %}正式资产编号{% else %}临时草稿号{% endif %}</dt><dd class="col-sm-8">{{ asset.asset_code|default:asset.draft_number }}{% if not asset.asset_code %}<div class="small text-secondary">正式建档时按编码规则生成资产编号。</div>{% endif %}</dd>
             <dt class="col-sm-4 text-secondary">资产名称</dt><dd class="col-sm-8">{{ asset.asset_name }}</dd>
             <dt class="col-sm-4 text-secondary">实物分类</dt><dd class="col-sm-8">{{ category_path }}</dd>
             <dt class="col-sm-4 text-secondary">资产状态</dt><dd class="col-sm-8">{{ asset.get_asset_status_display }}</dd>

@@ -69,7 +69,7 @@
 <section class="card shadow-sm mt-3" aria-labelledby="pending-heading">
   <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2"><h2 class="h5 mb-0" id="pending-heading">我的待办</h2><a href="{% url 'task-center' %}">查看全部</a></div>
   <div class="card-body"><div class="dashboard-pending-grid">
-    {% if app_navigation.finance_reports.can_manage_finance %}<a class="border rounded p-3 text-decoration-none text-body" href="{% url 'finance:pending-list' %}"><span>待确认折旧</span><strong>{{ dashboard.pending.pending_finance|default:0 }}</strong></a>{% endif %}
+    {% if app_navigation.finance_reports.can_manage_finance %}<a class="border rounded p-3 text-decoration-none text-body" href="{% url 'finance:pending-list' %}"><span>财务确认</span><strong>{{ dashboard.pending.pending_finance|default:0 }}</strong></a>{% endif %}
     {% if app_navigation.tasks.can_manage_labels %}<a class="border rounded p-3 text-decoration-none text-body" href="{% url 'reports:report-center' %}?report_type=asset_ledger&amp;asset_scope=managed&amp;label_scope=not_attached&amp;as_of_date={{ dashboard_filters.as_of_date }}&amp;include_disposed=false"><span>待贴标签</span><strong>{{ dashboard.pending.pending_label|default:0 }}</strong></a>{% endif %}
     {% if app_navigation.tasks.can_view_asset_inventory %}<a class="border rounded p-3 text-decoration-none text-body" href="{% url 'inventory:task-list' %}"><span>待资产盘点</span><strong>{{ dashboard.pending.inventory_pending|default:0 }}</strong></a>
     <a class="border rounded p-3 text-decoration-none text-body" href="{% url 'inventory:task-list' %}"><span>盘点异常</span><strong>{{ dashboard.pending.inventory_exceptions|default:0 }}</strong></a>{% endif %}

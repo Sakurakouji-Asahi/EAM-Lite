@@ -1,4 +1,6 @@
 <nav class="app-nav" aria-label="主菜单" data-primary-count="{{ app_navigation.primary_count|default:1 }}">
+  <label class="app-menu-search"><span class="visually-hidden">查找功能菜单</span><input type="search" class="form-control form-control-sm" data-menu-search placeholder="查找菜单：导入、财务、位置" autocomplete="off"></label>
+  <p class="small text-secondary px-2" data-menu-search-empty hidden>没有匹配的菜单</p>
   <a class="app-nav-link app-nav-home{% if app_navigation.active_section == 'home' %} active{% endif %}" href="{% url 'home' %}" data-nav-section="home"{% if app_navigation.active_section == 'home' %} aria-current="page"{% endif %}>首页</a>
 
   {% if app_navigation.show_assets %}
@@ -51,7 +53,7 @@
     <details class="app-nav-group{% if app_navigation.active_section == 'finance_reports' %} is-current{% endif %}" data-nav-section="finance_reports"{% if app_navigation.active_section == 'finance_reports' %} open{% endif %}>
       <summary>报表与财务</summary>
       <div class="app-nav-items">
-        {% if app_navigation.finance_reports.can_manage_finance %}<a class="app-nav-link{% if app_navigation.active_item == 'pending_finance' %} active{% endif %}" href="{% url 'finance:pending-list' %}" data-nav-item="pending_finance"{% if app_navigation.active_item == 'pending_finance' %} aria-current="page"{% endif %}>待确认折旧</a>
+        {% if app_navigation.finance_reports.can_manage_finance %}<a class="app-nav-link{% if app_navigation.active_item == 'pending_finance' %} active{% endif %}" href="{% url 'finance:pending-list' %}" data-nav-item="pending_finance"{% if app_navigation.active_item == 'pending_finance' %} aria-current="page"{% endif %}>财务确认</a>
         <a class="app-nav-link{% if app_navigation.active_item == 'depreciation' %} active{% endif %}" href="{% url 'finance:batch-list' %}" data-nav-item="depreciation"{% if app_navigation.active_item == 'depreciation' %} aria-current="page"{% endif %}>固定资产折旧</a>{% endif %}
         <a class="app-nav-link{% if app_navigation.active_item == 'report_center' %} active{% endif %}" href="{% url 'reports:report-center' %}" data-nav-item="report_center"{% if app_navigation.active_item == 'report_center' %} aria-current="page"{% endif %}>报表中心</a>
         {% if app_navigation.finance_reports.can_view_tplus %}<a class="app-nav-link{% if app_navigation.active_item == 'tplus' %} active{% endif %}" href="{% url 'reports:tplus-export' %}" data-nav-item="tplus"{% if app_navigation.active_item == 'tplus' %} aria-current="page"{% endif %}>T+ 对账</a>{% endif %}

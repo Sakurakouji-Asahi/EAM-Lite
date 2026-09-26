@@ -133,7 +133,7 @@ def pending_finance_list(request):
         query = {key:getattr(value,"pk",value) for key,value in data.items() if value}
     else:
         assets = assets.none()
-    page = Paginator(assets, 25).get_page(request.GET.get("page"))
+    page = Paginator(assets, form.cleaned_data.get("page_size") or 25).get_page(request.GET.get("page"))
     for asset in page.object_list:
         asset.finance_missing_fields = missing_finance_base_fields(asset)
     return render(
@@ -163,11 +163,19 @@ def _finance_form(request, *, asset, confirm=False):
 
 
 def _finance_confirm_context(*, asset, form, preview=None, preview_only=False):
+    sections = [
+        ("会计认定与金额", "", ("accounting_treatment", "original_cost", "fixed_asset_category", "capitalization_date", "commissioning_date", "accounting_treatment_reason")),
+        ("折旧规则", "留空项目使用适用政策的默认值。", ("depreciation_policy", "method", "useful_life_months", "posting_period", "salvage_mode", "salvage_rate", "salvage_amount", "start_rule", "specified_start_date", "stop_rule", "annual_posting_month", "expected_total_units", "work_unit")),
+        ("期初余额与接续", "旧资产按期初余额接续；已提足资产保留余额，不重复计提。", ("opening_actual_accumulated_depreciation", "opening_impairment", "actual_continuation_date")),
+        ("备注与说明", "", ("finance_remark", "action_reason", "code_effective_date", "code_effective_reason")),
+    ]
     return {
         "asset": asset,
         "form": form,
         "preview": preview,
         "preview_only": preview_only,
+        "field_sections": [{"title": title, "help": help_text, "fields": [form[name] for name in names if not form[name].is_hidden]}
+                           for title, help_text, names in sections],
         "has_fixed_asset_categories": form.fields[
             "fixed_asset_category"
         ].queryset.exists(),
@@ -188,13 +196,14 @@ def finance_preview(request, pk):
             messages.info(request, "受控非固定资产不建立折旧 Profile 或折旧计划。")
         else:
             try:
-                _spec, result, _resolved = preview_asset_depreciation(
+                calculation = preview_asset_depreciation(
                     actor=request.user,
                     asset=asset,
                     finance_data=form.finance_data(),
                     profile_data=form.profile_data(),
                     commissioning_date=form.cleaned_data.get("commissioning_date"),
                 )
+                result = calculation["summary"] if isinstance(calculation, dict) else calculation[1]
             except (ValidationError, ValueError) as exc:
                 _service_error(form, exc)
     return render(
@@ -222,10 +231,11 @@ def finance_confirm(request, pk):
                     actor=request.user,
                     asset=asset,
                     data=form.finance_data(),
+                    profile_data=form.profile_data(),
                     commissioning_date=form.cleaned_data.get("commissioning_date"),
                     request=request,
                 )
-                messages.success(request, "财务资料已保存；折旧尚未确认，实物资产的使用不受影响。")
+                messages.success(request, "财务资料已保存为草稿，填写的折旧参数一并保留，可稍后确认。")
             elif action == "confirm":
                 asset = confirm_asset_finance(
                     actor=request.user,

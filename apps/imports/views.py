@@ -5,6 +5,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.storage import default_storage
 from django.core.paginator import EmptyPage, PageNotAnInteger, Paginator
+from django.db.models import Q
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.encoding import escape_uri_path
@@ -13,6 +14,7 @@ from django.views.decorators.http import require_GET, require_http_methods
 
 from apps.audit.services import request_audit_context, write_business_audit_log
 from apps.imports.forms import ImportUploadForm
+from apps.imports.presentation import asset_import_context
 from apps.imports.services import (
     TEMPLATE_REGISTRY,
     build_template_workbook,
@@ -81,7 +83,19 @@ def import_home(request):
         allowed.append(_definition_or_404(import_type, company=company))
     if not allowed:
         raise PermissionDenied("您没有执行导入的权限。")
-    return render(request, "imports/home.html", {"company": company, "definitions": allowed})
+    from apps.masterdata.models import ImportBatch
+    roles = role_names_for(request.user)
+    permitted = Q(pk__in=[])
+    for definition in allowed:
+        condition = Q(import_type=definition.import_type)
+        if (definition.import_type == "asset_initialization" and "finance" not in roles
+            or definition.import_type == "item_master" and not roles.intersection({"system_admin", "finance", "warehouse"})):
+            condition &= Q(uploaded_by=request.user)
+        permitted |= condition
+    batches = ImportBatch.objects.filter(company=company).filter(permitted).select_related("uploaded_by", "file_attachment").order_by("-uploaded_at")
+    page = Paginator(batches, 20).get_page(request.GET.get("page"))
+    return render(request, "imports/home.html", {"company": company, "definitions": allowed,
+                                                 "recent_batches": page.object_list, "page_obj": page})
 
 
 @never_cache
@@ -151,18 +165,21 @@ def batch_detail(request, pk):
         page_obj = paginator.page(request.GET.get("page", "1"))
     except (PageNotAnInteger, EmptyPage):
         return HttpResponse("页码无效。", status=400)
+    rows = list(page_obj.object_list)
+    progress = asset_import_context(actor=request.user, batch=batch, rows=rows)
     return render(
         request,
         "imports/batch_detail.html",
         {
             "batch": batch,
-            "rows": page_obj.object_list,
+            "rows": rows,
             "page_obj": page_obj,
             "definition": _definition_or_404(batch.import_type, company=company),
             "is_asset_initialization": batch.import_type == "asset_initialization",
             "is_item_master": batch.import_type == "item_master",
             "is_opening_stock": batch.import_type == "opening_stock",
             "is_opening_custody": batch.import_type == "opening_custody",
+            **progress,
         },
     )
 

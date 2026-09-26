@@ -1,15 +1,17 @@
 {% extends "base.html" %}
 {% block title %}导入批次 - EAM-Lite{% endblock %}
 {% block content %}
-<h1 class="h3 mb-3">{{ definition.label }}导入预览</h1>
-{% if is_asset_initialization and batch.status == 'confirmed' %}<p><a class="btn btn-primary" href="{% url 'assets:bulk-registration' %}?import_batch={{ batch.pk }}">核对本批资产并批量建档</a></p>{% endif %}
+<h1 class="h3 mb-3">{{ definition.label }}导入{% if batch.status == "confirmed" or batch.status == "reversed" %}记录{% else %}预览{% endif %} <small class="text-secondary">#{{ batch.pk }}</small></h1>
+{% if is_asset_initialization and batch.status == 'confirmed' %}
+<section class="card mb-3"><div class="card-body"><h2 class="h6">本批办理进度</h2><div class="d-flex flex-wrap gap-4 mb-3"><span>已导入 <strong>{{ batch.total_rows }}</strong> 项</span><span>待建档 <strong>{{ import_progress.drafts }}</strong> 项</span><span>已建档 <strong>{{ import_progress.registered }}</strong> 项</span>{% if show_import_finance %}<span>待财务确认 <strong>{{ import_progress.finance_pending }}</strong> 项</span><span>财务已确认 <strong>{{ import_progress.finance_done }}</strong> 项</span>{% endif %}</div><div class="d-flex flex-wrap gap-2">{% if import_progress.drafts %}<a class="btn btn-primary" href="{% url 'assets:bulk-registration' %}?import_batch={{ batch.pk }}">核对本批资产并批量建档</a>{% endif %}{% if import_progress.can_confirm_finance and import_progress.finance_pending %}<a class="btn btn-primary" href="{% url 'finance:pending-list' %}?import_batch={{ batch.pk }}">核对本批资产并批量财务确认</a>{% endif %}<a class="btn btn-outline-secondary" href="{% url 'assets:asset-list' %}">查看资产台账</a></div></div></section>
+{% endif %}
 {% for message in messages %}<div class="alert alert-{% if message.tags == 'error' %}danger{% else %}success{% endif %}">{{ message }}</div>{% endfor %}
-<dl class="row">
-  <dt class="col-sm-2">批次状态</dt><dd class="col-sm-10">{{ batch.get_status_display }}</dd>
-  <dt class="col-sm-2">模板版本</dt><dd class="col-sm-10">{{ batch.template_version }}</dd>
-  <dt class="col-sm-2">行数</dt><dd class="col-sm-10">{{ batch.total_rows }}（有效 {{ batch.valid_rows }} / 错误 {{ batch.error_rows }} / 含警告 {{ batch.warning_rows }}）</dd>
-  <dt class="col-sm-2">原文件</dt><dd class="col-sm-10"><a href="{% url 'imports:source' batch.pk %}">受保护下载</a></dd>
-</dl>
+<div class="d-flex flex-wrap align-items-center gap-3 mb-3 small">
+<span>状态：<strong>{% if batch.status == 'confirmed' %}已导入{% else %}{{ batch.get_status_display }}{% endif %}</strong></span>
+<span>共 {{ batch.total_rows }} 条 · 错误 {{ batch.error_rows }} · 提示 {{ batch.warning_rows }}</span>
+<a href="{% url 'imports:source' batch.pk %}">下载原文件</a>
+<details><summary>模板信息</summary>{{ batch.template_version }}</details>
+</div>
 {% if batch.status == 'invalid' %}
 <div class="alert alert-danger">本批次存在阻断错误，确认入口已关闭，数据库没有创建任何{% if is_asset_initialization %}资产或财务{% elif is_item_master %}低值物品档案{% elif is_opening_stock %}期初入库草稿{% elif is_opening_custody %}期初保管或保管流水{% else %}正式基础资料{% endif %}。请修正原文件后重新上传完整批次。</div>
 {% elif batch.status == 'validated' %}
@@ -42,7 +44,7 @@
   <button class="btn btn-danger" type="submit">{% if is_asset_initialization %}确认整批创建草稿{% else %}确认整批导入{% endif %}</button>
 </form>
 {% elif batch.status == 'confirmed' %}
-<div class="alert alert-success">本批次已成功确认，重复提交不会重复创建。{% if is_asset_initialization %}所有导入记录仍为草稿，正式编号尚未生成；请继续补齐受保护的资产照片并走实物复核、财务确认和贴标流程。{% elif is_item_master %}本批次只形成物品档案，库存仍为空。{% elif is_opening_stock %}期初入库草稿已经生成，当前库存仍未变化；请前往库存单据列表核对并过账。{% elif is_opening_custody %}期初保管和 opening 流水已建立，仓库库存未变化；该批次不提供破坏性回滚。{% endif %}</div>
+{% if not is_asset_initialization %}<div class="alert alert-success">本批次已成功确认，重复提交不会重复创建。{% if is_asset_initialization %}当前建档和财务确认进度见上方。照片和标签可在建档后补充办理。{% elif is_item_master %}本批次只形成物品档案，库存仍为空。{% elif is_opening_stock %}期初入库草稿已经生成，当前库存仍未变化；请前往库存单据列表核对并过账。{% elif is_opening_custody %}期初保管和 opening 流水已建立，仓库库存未变化；该批次不提供破坏性回滚。{% endif %}</div>{% endif %}
 {% elif batch.status == 'failed' %}
 <div class="alert alert-danger">本批次处理失败，未形成可确认结果。请根据错误原因修正后重新上传；不要重复使用本批次继续写入。</div>
 {% elif batch.status == 'cancelled' %}
@@ -51,6 +53,9 @@
 <div class="alert alert-secondary">本批导入已撤销，原文件和明细作为操作记录保留。需要重新导入时，请重新上传文件。</div>
 {% endif %}
 {% if batch.status != 'confirmed' and batch.status != 'cancelled' and batch.status != 'reversed' %}<form method="post" action="{% url 'imports:cancel' batch.pk %}" class="card card-body mt-3">{% csrf_token %}<label class="form-label" for="cancel-reason">取消原因</label><textarea class="form-control mb-2" id="cancel-reason" name="reason" required></textarea><button class="btn btn-outline-danger align-self-start" type="submit">取消本批次</button></form>{% endif %}
+{% if is_asset_initialization %}
+<div class="table-responsive app-work-table mt-4" role="region" aria-label="资产导入核对明细" tabindex="0"><table class="table align-middle mb-0"><thead><tr><th>源表行</th><th>资产名称 / 分类</th><th>部门 / 责任人</th><th>位置</th>{% if show_import_finance %}<th>原值</th>{% endif %}<th>校验情况</th><th>当前结果</th></tr></thead><tbody>{% for row in rows %}<tr><td>{{ row.row_number }}</td><td><strong>{{ row.asset_preview.name }}</strong><br><small class="text-secondary">{{ row.asset_preview.category }}</small><details class="small mt-1"><summary>查看原行</summary><dl class="app-source-fields">{% for key,value in row.raw_data_json.items %}<dt>{{ key }}</dt><dd>{{ value|default_if_none:"" }}</dd>{% endfor %}</dl></details></td><td>{{ row.asset_preview.department|default:"未填写" }}<br><small>{{ row.asset_preview.employee|default:"未填写" }}</small></td><td>{{ row.asset_preview.location|default:"未填写" }}</td>{% if show_import_finance %}<td class="app-money">{{ row.asset_preview.cost|default_if_none:"—" }}</td>{% endif %}<td>{% if row.errors_json %}{% for error in row.errors_json %}<div class="text-danger">{{ error.field }}：{{ error.reason }}</div>{% endfor %}{% else %}<span class="text-success">校验通过</span>{% endif %}{% if row.warnings_json %}<details class="mt-1"><summary>提示 {{ row.warnings_json|length }} 项</summary>{% for warning in row.warnings_json %}<div class="small mt-1">{{ warning.field }}：{{ warning.reason }}</div>{% endfor %}</details>{% endif %}</td><td>{% if batch.status == 'reversed' %}已撤销{% elif row.asset_preview.asset %}<a class="text-nowrap" href="{% url 'assets:asset-detail' row.asset_preview.asset.pk %}">{{ row.asset_preview.asset.asset_code|default:row.asset_preview.asset.draft_number }}</a><br><small>{{ row.asset_preview.asset.get_asset_status_display }}</small>{% else %}{{ row.get_validation_status_display }}{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}
 <div class="table-responsive mt-4">
 <table class="table table-sm table-bordered align-middle">
   <thead><tr><th>行</th><th>状态</th><th>原始数据</th><th>校验/测算预览</th><th>阻断错误</th><th>警告/人工核对</th><th>创建结果</th></tr></thead>
@@ -68,6 +73,7 @@
   </tbody>
 </table>
 </div>
+{% endif %}
 {% if page_obj.paginator.num_pages > 1 %}
 <nav aria-label="导入预览分页">
   <ul class="pagination justify-content-center">
