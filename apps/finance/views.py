@@ -13,6 +13,7 @@ from django.core.paginator import Paginator
 from django.db.models import Q, Sum
 from django.http import Http404, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 
 from apps.assets.models import Asset
@@ -604,8 +605,7 @@ def batch_generate(request):
             batch = generate_depreciation_batch(
                 actor=request.user,
                 company=company,
-                period_start=form.cleaned_data["period_start"],
-                period_end=form.cleaned_data["period_end"],
+                **form.service_period_values(),
                 idempotency_key=form.cleaned_data["idempotency_key"],
                 manual_inputs=form.cleaned_data["manual_inputs_json"],
                 request=request,
@@ -614,7 +614,11 @@ def batch_generate(request):
             _service_error(form, exc)
         else:
             return redirect("finance:batch-detail", pk=batch.pk)
-    return render(request, "finance/form.html", {"form": form, "title": "生成折旧批次试算"})
+    return render(request, "finance/form.html", {
+        "form": form, "title": "生成折旧批次试算", "submit_label": "生成试算",
+        "description": "期间填写月初至月末，包含结束当天。生成试算后核对明细，再确认过账。",
+        "cancel_url": reverse("finance:batch-list"), "cancel_label": "返回折旧批次",
+    })
 
 
 @login_required
@@ -763,8 +767,9 @@ def work_usage(request, pk):
     profile = _profile_for_asset(_company(), pk)
     form = WorkUsageForm(request.POST or None, actor=request.user, initial={"work_unit": profile.work_unit})
     if request.method == "POST" and form.is_valid():
+        values = {**form.cleaned_data, **form.service_period_values()}
         try:
-            record_work_usage(actor=request.user, profile=profile, request=request, **form.cleaned_data)
+            record_work_usage(actor=request.user, profile=profile, request=request, **values)
         except ValidationError as exc:
             _service_error(form, exc)
         else:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -721,6 +722,11 @@ class AssetWorkUsage(models.Model):
 
 
 class DepreciationBatch(models.Model):
+    @property
+    def period_end_inclusive(self):
+        """Display the final included day without changing stored boundaries."""
+        return self.period_end - timedelta(days=1) if self.period_end else None
+
     class BatchType(models.TextChoices):
         REGULAR = "regular", "正常计提"
         REVERSAL = "reversal", "冲销"

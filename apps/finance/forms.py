@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import uuid
 import json
+from calendar import monthrange
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django import forms
@@ -433,18 +435,56 @@ class ConfirmFormalizationForm(FinanceDraftForm):
     )
 
 
-class WorkUsageForm(FinanceBoundForm):
-    period_start = forms.DateField(label="期间开始日", widget=forms.DateInput(attrs={"type": "date"}))
-    period_end = forms.DateField(label="期间结束日", widget=forms.DateInput(attrs={"type": "date"}))
+class MonthlyPeriodForm(FinanceBoundForm):
+    """Inclusive dates for people; convert only at the service boundary."""
+
+    period_start = forms.DateField(
+        label="期间开始日", widget=forms.DateInput(attrs={"type": "date"}),
+        help_text="填写本月第一天。",
+    )
+    period_end = forms.DateField(
+        label="期间结束日（含当天）", widget=forms.DateInput(attrs={"type": "date"}),
+        help_text="填写同一个月的最后一天，例如9月份填写9月30日。",
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        today = timezone.localdate()
+        self.initial.setdefault("period_start", today.replace(day=1))
+        self.initial.setdefault("period_end", today.replace(day=monthrange(today.year, today.month)[1]))
+
+    def clean(self):
+        cleaned = super().clean()
+        start, end = cleaned.get("period_start"), cleaned.get("period_end")
+        if start is None or end is None:
+            return cleaned
+        if start.day != 1:
+            self.add_error("period_start", "月度期间须从当月1日开始。")
+        expected = start.replace(day=monthrange(start.year, start.month)[1])
+        if end != expected:
+            self.add_error("period_end", f"请选择同月最后一天：{expected:%Y-%m-%d}（含当天）。")
+        elif end == date.max:
+            self.add_error("period_end", "期间结束日超出系统支持范围。")
+        return cleaned
+
+    def service_period_values(self):
+        # Schedules, overlap checks and stored history retain [start, end).
+        return {
+            "period_start": self.cleaned_data["period_start"],
+            "period_end": self.cleaned_data["period_end"] + timedelta(days=1),
+        }
+
+
+class WorkUsageForm(MonthlyPeriodForm):
     current_units = forms.DecimalField(label="当期工作量", min_value=Decimal("0"), max_digits=24, decimal_places=6)
     work_unit = forms.CharField(label="工作量单位", max_length=64)
     remark = forms.CharField(label="备注", required=False, widget=forms.Textarea(attrs={"rows": 2}))
 
 
-class DepreciationBatchGenerateForm(FinanceBoundForm):
-    period_start = forms.DateField(label="期间开始日", widget=forms.DateInput(attrs={"type": "date"}))
-    period_end = forms.DateField(label="期间结束日", widget=forms.DateInput(attrs={"type": "date"}))
-    idempotency_key = forms.CharField(widget=forms.HiddenInput, required=False)
+class DepreciationBatchGenerateForm(MonthlyPeriodForm):
+    idempotency_key = forms.CharField(
+        widget=forms.HiddenInput, required=False, max_length=255, initial=uuid.uuid4,
+    )
     manual_inputs_json = forms.CharField(
         label="手工折旧输入（JSON）",
         required=False,
