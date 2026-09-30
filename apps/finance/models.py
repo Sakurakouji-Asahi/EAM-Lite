@@ -1107,6 +1107,10 @@ class AssetValueAdjustment(models.Model):
 
 
 class DepreciationEntry(models.Model):
+    @property
+    def period_end_inclusive(self):
+        return self.period_end - timedelta(days=1) if self.period_end else None
+
     class SourceType(models.TextChoices):
         BATCH = "batch", "批次"
         OPENING = "opening", "期初"
@@ -1304,6 +1308,10 @@ class TheoreticalDepreciationRun(models.Model):
 
 
 class TheoreticalDepreciationLine(models.Model):
+    @property
+    def period_end_inclusive(self):
+        return self.period_end - timedelta(days=1) if self.period_end else None
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     run = models.ForeignKey(
         TheoreticalDepreciationRun, on_delete=models.CASCADE, related_name="lines"

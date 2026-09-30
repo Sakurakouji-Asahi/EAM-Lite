@@ -38,7 +38,8 @@ def setup_data(role):
         password="Valid-Password-2026!",
         display_name=role,
     )
-    user.groups.add(Group.objects.get(name=role))
+    # Transactional callers can start after a database flush removed seeded roles.
+    user.groups.add(Group.objects.get_or_create(name=role)[0])
     return owner, user
 
 

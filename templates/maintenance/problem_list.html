@@ -1,1 +1,22 @@
-{% extends "base.html" %}{% block title %}保养问题跟进{% endblock %}{% block content %}<header class="app-page-header"><div><h1 class="h3 mb-1">保养问题跟进</h1><p class="text-secondary mb-0">跟踪保养中发现且尚未关闭的问题。</p></div></header><div class="table-responsive shadow-sm"><table class="table table-hover align-middle mb-0"><thead><tr><th>资产</th><th>发现日期</th><th>问题说明</th><th>状态</th><th></th></tr></thead><tbody>{% for item in items %}<tr><td>{{ item.problem.maintenance_record.asset.asset_code }}<br>{{ item.problem.maintenance_record.asset.asset_name }}</td><td>{{ item.problem.created_at|date:'Y-m-d H:i' }}</td><td>{{ item.problem.description }}</td><td>{{ item.problem.get_status_display }}</td><td>{% if item.can_close %}<a class="btn btn-sm btn-outline-success" href="{% url 'maintenance:problem-close' item.problem.pk %}">关闭问题</a>{% else %}<a class="btn btn-sm btn-outline-primary" href="{% url 'maintenance:record-detail' item.problem.maintenance_record_id %}">查看</a>{% endif %}</td></tr>{% empty %}<tr><td colspan="5"><div class="app-empty-state"><strong>暂无有权查看的保养问题</strong><span>保养结果选择“发现问题”后，会在这里形成跟进事项。</span></div></td></tr>{% endfor %}</tbody></table></div>{% include "_pagination.html" %}{% endblock %}
+{% extends "base.html" %}
+{% block title %}保养问题跟进{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3 mb-1">保养问题跟进</h1><p class="text-secondary mb-0">待跟进事项优先显示，按目标日期优先排列，未设期限时按保养日期排列；已关闭记录保留处理结果。</p></div></header>
+{% include "_list_filters.html" %}
+<div class="d-flex flex-wrap gap-2 mb-2" aria-label="问题状态汇总">
+  <a class="btn btn-outline-warning" href="{{ problem_links.open }}">待跟进：{{ problem_counts.open }}</a>
+  <a class="btn btn-outline-success" href="{{ problem_links.closed }}">已关闭：{{ problem_counts.closed }}</a>
+</div>
+<p class="small text-secondary">状态汇总按当前查询范围统计，不受状态选项限制。</p>
+<div class="table-responsive shadow-sm"><table class="table table-hover align-middle mb-0">
+  <thead><tr><th>资产 / 设备编号</th><th>保养日期 / 计划</th><th>问题说明</th><th>负责人 / 期限</th><th>状态 / 处理结果</th><th>操作</th></tr></thead>
+  <tbody>{% for item in items %}<tr>
+    <td>{{ item.problem.asset.asset_name }}<div class="small text-secondary">{{ item.problem.asset.asset_code }}{% if item.problem.asset.equipment_number %} · {{ item.problem.asset.equipment_number }}{% endif %}</div></td>
+    <td>{{ item.problem.maintenance_record.completed_date|date:'Y-m-d' }}<br><a href="{% url 'maintenance:plan-detail' item.problem.maintenance_record.maintenance_plan_id %}">{{ item.problem.maintenance_record.maintenance_plan.name }}</a></td>
+    <td>{{ item.problem.description|linebreaksbr }}</td><td>{{ item.problem.owner_employee.name|default:'未分派' }}<br>{{ item.problem.target_date|date:'Y-m-d'|default:'未设期限' }}{% if item.is_overdue %}<br><span class="badge text-bg-danger">已逾期</span>{% endif %}</td>
+    <td><span class="badge {% if item.problem.status == 'open' %}text-bg-warning{% else %}text-bg-success{% endif %}">{{ item.problem.get_status_display }}</span>{% if item.problem.status == 'closed' %}<div class="mt-1">{{ item.problem.closure_note|linebreaksbr }}</div><small class="text-secondary">{% if item.problem.closed_by %}{{ item.problem.closed_by.display_name|default:item.problem.closed_by.username }}{% else %}历史账号{% endif %} · {{ item.problem.closed_at|date:'Y-m-d H:i' }}</small>{% endif %}</td>
+    <td><div class="d-flex flex-wrap gap-2">{% if item.can_close %}<a class="btn btn-sm btn-outline-primary" href="{% url 'maintenance:problem-assign' item.problem.pk %}">分派 / 调整期限</a><a class="btn btn-sm btn-outline-success" href="{% url 'maintenance:problem-close' item.problem.pk %}">关闭问题</a>{% endif %}<a class="btn btn-sm btn-outline-primary" href="{% url 'maintenance:record-detail' item.problem.maintenance_record_id %}">查看记录</a></div></td>
+  </tr>{% empty %}<tr><td colspan="6"><div class="app-empty-state"><strong>暂无符合条件的保养问题</strong><span>调整查询条件，或在保养记录中查看历史情况。</span></div></td></tr>{% endfor %}</tbody>
+</table></div>
+{% include "_pagination.html" %}
+{% endblock %}

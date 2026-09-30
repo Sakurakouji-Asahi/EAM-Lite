@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 from django import forms
+from apps.core.multi_upload import MultiFileField
 from apps.core.form_widgets import normalize_date_widgets
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.utils import timezone
@@ -254,7 +255,7 @@ class DisposalCompleteForm(LifecycleActionForm):
 
 
 class DisposalAttachmentUploadForm(LifecycleActionForm):
-    uploaded_file = forms.FileField(label="处置证据")
+    uploaded_file = MultiFileField(label="处置证据")
     security_class = forms.ChoiceField(
         label="安全分类",
         choices=(("A0", "A0 普通附件"), ("A1", "A1 财务附件")),

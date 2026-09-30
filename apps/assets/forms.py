@@ -3,6 +3,7 @@
 import uuid
 
 from django import forms
+from apps.core.multi_upload import MultiFileField
 from apps.core.form_widgets import normalize_date_widgets
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db.models import Q
@@ -394,7 +395,7 @@ class AssetDeleteForm(forms.Form):
 class AssetAttachmentUploadForm(forms.Form):
     role = forms.ChoiceField(label="附件用途", choices=())
     security_class = forms.ChoiceField(label="安全分类", choices=())
-    file = forms.FileField(label="选择文件")
+    file = MultiFileField(label="选择文件")
 
     def __init__(self, *args, actor=None, asset=None, **kwargs):
         if actor is None or asset is None:
@@ -429,6 +430,8 @@ class AssetAttachmentUploadForm(forms.Form):
     def clean(self):
         cleaned = super().clean()
         role = cleaned.get("role")
+        if role == AttachmentLink.Role.COVER and len(cleaned.get("file") or []) > 1:
+            self.add_error("file", "封面每次请选择一个文件；多张照片请选择资产照片用途。")
         security_class = cleaned.get("security_class")
         if role in {AttachmentLink.Role.COVER, AttachmentLink.Role.PHOTO} and security_class != "A0":
             self.add_error("security_class", "封面和资产照片只能使用 A0 普通分类。")

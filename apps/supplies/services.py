@@ -15,6 +15,7 @@ from django.utils import timezone
 from apps.audit.services import request_audit_context, write_business_audit_log
 from apps.core.numbering import save_with_auto_number
 from apps.masterdata.permissions import current_company
+from apps.masterdata.normalization import clean_display_identifier
 
 from .domain import (
     ZERO_COST,
@@ -227,6 +228,16 @@ def supply_item_has_business_history(item) -> bool:
             )
         ).exists()
     )
+
+
+def supply_item_unit_is_locked(item) -> bool:
+    """Referenced quantities have no independent unit snapshot or conversion."""
+    if item is None or item._state.adding:
+        return False
+    return any(relation.exists() for relation in (
+        item.document_lines, item.stock_balances, item.stock_ledgers,
+        item.custodies, item.custody_movements, item.count_lines,
+    ))
 
 
 @transaction.atomic
@@ -533,6 +544,10 @@ def update_supply_item(*, actor, item, data, request=None):
     requested_type = data.get("item_type", item.item_type)
     require_manage_supply_item(actor, item.item_type)
     require_manage_supply_item(actor, requested_type)
+    if "unit" in data and clean_display_identifier(data["unit"]) != item.unit and supply_item_unit_is_locked(item):
+        raise ValidationError({
+            "unit": "该物品已有单据、库存、保管或盘点记录，不能修改计量单位。使用其他单位时，请另建物品档案。"
+        })
     if supply_item_has_business_history(item):
         if "item_code" in data and data["item_code"] != item.item_code:
             raise ValidationError(
@@ -2422,35 +2437,9 @@ def _post_consumable_return(*, document, lines, balances, actor, posted_at):
             document__document_type=SupplyDocumentType.RETURN,
             document__status=SupplyDocumentStatus.POSTED,
         ).aggregate(quantity=Sum("quantity"), amount=Sum("posted_amount"))
-        returned_quantity = quantize_quantity(returned["quantity"] or ZERO_QTY)
-        returned_amount = quantize_money(returned["amount"] or ZERO_MONEY)
-        remaining_quantity = quantize_quantity(source.quantity - returned_quantity)
-        remaining_amount = quantize_money(source.posted_amount - returned_amount)
-        if remaining_quantity < ZERO_QTY or remaining_amount < ZERO_MONEY:
-            raise ValidationError("原领用累计退回数量或金额异常，请先执行库存核对。")
-        if line.quantity > remaining_quantity:
-            raise ValidationError(
-                "退回数量超过原领用未退数量：当前最多可退 {} {}。".format(
-                    remaining_quantity, line.item.unit
-                )
-            )
-        if line.quantity == remaining_quantity:
-            return_amount = remaining_amount
-        else:
-            # Allocate against the cumulative returned quantity, then take the
-            # incremental difference.  Rounding every small return separately
-            # can otherwise make the returned amount exceed the original
-            # issue (for example 5 x CNY 0.006 split into one-unit returns).
-            cumulative_amount = min(
-                quantize_money(
-                    (returned_quantity + line.quantity)
-                    * source.posted_unit_cost
-                ),
-                source.posted_amount,
-            )
-            return_amount = quantize_money(cumulative_amount - returned_amount)
-        if return_amount < ZERO_MONEY or return_amount > remaining_amount:
-            raise ValidationError("原领用剩余可退金额异常，请先执行库存核对。")
+        from apps.supplies.posting_preview import consumable_return_amount
+        return_amount = consumable_return_amount(source=source, quantity=line.quantity,
+            returned_quantity=returned["quantity"], returned_amount=returned["amount"])
         balance = balances[(warehouse.pk, line.item_id)]
         calculation = calculate_receipt_from_amount(
             balance.quantity_on_hand,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 from django import forms
+from apps.core.multi_upload import MultiFileField
 from apps.core.form_widgets import normalize_date_widgets
 from django.core.exceptions import PermissionDenied
 
@@ -30,6 +31,17 @@ def _style(form):
             "class",
             "form-select" if isinstance(field.widget, forms.Select) else "form-control",
         )
+
+
+class ClearanceDetailFilterForm(forms.Form):
+    q = forms.CharField(label="资产、设备编号或物品", required=False, max_length=200)
+    resolution = forms.ChoiceField(label="处理范围",required=False,choices=(
+        ('','全部项目'),('pending','只看未处理'),('resolved','只看已处理'),
+    ))
+
+    def __init__(self,*args,**kwargs):
+        super().__init__(*args,**kwargs)
+        _style(self)
 
 
 class ClearanceInitiateForm(forms.Form):
@@ -256,7 +268,7 @@ class ClearanceItemTransferForm(forms.Form):
 
 
 class ClearanceAttachmentUploadForm(forms.Form):
-    uploaded_file = forms.FileField(label="清退证据")
+    uploaded_file = MultiFileField(label="清退证据")
     security_class = forms.ChoiceField(
         label="附件安全分类",
         choices=(("A0", "普通附件（A0）"), ("A1", "财务附件（A1）")),

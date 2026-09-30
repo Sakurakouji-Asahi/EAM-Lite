@@ -5,6 +5,7 @@ from pathlib import Path
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.paginator import Paginator
 from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.cache import never_cache
@@ -15,6 +16,7 @@ from apps.masterdata.permissions import current_company
 from apps.operations.forms import (
     BackupDownloadAuthorizationForm,
     ManualBackupForm,
+    BackupHistoryFilterForm,
 )
 from apps.operations.models import BackupDownloadGrant, BackupSet
 from apps.operations.permissions import (
@@ -64,8 +66,22 @@ def _audit_reauthentication_failure(request, company, object_id=""):
 def backup_list(request):
     company = _company_or_404()
     require_manage_backups(request.user)
-    backups = BackupSet.objects.filter(company=company).select_related("requested_by")[:100]
-    response = render(request, "operations/backup_list.html", {"backups": backups})
+    backups = BackupSet.objects.filter(company=company).select_related("requested_by")
+    form = BackupHistoryFilterForm(request.GET)
+    valid = form.is_valid()
+    if valid:
+        if form.cleaned_data["q"]:
+            backups = backups.filter(backup_set_id__icontains=form.cleaned_data["q"])
+        for name in ("kind", "status"):
+            if form.cleaned_data[name]:
+                backups = backups.filter(**{name: form.cleaned_data[name]})
+    else:
+        backups = backups.none()
+    page = Paginator(backups.order_by("-started_at", "-pk"), 25).get_page(request.GET.get("page"))
+    query = request.GET.copy()
+    query.pop("page", None)
+    response = render(request, "operations/backup_list.html", {"backups": page.object_list,
+                       "page_obj": page, "pagination_query": query.urlencode(), "filter_form": form}, status=200 if valid else 400)
     response["Cache-Control"] = "private, no-store"
     return response
 

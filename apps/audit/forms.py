@@ -23,6 +23,8 @@ def _default_time_range():
 
 
 class AuditLogFilterForm(forms.Form):
+    q = forms.CharField(label='业务编号、名称或中文动作',required=False,max_length=200,
+        widget=forms.TextInput(attrs={'placeholder':'资产编号、设备编号、库存单据号或中文动作'}))
     start_at = forms.DateTimeField(
         label="开始时间（上海）",
         input_formats=(_DATETIME_INPUT_FORMAT, "%Y-%m-%d %H:%M", "%Y-%m-%d"),

@@ -49,12 +49,9 @@ try {
     Set-EamTemporaryComposeValue -State $state -Name "EAM_PORTABLE_PASSPHRASE_FILE" -Value $passphraseFile
     Set-EamTemporaryComposeValue -State $state -Name "EAM_PORTABLE_BACKUP_FILE" -Value $BackupFile
 
-    if ($identity.Kind -eq "git") {
-        Build-EamImage -RepositoryRoot $repositoryRoot -Identity $identity
-    }
-    else {
-        Pull-EamImage -Image $identity.AppImage
-    }
+    Ensure-EamApplicationImage -RepositoryRoot $repositoryRoot -Identity $identity
+    Set-EamTemporaryComposeValue -State $state -Name 'EAM_APP_IMAGE' -Value $identity.AppImage
+
     Invoke-EamCompose -Context $context -Arguments @("stop", "app", "caddy") -AllowFailure | Out-Null
     Invoke-EamCompose -Context $context -Arguments @("up", "--detach", "--wait", "db") | Out-Null
     Write-Host "正在验证加密包并恢复到空 PostgreSQL 与空附件卷……" -ForegroundColor Cyan

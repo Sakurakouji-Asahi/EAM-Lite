@@ -1,0 +1,6 @@
+{% if maintenance_handover.plans or maintenance_handover.problems %}
+<section class="card my-3"><div class="card-header"><h2 class="h5 mb-0">保养交接待办</h2></div><div class="card-body">
+<p class="text-secondary">以下为当前可查看范围内、仍由该员工负责的计划和未关闭问题。请安排接手人员，资产清退完成不会自动转交保养责任。</p>
+<ul>{% for row in maintenance_handover.plans %}<li><a href="{% url 'maintenance:plan-detail' row.plan.pk %}">{{ row.plan.asset.asset_code }} · {{ row.plan.name }}</a> · {{ row.plan.get_status_display }}{% if row.can_edit %} · <a href="{% url 'maintenance:plan-edit' row.plan.pk %}">变更责任人</a>{% endif %}</li>{% endfor %}
+{% for row in maintenance_handover.problems %}<li><a href="{% url 'maintenance:record-detail' row.problem.maintenance_record_id %}">{{ row.problem.asset.asset_code }} · {{ row.problem.description }}</a>{% if row.can_assign %} · <a href="{% url 'maintenance:problem-assign' row.problem.pk %}">交接问题</a>{% endif %}</li>{% endfor %}</ul>
+</div></section>{% endif %}

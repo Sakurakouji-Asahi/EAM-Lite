@@ -1,0 +1,20 @@
+{% load report_format %}
+<section class="mb-3" aria-labelledby="report-summary-heading">
+  <div class="report-section-heading"><h2 class="h6 mb-0" id="report-summary-heading">查询结果汇总</h2><span class="small text-secondary">当前条件下的全部 {{ dataset.row_count }} 条记录{% if dataset.definition.financial %} · 金额单位：{{ current_company.currency }}{% endif %}</span></div>
+  <dl class="report-metrics">
+    {% for metric in summary.cards %}<div><dt>{{ metric.label }}</dt><dd>{{ metric.value|report_number:metric.kind }}{% if metric.kind == 'money' %}<small>{{ current_company.currency }}</small>{% endif %}</dd></div>{% endfor %}
+  </dl>
+  {% if summary.note %}<p class="small text-secondary mb-2">{{ summary.note }}</p>{% endif %}
+  {% for warning in summary.missing %}<div class="alert alert-warning mb-2">{{ warning }}</div>{% endfor %}
+  {% if summary.columns and summary.rows %}
+  <details class="report-summary-breakdown" open>
+    <summary>分类汇总 <span class="text-secondary fw-normal">{{ summary.rows|length }} 组</span></summary>
+    {% if has_summary_links %}<p class="small text-secondary px-3 mb-2">点击记录数查看该组明细。</p>{% endif %}
+    <div class="table-responsive"><table class="table table-hover mb-0">
+      <thead><tr>{% for column in summary.columns %}<th scope="col">{{ column.label }}</th>{% endfor %}</tr></thead>
+      <tbody>{% for row in summary_details %}<tr>{% for column, value in row.cells %}<td class="{% if column.kind == 'money' or column.kind == 'quantity' or column.kind == 'integer' %}text-end{% endif %}">{% if column.key == 'record_count' and row.url %}<a href="{{ row.url }}" aria-label="查看此组 {{ value }} 条明细">{{ value }}</a>{% else %}{% include 'reports/_cell.html' %}{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody>
+    </table></div>
+    {% if summary_page.paginator.num_pages > 1 %}<nav class="report-pagination" aria-label="分类汇总分页"><span>第 {{ summary_page.number }} / {{ summary_page.paginator.num_pages }} 页</span><div class="btn-group">{% if summary_page.has_previous %}<a class="btn btn-sm btn-outline-secondary" href="?{{ summary_pagination_query }}&amp;summary_page={{ summary_page.previous_page_number }}#report-summary-heading">上一页</a>{% endif %}{% if summary_page.has_next %}<a class="btn btn-sm btn-outline-secondary" href="?{{ summary_pagination_query }}&amp;summary_page={{ summary_page.next_page_number }}#report-summary-heading">下一页</a>{% endif %}</div></nav>{% endif %}
+  </details>
+  {% endif %}
+</section>

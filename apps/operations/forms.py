@@ -2,6 +2,18 @@ import uuid
 
 from django import forms
 from django.core.exceptions import ValidationError
+from apps.operations.models import BackupSet
+
+
+class BackupHistoryFilterForm(forms.Form):
+    q = forms.CharField(label="备份编号", required=False, max_length=64)
+    kind = forms.ChoiceField(label="备份类型", required=False, choices=(("", "全部类型"), *BackupSet.Kind.choices))
+    status = forms.ChoiceField(label="备份状态", required=False, choices=(("", "全部状态"), *BackupSet.Status.choices))
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for field in self.fields.values():
+            field.widget.attrs.setdefault("class", "form-select" if isinstance(field.widget, forms.Select) else "form-control")
 
 
 class ManualBackupForm(forms.Form):

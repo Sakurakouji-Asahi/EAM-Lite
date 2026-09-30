@@ -1,6 +1,7 @@
 from django.urls import path
 
 from apps.assets import views
+from apps.assets import workbenches
 from apps.assets.identity_views import asset_code_preview, identification_confirm
 from apps.assets.trace_views import asset_trace_edit
 from apps.assets.custody_views import custody_return
@@ -13,6 +14,8 @@ from apps.assets.qr_urls import urlpatterns as qr_urlpatterns
 app_name = "assets"
 
 urlpatterns = [
+    path('loans/', workbenches.loan_workbench, name='loan-workbench'),
+    path('disposals/', workbenches.disposal_workbench, name='disposal-workbench'),
     path("", views.asset_list, name="asset-list"),
     path("new/", views.asset_create, name="asset-create"),
     path("bulk-register/", bulk_registration, name="bulk-registration"),

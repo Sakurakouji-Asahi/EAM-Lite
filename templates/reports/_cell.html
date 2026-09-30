@@ -1,0 +1,2 @@
+{% load report_format %}
+{% if value is None or value == '' %}<span class="text-secondary">—</span>{% elif column.kind == 'date' %}{{ value|date:'Y-m-d' }}{% elif column.kind == 'datetime' %}{{ value|date:'Y-m-d H:i:s' }}{% elif column.kind == 'boolean' %}{% if value %}是{% else %}否{% endif %}{% else %}{{ value|report_number:column.kind }}{% endif %}

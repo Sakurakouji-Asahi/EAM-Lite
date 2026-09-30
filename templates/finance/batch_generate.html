@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}生成折旧批次试算{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3 mb-1">生成折旧批次试算</h1><p class="text-secondary mb-0">期间填写月初至月末，包含结束当天。生成试算后核对明细，再确认过账。</p></div><a class="btn btn-outline-secondary" href="{% url 'finance:batch-list' %}">返回折旧批次</a></header>
+<form method="post" novalidate data-unsaved-guard="{% if request.method == 'POST' %}true{% else %}false{% endif %}">{% csrf_token %}
+<section class="card card-body mb-3">
+{% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+<div class="row g-3">{% for field in form %}{% if field.is_hidden %}{{ field }}{% else %}<div class="col-md-6"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% for error in field.errors %}<div class="text-danger">{{ error }}</div>{% endfor %}</div>{% endif %}{% endfor %}</div>
+{% if has_manual_profiles %}<div class="mt-3"><button class="btn btn-outline-secondary" name="action" value="refresh_manual">按所选期间更新手工清单</button></div>{% endif %}
+</section>
+{% if manual_rows %}<section class="card mb-3"><div class="card-header"><h2 class="h5 mb-1">手工折旧金额</h2><p class="small text-secondary mb-0">按资产逐行填写；金额为 0 也要填写原因。未填写金额的项目会在试算中提示缺数。</p></div><div class="table-responsive"><table class="table mb-0 align-middle"><thead><tr><th>资产</th><th>本期金额（元）</th><th>原因</th></tr></thead><tbody>
+{% for row in manual_rows %}<tr><td>{{ row.asset.asset_code }}<br>{{ row.asset.asset_name }}{% if row.asset.equipment_number %}<br><small>{{ row.asset.equipment_number }}</small>{% endif %}</td><td>{{ row.amount }}{{ row.amount.errors }}</td><td>{{ row.reason }}{{ row.reason.errors }}{{ row.non_field_errors }}</td></tr>{% endfor %}
+</tbody></table></div></section>{% endif %}
+<div class="app-form-actions"><button class="btn btn-primary" name="action" value="generate">生成试算</button></div>
+</form>
+{% endblock %}

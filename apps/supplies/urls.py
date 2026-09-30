@@ -6,6 +6,7 @@ from apps.supplies import views
 app_name = "supplies"
 
 urlpatterns = [
+    path('counts/<uuid:pk>/sheet/', views.count_sheet, name='count-sheet'),
     path("", views.dashboard, name="dashboard"),
     path(
         "reconciliation/",
@@ -98,6 +99,7 @@ urlpatterns = [
     path("counts/", views.count_task_list, name="count-task-list"),
     path("counts/new/", views.count_task_create, name="count-task-create"),
     path("counts/<uuid:pk>/", views.count_task_detail, name="count-task-detail"),
+    path("counts/<uuid:pk>/entry/", views.count_task_bulk_entry, name="count-task-bulk-entry"),
     path(
         "counts/<uuid:pk>/publish/",
         views.count_task_publish,

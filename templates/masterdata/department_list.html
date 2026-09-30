@@ -14,7 +14,7 @@
       <thead><tr><th>层级与部门</th><th>编码</th><th>经理</th><th>状态</th><th>操作</th></tr></thead>
       <tbody>
         {% for row in rows %}{% with object=row.object %}
-          <tr><td><span class="d-inline-block ps-{{ row.depth }}">{% if row.depth %}↳ {% endif %}{{ object.name }}</span></td><td>{{ object.code }}</td><td>{{ object.manager_employee|default:'—' }}</td><td>{% if object.is_active %}<span class="badge text-bg-success">启用</span>{% else %}<span class="badge text-bg-secondary">停用</span>{% endif %}</td><td><a href="{% url 'masterdata:department-detail' object.pk %}">查看</a></td></tr>
+          <tr><td><span class="d-inline-block ps-{{ row.depth }}">{% if row.depth %}↳ {% endif %}{{ object.name }}</span>{% if row.ancestor_path %}<div class="small text-secondary">{{ row.ancestor_path }}</div>{% endif %}</td><td>{{ object.code }}</td><td>{{ object.manager_employee|default:'—' }}</td><td>{% if object.is_active %}<span class="badge text-bg-success">启用</span>{% else %}<span class="badge text-bg-secondary">停用</span>{% endif %}</td><td><a href="{% url 'masterdata:department-detail' object.pk %}?return_to={{ request.get_full_path|urlencode }}">查看</a></td></tr>
         {% endwith %}{% empty %}<tr><td colspan="5" class="text-center text-secondary py-4">暂无部门资料</td></tr>{% endfor %}
       </tbody>
     </table>

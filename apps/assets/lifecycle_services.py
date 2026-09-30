@@ -763,6 +763,7 @@ def return_loan(
     loan = AssetLoan.objects.select_for_update().get(
         pk=loan.pk, company=asset.company, asset=asset
     )
+    return_date_only = isinstance(returned_at, date) and not isinstance(returned_at, datetime)
     returned_at = _business_datetime(returned_at, "returned_at")
     if returned_at > timezone.now():
         raise ValidationError({"returned_at": "实际归还时间不得晚于当前时间。"})
@@ -803,6 +804,7 @@ def return_loan(
         from_employee=asset.responsible_employee, to_employee=return_responsible_employee,
         from_location=asset.location, to_location=return_location,
         from_status="loaned", to_status=return_asset_status, remark=remark,
+        date_granularity=return_date_only,
     )
     _base_update(AssetLoan, loan.pk, {
         "status": "returned", "returned_at": returned_at,

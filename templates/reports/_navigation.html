@@ -1,0 +1,10 @@
+<nav class="report-navigation mb-3" aria-label="报表分类">
+  <div class="report-category-tabs">
+    {% for group in report_groups %}<a href="{{ group.url }}" class="{% if group.active %}active{% endif %}" {% if group.active %}aria-current="true"{% endif %}{% if group.key == 'supplies' %} data-report-entry="supplies"{% endif %}>{{ group.title }}</a>{% endfor %}
+  </div>
+  {% for group in report_groups %}{% if group.active %}<div class="report-type-tabs" aria-label="{{ group.title }}报表">
+    {% for report in group.reports %}<a href="{{ report.url }}" class="{% if report.active %}active{% endif %}" {% if report.active %}aria-current="page"{% endif %}>{{ report.title }}</a>{% endfor %}
+  </div>{% endif %}{% endfor %}
+</nav>
+
+<p class="text-end"><a href="{% url 'reports:export-history' %}">全部报表导出记录</a></p>

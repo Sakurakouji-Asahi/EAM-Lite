@@ -75,6 +75,10 @@ ASSET_COLUMNS = (
     _c("asset_status", "资产状态", width=14),
     _c("quantity", "数量", CellKind.INTEGER, 10),
     _c("acquisition_date", "购置日期", CellKind.DATE, 14),
+    _c("equipment_number", "设备编号", CellKind.IDENTIFIER, 20),
+    _c("serial_number", "序列号", CellKind.IDENTIFIER, 20),
+    _c("brand", "品牌", width=16),
+    _c("unit", "单位", width=10),
 )
 
 FINANCE_COLUMNS = ASSET_COLUMNS + (
@@ -90,11 +94,19 @@ DEPRECIATION_COLUMNS = (
     _c("asset_code", "资产编号", CellKind.IDENTIFIER, 20),
     _c("asset_name", "资产名称", width=24),
     _c("period_start", "期间开始", CellKind.DATE, 14),
-    _c("period_end", "期间结束", CellKind.DATE, 14),
+    _c("period_end", "期间结束（不含当天）", CellKind.DATE, 24),
     _c("method", "折旧方法", width=18),
     _c("theoretical_amount", "理论折旧（测算）", CellKind.MONEY, 18),
-    _c("actual_amount", "账面实际折旧", CellKind.MONEY, 18),
+    _c("actual_amount", "累计折旧变动金额", CellKind.MONEY, 20),
     _c("source", "实际来源", width=18),
+)
+
+MONTHLY_DEPRECIATION_COLUMNS = DEPRECIATION_COLUMNS[:5] + (
+    _c("opening_amount", "期初接续累计折旧", CellKind.MONEY, 20),
+    _c("depreciation_amount", "本期计提", CellKind.MONEY, 18),
+    _c("adjustment_amount", "折旧调整", CellKind.MONEY, 18),
+    _c("reversal_amount", "冲销净额", CellKind.MONEY, 18),
+    _c("actual_amount", "累计折旧变动净额", CellKind.MONEY, 22),
 )
 
 INVENTORY_COLUMNS = (
@@ -442,9 +454,12 @@ SUPPLY_MANAGEMENT_AMOUNT_COLUMNS = (
 REPORT_REGISTRY = {
     "asset_ledger": _report("asset_ledger", "公司资产总账", "公司资产总账", ASSET_COLUMNS),
     "fixed_asset_detail": _report("fixed_asset_detail", "固定资产明细", "固定资产明细", FINANCE_COLUMNS, financial=True),
-    "depreciation_schedule": _report("depreciation_schedule", "折旧计划", "折旧计划", DEPRECIATION_COLUMNS, financial=True),
-    "depreciation_detail": _report("depreciation_detail", "折旧明细", "折旧明细", DEPRECIATION_COLUMNS, financial=True),
-    "monthly_depreciation": _report("monthly_depreciation", "月度计提报表", "月度计提", DEPRECIATION_COLUMNS, financial=True),
+    "depreciation_schedule": _report("depreciation_schedule", "折旧计划", "折旧计划", DEPRECIATION_COLUMNS[:6] + (
+        _c("schedule_status", "计划状态", width=16),
+        _c("profile_version", "折旧版本", CellKind.INTEGER, 12),
+    ), financial=True),
+    "depreciation_detail": _report("depreciation_detail", "折旧明细", "折旧明细", DEPRECIATION_COLUMNS[:5] + DEPRECIATION_COLUMNS[6:], financial=True),
+    "monthly_depreciation": _report("monthly_depreciation", "月度计提报表", "月度计提", MONTHLY_DEPRECIATION_COLUMNS, financial=True),
     "department_assets": _report("department_assets", "部门资产", "部门资产", ASSET_COLUMNS),
     "employee_assets": _report("employee_assets", "人员资产", "人员资产", ASSET_COLUMNS),
     "inventory_results": _report("inventory_results", "盘点结果", "盘点结果", INVENTORY_COLUMNS),

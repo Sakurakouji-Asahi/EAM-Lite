@@ -9,6 +9,7 @@ from __future__ import annotations
 import uuid
 
 from django import forms
+from apps.core.multi_upload import MultiFileField
 from apps.core.form_widgets import normalize_date_widgets
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -32,6 +33,26 @@ def _style(form):
             "class",
             "form-select" if isinstance(field.widget, forms.Select) else "form-control",
         )
+
+
+class InventoryResultFilterForm(forms.Form):
+    q = forms.CharField(
+        label="查找应盘资产", required=False, max_length=200,
+        widget=forms.TextInput(attrs={"placeholder": "资产编号、设备编号、名称或快照责任人"}),
+    )
+    row_view = forms.ChoiceField(label="查看范围", required=False, choices=(
+        ("", "全部应盘资产"), ("missing", "未盘"), ("scanned", "已盘"),
+        ("normal", "现场正常"), ("exception", "现场异常"),
+        ("unresolved", "待处理差异"), ("resolved", "已有处理结论"),
+    ))
+    page_size = forms.TypedChoiceField(
+        label="每页显示", required=False, coerce=int, initial=25,
+        choices=((25, "25 条"), (50, "50 条"), (100, "100 条"), (200, "200 条")),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        _style(self)
 
 
 class InventoryTaskForm(forms.Form):
@@ -408,7 +429,7 @@ class InventoryResolutionCorrectionForm(InventoryResolutionForm):
 
 
 class InventoryAttachmentUploadForm(forms.Form):
-    uploaded_file = forms.FileField(label="盘点证据")
+    uploaded_file = MultiFileField(label="盘点证据")
 
     def __init__(self, *args, actor=None, target=None, **kwargs):
         if actor is None or target is None or not can_manage_inventory_attachment(actor, target):

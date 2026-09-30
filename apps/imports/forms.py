@@ -1,6 +1,36 @@
 import uuid
 
 from django import forms
+from apps.masterdata.models import ImportBatch
+
+
+def _filter_style(form):
+    for field in form.fields.values():
+        field.widget.attrs.setdefault("class", "form-select" if isinstance(field.widget, forms.Select) else "form-control")
+
+
+class ImportHistoryFilterForm(forms.Form):
+    q = forms.CharField(label="文件名或批次号", max_length=200, required=False)
+    import_type = forms.ChoiceField(label="导入内容", required=False, choices=())
+    status = forms.ChoiceField(label="批次状态", required=False,
+                               choices=(("", "全部状态"), *ImportBatch.Status.choices))
+
+    def __init__(self, *args, definitions, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["import_type"].choices = (("", "全部可查看类型"), *((item.import_type, item.label) for item in definitions))
+        _filter_style(self)
+
+
+class ImportRowFilterForm(forms.Form):
+    row_view = forms.ChoiceField(label="查看范围", required=False, choices=(
+        ("", "全部明细"), ("errors", "只看错误"), ("warnings", "只看提示"), ("clean", "校验通过且无提示"),
+    ))
+    row_number = forms.IntegerField(label="源表行号", required=False, min_value=1, max_value=2147483647,
+                                    widget=forms.NumberInput(attrs={"placeholder": "按 Excel 原行号定位"}))
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        _filter_style(self)
 
 
 class ImportUploadForm(forms.Form):

@@ -6,12 +6,12 @@
     {% if page_obj.paginator.num_pages > 1 %}
       <nav aria-label="分页">
         <ul class="pagination mb-0">
-          {% if page_obj.has_previous %}<li class="page-item"><a class="page-link" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page={{ page_obj.previous_page_number }}">上一页</a></li>{% endif %}
+          {% if page_obj.has_previous %}<li class="page-item"><a class="page-link" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}{{ page_parameter|default:"page" }}={{ page_obj.previous_page_number }}{% if page_anchor %}#{{ page_anchor }}{% endif %}">上一页</a></li>{% endif %}
           <li class="page-item disabled"><span class="page-link">第 {{ page_obj.number }} / {{ page_obj.paginator.num_pages }} 页</span></li>
-          {% if page_obj.has_next %}<li class="page-item"><a class="page-link" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page={{ page_obj.next_page_number }}">下一页</a></li>{% endif %}
+          {% if page_obj.has_next %}<li class="page-item"><a class="page-link" href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}{{ page_parameter|default:"page" }}={{ page_obj.next_page_number }}{% if page_anchor %}#{{ page_anchor }}{% endif %}">下一页</a></li>{% endif %}
         </ul>
       </nav>
-      <div class="d-flex align-items-center gap-2" data-page-jump data-page-query="{{ pagination_query }}">
+      <div class="d-flex align-items-center gap-2" data-page-jump data-page-query="{{ pagination_query }}" data-page-parameter="{{ page_parameter|default:'page' }}" data-page-anchor="{{ page_anchor|default:'' }}">
         <label class="small text-secondary">跳转到页 <input class="form-control form-control-sm d-inline-block app-page-jump" type="number" data-page-jump-value min="1" max="{{ page_obj.paginator.num_pages }}" value="{{ page_obj.number }}" required disabled></label><button class="btn btn-sm btn-outline-secondary" type="button" data-page-jump-go disabled>跳转</button>
       </div>
     {% endif %}

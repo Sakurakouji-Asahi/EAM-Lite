@@ -34,7 +34,12 @@ STATIC_FILES = (
     "deploy/compose.local.yaml",
     "deploy/Caddyfile.local",
     "deploy/postgres-init.sh",
+    "deploy/Dockerfile",
+    ".dockerignore",
+    "manage.py",
+    "docs/Business-Workspaces-2026-09-28.md",
 )
+SOURCE_DIRECTORIES = ("apps", "config", "requirements", "static", "templates")
 
 
 def _sha256(path: Path) -> str:
@@ -94,6 +99,13 @@ def build_package(args: argparse.Namespace) -> tuple[Path, Path, Path]:
             _copy_file(root, stage, relative)
         for script in sorted((root / "scripts" / "local").glob("*.ps1")):
             _copy_file(root, stage, script.relative_to(root).as_posix())
+        for directory in SOURCE_DIRECTORIES:
+            for source in sorted((root / directory).rglob("*")):
+                if source.is_file() and '__pycache__' not in source.parts and source.suffix not in {'.pyc','.pyo'}:
+                    _copy_file(root, stage, source.relative_to(root).as_posix())
+        manifest['bundled_source'] = True
+        manifest['source_files'] = {path.relative_to(stage).as_posix():_sha256(path)
+            for path in sorted(stage.rglob('*')) if path.is_file()}
         (stage / "release-manifest.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",

@@ -98,7 +98,7 @@ def _append_table(ws, columns, rows):
 EXCEL_MAX_DATA_ROWS = 1_048_575
 
 
-def _append_split_table(workbook, sheet_name, columns, rows):
+def _append_split_table(workbook, sheet_name, columns, rows, *, observe_row=None):
     """Write a row stream without materializing it and split at Excel's limit."""
 
     total = len(rows)
@@ -116,6 +116,8 @@ def _append_split_table(workbook, sheet_name, columns, rows):
         ws.append([_cell(ws, column.label, header=True) for column in columns])
         worksheets.append(ws)
     for row_number, row in enumerate(rows):
+        if observe_row is not None:
+            observe_row(row)
         sheet_index = row_number // EXCEL_MAX_DATA_ROWS
         worksheets[sheet_index].append(
             [_cell(worksheets[sheet_index], row.get(column.key), column.kind) for column in columns]
@@ -154,12 +156,23 @@ def write_report_workbook(dataset, destination, *, generated_at=None):
         kind = _metadata_kind(value)
         information.append([_cell(information, label, header=True), _cell(information, value, kind)])
     information.protection.sheet = True
+    from apps.reports.summaries import ReportSummary
+
+    accumulator = ReportSummary(dataset.definition)
     _append_split_table(
         workbook,
         dataset.definition.sheet_name,
         dataset.definition.columns,
         dataset.rows,
+        observe_row=accumulator.add,
     )
+    summary = accumulator.result()
+    if summary["columns"]:
+        _append_split_table(workbook, "分类汇总", summary["columns"], summary["rows"])
+    if summary["note"]:
+        information.append([_cell(information, "汇总口径", header=True), _cell(information, summary["note"])])
+    for warning in summary["missing"]:
+        information.append([_cell(information, "缺失数据", header=True), _cell(information, warning)])
     workbook.save(destination)
 
 

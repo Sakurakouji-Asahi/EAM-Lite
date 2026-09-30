@@ -81,7 +81,10 @@ NEW_TRANSITION = OLD_TRANSITION + """
 def _definition(editor, name):
     with editor.connection.cursor() as cursor:
         cursor.execute("SELECT pg_get_functiondef(%s::regprocedure)", [name + '()'])
-        return cursor.fetchone()[0]
+        # PostgreSQL retains the original function-body line endings. A body
+        # restored from Windows can contain CRLF while migration constants use
+        # LF; normalize formatting without weakening the exact guard checks.
+        return cursor.fetchone()[0].replace('\r\n', '\n')
 
 
 def _marker(branch):

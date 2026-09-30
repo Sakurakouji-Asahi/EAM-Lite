@@ -1,84 +1,9 @@
-{% extends "base.html" %}
-
-{% block title %}报表中心 | EAM-Lite{% endblock %}
-
+{% extends "reports/base.html" %}
+{% block title %}{{ definition.title|default:'报表中心' }} | EAM-Lite{% endblock %}
 {% block content %}
-<header class="app-page-header">
-  <div>
-    <h1 class="h3 mb-1">报表中心</h1>
-    <p class="text-secondary mb-0">预览、筛选条件和 Excel 导出使用同一数据口径与权限范围。</p>
-  </div>
-</header>
-
-<section class="mb-3" aria-labelledby="report-category-heading">
-  <div class="section-heading-row"><div><h2 class="h5 mb-1" id="report-category-heading">报表分类</h2><p class="text-secondary small mb-0">每类只有一个主要入口，具体报表仍按角色和数据范围显示。</p></div></div>
-  <div class="action-link-grid">
-    {% if can_view_asset_reports %}<a href="{% url 'reports:report-center' %}?report_type=asset_ledger"><strong>资产报表</strong><span>资产台账、部门、人员、设备和处置</span></a>{% endif %}
-    {% if can_view_financial_reports %}<a href="{% url 'reports:report-center' %}?report_type=fixed_asset_detail"><strong>财务与折旧</strong><span>固定资产、折旧计划和月度计提</span></a>{% endif %}
-    {% if can_view_inventory_reports %}<a href="{% url 'reports:report-center' %}?report_type=inventory_results"><strong>盘点、保养与清退</strong><span>盘点结果、保养记录和离职未清</span></a>{% elif can_view_offboarding_reports %}<a href="{% url 'reports:report-center' %}?report_type=offboarding_unresolved"><strong>盘点、保养与清退</strong><span>查看授权范围内的离职未清事项</span></a>{% endif %}
-    {% if supply_report_definitions %}<a href="{% url 'reports:supply-report-index' %}" data-report-entry="supplies"><strong>办公用品与低值品</strong><span>{{ supply_report_count }} 张可用报表</span></a>{% endif %}
-    {% if can_view_tplus_report %}<a href="{% url 'reports:tplus-export' %}"><strong>T+ 对账</strong><span>生成固定资产月末人工对账文件</span></a>{% endif %}
-  </div>
-</section>
-
-<section class="card shadow-sm mb-3 app-filter-card">
-  <div class="card-body">
-    <form method="get" class="row g-3" novalidate>
-      {% if form.non_field_errors %}<div class="col-12"><div class="alert alert-danger mb-0">{{ form.non_field_errors }}</div></div>{% endif %}
-      {% for field in form %}
-        <div class="col-12 col-md-6 col-xl-3">
-          <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
-          {{ field }}
-          {% for error in field.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
-        </div>
-      {% endfor %}
-      <div class="col-12 d-flex gap-2">
-        <button class="btn btn-primary" type="submit">查询预览</button>
-        <a class="btn btn-outline-secondary" href="{% url 'reports:report-center' %}">重置</a>
-      </div>
-    </form>
-  </div>
-</section>
-
-{% if dataset %}
-<section class="card shadow-sm app-data-card">
-  <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
-    <div>
-      <strong>{{ dataset.definition.title }}</strong>
-      <div class="report-meta"><span>预览生成时间 {{ generated_at|date:'Y-m-d H:i:s' }}</span><span>数据截止时间 {{ dataset.data_snapshot_at|date:'Y-m-d H:i:s' }}</span><span>共 {{ dataset.row_count }} 行</span></div>
-    </div>
-    {% if can_export %}
-      <form method="post" action="{% url 'reports:report-export' %}" class="m-0">
-        {% csrf_token %}
-        {% for field in form %}{{ field.as_hidden }}{% endfor %}
-        <input type="hidden" name="idempotency_key" value="{{ export_idempotency_key }}">
-        <button class="btn btn-success" type="submit">生成 Excel</button>
-      </form>
-    {% endif %}
-  </div>
-  <div class="card-body border-bottom">
-    <div class="d-flex flex-wrap gap-2">
-      {% for label, value in display_filters %}<span class="badge text-bg-light border">{{ label }}：{{ value }}</span>{% empty %}<span class="text-secondary">未附加筛选条件</span>{% endfor %}
-    </div>
-    {% for warning in dataset.warnings %}<div class="alert alert-warning mt-3 mb-0">{{ warning }}</div>{% endfor %}
-    {% if dataset.row_count > preview_limit %}<div class="alert alert-info mt-3 mb-0">页面仅预览前 {{ preview_limit }} 行，Excel 包含全部授权结果。</div>{% endif %}
-  </div>
-  <div class="table-responsive">
-    <table class="table table-striped table-hover align-middle mb-0 report-preview-table">
-      <thead><tr>{% for column in columns %}<th class="text-nowrap">{{ column.label }}</th>{% endfor %}</tr></thead>
-      <tbody>
-        {% for row in preview_rows %}
-          <tr>
-            {% for column, value in row %}
-              <td class="{% if column.kind == 'money' or column.kind == 'decimal' or column.kind == 'integer' or column.kind == 'rate' %}text-end{% endif %}">
-                {% if value is None or value == '' %}<span class="text-secondary">-</span>{% elif column.kind == 'money' %}{{ value|floatformat:2 }}{% elif column.kind == 'date' %}{{ value|date:'Y-m-d' }}{% elif column.kind == 'datetime' %}{{ value|date:'Y-m-d H:i:s' }}{% else %}{{ value }}{% endif %}
-              </td>
-            {% endfor %}
-          </tr>
-        {% empty %}<tr><td colspan="{{ columns|length }}" class="text-center text-secondary py-4">当前条件下没有数据。</td></tr>{% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
-{% endif %}
+<header class="app-page-header"><div><p class="small text-secondary mb-1">报表中心</p><h1 class="h3 mb-1">{{ definition.title|default:'报表中心' }}</h1><p class="text-secondary mb-0">{{ report_description }}</p></div>{% if supply_report_definitions %}<a class="btn btn-outline-secondary" href="{% url 'reports:supply-report-index' %}">数量物品报表目录</a>{% endif %}</header>
+{% include 'reports/_navigation.html' %}
+{% include 'reports/_filters.html' %}
+{% include 'reports/_presets.html' %}
+{% include 'reports/_results.html' %}
 {% endblock %}

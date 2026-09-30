@@ -1,4 +1,5 @@
-{% extends "base.html" %}
+{% extends "reports/base.html" %}
+{% load report_format %}
 
 {% block title %}T+ 人工对账导出 | EAM-Lite{% endblock %}
 
@@ -7,6 +8,7 @@
   <h1 class="h3 mb-1">T+ 月末人工对账导出</h1>
   <p class="text-danger mb-0">仅供 T+ 人工对账，不代表已记账；不会同步、推送或写入 T+。</p>
 </header>
+{% include 'reports/_navigation.html' %}
 
 <section class="card shadow-sm mb-3 app-filter-card">
   <div class="card-body">
@@ -36,29 +38,33 @@
   <div class="card-body">
     {% for warning in dataset.warnings %}<div class="alert alert-warning">{{ warning }}</div>{% endfor %}
     <div class="row g-2">
-      {% for key, amount in total_rows %}<div class="col-12 col-md-6 col-xl-4"><div class="border rounded p-2"><div class="small text-secondary">{{ key }}</div><div class="text-end fw-semibold">{{ amount|floatformat:2 }} CNY</div></div></div>{% endfor %}
+      {% for key, amount in total_rows %}<div class="col-12 col-md-6 col-xl-4"><div class="border rounded p-2"><div class="small text-secondary">{{ key }}</div><div class="text-end fw-semibold">{{ amount|report_number }} CNY</div></div></div>{% endfor %}
     </div>
   </div>
-  <div class="table-responsive">
-    <table class="table table-striped align-middle mb-0 report-preview-table">
+  <div class="table-responsive report-detail-scroll">
+    <table class="table table-hover align-middle mb-0 report-preview-table">
       <thead><tr>{% for column in asset_columns %}<th class="text-nowrap">{{ column.label }}</th>{% endfor %}</tr></thead>
-      <tbody>{% for row in asset_preview_rows %}<tr>{% for column, value in row %}<td class="{% if column.kind == 'money' or column.kind == 'decimal' or column.kind == 'integer' or column.kind == 'rate' %}text-end{% endif %}">{% if value is None or value == '' %}<span class="text-secondary">—</span>{% elif column.kind == 'money' %}{{ value|floatformat:2 }}{% elif column.kind == 'date' %}{{ value|date:'Y-m-d' }}{% else %}{{ value }}{% endif %}</td>{% endfor %}</tr>{% empty %}<tr><td colspan="{{ asset_columns|length }}" class="text-center text-secondary py-4">没有可导出的固定资产。</td></tr>{% endfor %}</tbody>
+      <tbody>{% for row in asset_preview_rows %}<tr>{% for column, value in row %}<td class="{% if column.kind == 'money' or column.kind == 'decimal' or column.kind == 'integer' or column.kind == 'rate' %}text-end{% endif %}">{% include 'reports/_cell.html' %}</td>{% endfor %}</tr>{% empty %}<tr><td colspan="{{ asset_columns|length }}" class="text-center text-secondary py-4">没有可导出的固定资产。</td></tr>{% endfor %}</tbody>
     </table>
   </div>
+  <nav class="report-pagination" aria-label="对账资产分页"><span>资产第 {{ asset_page_obj.start_index }}–{{ asset_page_obj.end_index }} 条，共 {{ asset_page_obj.paginator.count }} 条</span><div class="btn-group">{% if asset_page_obj.has_previous %}<a class="btn btn-sm btn-outline-secondary" href="?{{ tplus_pagination_query }}&amp;entry_page={{ entry_page_obj.number }}&amp;asset_page={{ asset_page_obj.previous_page_number }}">上一页资产</a>{% endif %}{% if asset_page_obj.has_next %}<a class="btn btn-sm btn-outline-secondary" href="?{{ tplus_pagination_query }}&amp;entry_page={{ entry_page_obj.number }}&amp;asset_page={{ asset_page_obj.next_page_number }}">下一页资产</a>{% endif %}</div></nav>
   {% if entry_preview_rows %}
     <div class="card-header border-top"><strong>本期实际折旧分录预览</strong></div>
-    <div class="table-responsive"><table class="table table-striped align-middle mb-0 report-preview-table"><thead><tr>{% for column in entry_columns %}<th class="text-nowrap">{{ column.label }}</th>{% endfor %}</tr></thead><tbody>{% for row in entry_preview_rows %}<tr>{% for column, value in row %}<td class="{% if column.kind == 'money' %}text-end{% endif %}">{% if value is None or value == '' %}<span class="text-secondary">—</span>{% elif column.kind == 'money' %}{{ value|floatformat:2 }}{% elif column.kind == 'date' %}{{ value|date:'Y-m-d' }}{% elif column.kind == 'datetime' %}{{ value|date:'Y-m-d H:i:s' }}{% else %}{{ value }}{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+    <div class="table-responsive report-detail-scroll"><table class="table table-hover align-middle mb-0 report-preview-table"><thead><tr>{% for column in entry_columns %}<th class="text-nowrap">{{ column.label }}</th>{% endfor %}</tr></thead><tbody>{% for row in entry_preview_rows %}<tr>{% for column, value in row %}<td class="{% if column.kind == 'money' %}text-end{% endif %}">{% include 'reports/_cell.html' %}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+    <nav class="report-pagination" aria-label="折旧分录分页"><span>分录第 {{ entry_page_obj.start_index }}–{{ entry_page_obj.end_index }} 条，共 {{ entry_page_obj.paginator.count }} 条</span><div class="btn-group">{% if entry_page_obj.has_previous %}<a class="btn btn-sm btn-outline-secondary" href="?{{ tplus_pagination_query }}&amp;asset_page={{ asset_page_obj.number }}&amp;entry_page={{ entry_page_obj.previous_page_number }}">上一页分录</a>{% endif %}{% if entry_page_obj.has_next %}<a class="btn btn-sm btn-outline-secondary" href="?{{ tplus_pagination_query }}&amp;asset_page={{ asset_page_obj.number }}&amp;entry_page={{ entry_page_obj.next_page_number }}">下一页分录</a>{% endif %}</div></nav>
   {% endif %}
 </section>
 {% endif %}
 
 <section class="card shadow-sm">
-  <div class="card-header">历史导出</div>
+  <div class="card-header" id="export-history">历史导出</div>
+  {% include "reports/_history_filters.html" %}
   <div class="table-responsive">
-    <table class="table table-striped align-middle mb-0">
+    <table class="table table-hover align-middle mb-0">
       <thead><tr><th>期间</th><th>状态</th><th>导出人</th><th>请求时间</th><th>生成时间</th><th>数据截止时间</th><th>资产数</th><th></th></tr></thead>
-      <tbody>{% for item in history %}<tr><td>{{ item.filters_json.period|default:'—' }}</td><td>{{ item.get_status_display }}</td><td>{{ item.requested_by.display_name|default:item.requested_by.username|default:'系统' }}</td><td>{{ item.requested_at|date:'Y-m-d H:i:s' }}</td><td>{{ item.completed_at|date:'Y-m-d H:i:s'|default:'—' }}</td><td>{{ item.data_snapshot_at|date:'Y-m-d H:i:s'|default:'—' }}</td><td>{{ item.row_count|default_if_none:'—' }}</td><td><a href="{% url 'reports:export-detail' item.pk %}">详情</a></td></tr>{% empty %}<tr><td colspan="8" class="text-center text-secondary py-4">暂无历史导出。</td></tr>{% endfor %}</tbody>
+      <tbody>{% for item in history %}<tr><td>{{ item.filters_json.period|default:'—' }}</td><td>{{ item.get_status_display }}</td><td>{% if item.requested_by %}{{ item.requested_by.display_name|default:item.requested_by.username }}{% else %}历史账号{% endif %}</td><td>{{ item.requested_at|date:'Y-m-d H:i:s' }}</td><td>{{ item.completed_at|date:'Y-m-d H:i:s'|default:'—' }}</td><td>{{ item.data_snapshot_at|date:'Y-m-d H:i:s'|default:'—' }}</td><td>{{ item.row_count|default_if_none:'—' }}</td><td><a href="{% url 'reports:export-detail' item.pk %}">详情</a></td></tr>{% empty %}<tr><td colspan="8" class="text-center text-secondary py-4">暂无历史导出。</td></tr>{% endfor %}</tbody>
     </table>
   </div>
+<div class="card-footer">{% include '_pagination.html' with page_obj=history_page_obj pagination_query=history_pagination_query page_parameter='history_page' page_anchor='export-history' %}</div>
 </section>
 {% endblock %}

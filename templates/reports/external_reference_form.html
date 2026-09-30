@@ -11,7 +11,7 @@
     {% for field in form %}<div class="mb-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% for error in field.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}</div>{% endfor %}
     <div class="alert alert-warning">此操作只维护人工核对引用，不会连接、推送或修改 T+。</div>
     <button class="btn btn-primary" type="submit">保存并记录审计</button>
-    <a class="btn btn-outline-secondary" href="{% url 'reports:external-reference-list' %}">取消</a>
+    <a class="btn btn-outline-secondary" href="{{ return_url }}">取消</a>
   </form>
 </div></section>
 {% endblock %}

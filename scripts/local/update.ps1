@@ -109,6 +109,13 @@ try {
         throw "GitHub latest 不是正式 Release，已拒绝更新。"
     }
     $latestVersion = ([string]$latest.tag_name).TrimStart("v")
+    $currentCore = [regex]::Match([string]$identityBefore.Version, '^\d+\.\d+\.\d+').Value
+    $latestCore = [regex]::Match($latestVersion, '^\d+\.\d+\.\d+').Value
+    if (-not $currentCore -or -not $latestCore) { throw "无法比较版本，已停止自动更新。" }
+    if ([version]$latestCore -lt [version]$currentCore) {
+        Write-Host "当前版本高于最新正式发行版，已保留当前程序和更新前备份。" -ForegroundColor Green
+        exit 0
+    }
     if ($latestVersion -eq $identityBefore.Version) {
         Write-Host "当前已是最新正式 Release；更新前备份仍已保留。" -ForegroundColor Green
         if (-not $NoBrowser) { Open-EamBrowser -Url $context.Url }
@@ -127,7 +134,7 @@ try {
     Invoke-WebRequest -Uri $zipAsset.browser_download_url -OutFile $zipPath -Headers $headers -UseBasicParsing -TimeoutSec 300
     Invoke-WebRequest -Uri $hashAsset.browser_download_url -OutFile $hashPath -Headers $headers -UseBasicParsing -TimeoutSec 30
     $expectedHash = ((Get-Content -LiteralPath $hashPath -Raw -Encoding UTF8) -split '\s+')[0].ToLowerInvariant()
-    $actualHash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actualHash = (Get-EamFileSha256 -LiteralPath $zipPath)
     if ($expectedHash -notmatch '^[0-9a-f]{64}$' -or $actualHash -ne $expectedHash) {
         throw "Windows Release ZIP 的 SHA-256 校验失败。"
     }

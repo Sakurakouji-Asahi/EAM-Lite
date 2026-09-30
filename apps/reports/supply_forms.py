@@ -31,7 +31,7 @@ LOW_STOCK_FILTER_CHOICES = (
     ("no", "仅非低库存"),
 )
 
-COMMON = {"category", "item_code", "management_mode"}
+COMMON = {"category", "item_code", "management_mode", "q"}
 FILTERS_BY_REPORT = {
     "supply_stock_balance": COMMON
     | {"warehouse", "include_zero", "low_stock"},
@@ -80,6 +80,8 @@ FILTERS_BY_REPORT = {
 
 
 class SupplyReportFilterForm(forms.Form):
+    q = forms.CharField(label="物品关键词", required=False, max_length=100,
+                        widget=forms.TextInput(attrs={"placeholder": "物品编码或名称，支持部分文字"}))
     date_from = forms.DateField(
         label="开始日期",
         required=False,
@@ -96,7 +98,7 @@ class SupplyReportFilterForm(forms.Form):
     category = forms.ModelChoiceField(
         label="分类", required=False, queryset=SupplyCategory.objects.none()
     )
-    item_code = forms.CharField(label="物品编码", required=False, max_length=100)
+    item_code = forms.CharField(label="物品编码（精确）", required=False, max_length=100)
     management_mode = forms.ChoiceField(
         label="管理模式",
         required=False,

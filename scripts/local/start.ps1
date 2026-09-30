@@ -23,13 +23,8 @@ try {
     }
 
     Assert-EamPortAvailable -Port 8765 -Url $context.Url -ExpectedEnvironment "local"
-    if ($identity.Kind -eq "git") {
-        Build-EamImage -RepositoryRoot $repositoryRoot -Identity $identity
-    }
-    else {
-        Write-Host "正在获取 Release 精确镜像（含 digest）……" -ForegroundColor Cyan
-        Pull-EamImage -Image $identity.AppImage
-    }
+    Ensure-EamApplicationImage -RepositoryRoot $repositoryRoot -Identity $identity
+    Set-EamTemporaryComposeValue -State $state -Name 'EAM_APP_IMAGE' -Value $identity.AppImage
 
     Invoke-EamCompose -Context $context -Arguments @("up", "--detach", "--wait", "db") | Out-Null
     $needsRelease = -not (Test-EamReleaseMarker -State $state -Identity $identity)

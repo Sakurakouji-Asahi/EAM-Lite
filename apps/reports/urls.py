@@ -1,11 +1,16 @@
 from django.urls import path
 
 from apps.reports import views
+from apps.reports import workspace_views
 
 
 app_name = "reports"
 
 urlpatterns = [
+    path('exports/', workspace_views.export_history, name='export-history'),
+    path('presets/save/', workspace_views.preset_save, name='preset-save'),
+    path('presets/<uuid:pk>/', workspace_views.preset_apply, name='preset-apply'),
+    path('presets/<uuid:pk>/delete/', workspace_views.preset_delete, name='preset-delete'),
     path("", views.report_center, name="report-center"),
     path("supplies/", views.supply_report_index, name="supply-report-index"),
     path(

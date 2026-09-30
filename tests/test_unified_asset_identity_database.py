@@ -110,8 +110,10 @@ def test_year_matching_acquisition_date_has_real_evidence(context):
 
 
 def _legacy_targets(latest):
-    return [(label, "0015_physical_registration" if label == "assets" else "0012_sprint16_opening_custody_import" if label == "masterdata" else name)
-            for label, name in latest]
+    # Later audit migrations depend on the new asset identity. Request only
+    # the old roots so Django can also reverse their dependent migrations.
+    return [("assets", "0015_physical_registration"),
+            ("masterdata", "0012_sprint16_opening_custody_import")]
 
 
 def test_upgrade_keeps_existing_legacy_registration_and_does_not_infer_attribute():

@@ -229,7 +229,7 @@ def test_employee_directory_filters_and_columns_preserve_notes(context, client):
     before = list(Employee.objects.order_by("pk").values())
     client.force_login(context["admin"])
     response = client.get(reverse("masterdata:employee-list"), {"department": employee.department_id, "position": "生产助理", "source_mark": "莹润"})
-    assert response.status_code == 200 and response.context["objects"].count() == 1
+    assert response.status_code == 200 and response.context["page_obj"].paginator.count == 1
     assert response.context["objects"][0].pk == employee.pk
     assert "生产助理" in response.content.decode() and "莹润" in response.content.decode()
     employee.refresh_from_db()
@@ -240,7 +240,7 @@ def test_employee_directory_filters_and_columns_preserve_notes(context, client):
 def test_employee_filter_preserves_and_explains_unmatched_selection(context, client):
     client.force_login(context["admin"])
     response = client.get(reverse("masterdata:employee-list"), {"position": "旧岗位"})
-    assert response.status_code == 200 and response.context["objects"].count() == 0
+    assert response.status_code == 200 and response.context["page_obj"].paginator.count == 0
     assert response.context["filter_errors"]
     assert 'value="旧岗位" selected' in response.content.decode()
 
@@ -256,7 +256,7 @@ def test_employee_directory_does_not_expose_out_of_scope_filter_options(context,
     response = client.get(reverse("masterdata:employee-list"))
     assert "隐藏岗位" not in response.content.decode() and private.pk not in {d.pk for d in response.context["department_options"]}
     response = client.get(reverse("masterdata:employee-list"), {"department": private.pk})
-    assert response.context["filter_errors"] and response.context["objects"].count() == 0
+    assert response.context["filter_errors"] and response.context["page_obj"].paginator.count == 0
 
 
 def test_employee_parent_filter_includes_visible_subgroups_without_direct_staff(context, client):
@@ -300,7 +300,7 @@ def test_employee_subgroup_scope_does_not_expose_unauthorized_ancestor(context, 
     assert parent.name not in response.content.decode()
     rejected = client.get(reverse("masterdata:employee-list"), {"department": parent.pk})
     assert rejected.context["filter_errors"]
-    assert rejected.context["objects"].count() == 0
+    assert rejected.context["page_obj"].paginator.count == 0
 
 
 @pytest.mark.parametrize("form_class,field", [(InventoryTaskForm, "planned_start"), (MaintenancePlanForm, "first_due_date"), (SupplyCountTaskForm, "planned_start")])

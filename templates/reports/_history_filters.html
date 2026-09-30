@@ -1,0 +1,5 @@
+<form method="get" class="card-body border-bottom">
+{% for key,value in history_preserved %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+{% if history_filter_form.non_field_errors %}<div class="alert alert-danger">{{ history_filter_form.non_field_errors }}</div>{% endif %}
+<div class="row g-2 align-items-end">{% for field in history_filter_form %}<div class="col-md-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% for error in field.errors %}<div class="text-danger">{{ error }}</div>{% endfor %}</div>{% endfor %}<div class="col-auto"><button class="btn btn-primary">查询历史</button> <a class="btn btn-outline-secondary" href="?{{ history_reset_query }}">重置历史条件</a></div></div>
+</form>

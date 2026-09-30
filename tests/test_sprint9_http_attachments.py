@@ -197,7 +197,7 @@ def test_home_due_detail_qr_mobile_completion_and_multipart_upload_http(tmp_path
             reverse("maintenance:attachment-download", args=[link.pk])
         )
         assert download.status_code == 200
-        assert download["Content-Disposition"] == "attachment"
+        assert download["Content-Disposition"] == "attachment; filename*=UTF-8''mobile.jpg"
         assert download["Cache-Control"] == "private, no-store"
         assert download["X-Content-Type-Options"] == "nosniff"
 

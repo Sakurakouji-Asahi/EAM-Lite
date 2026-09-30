@@ -367,6 +367,7 @@ def _asset_rows(*, actor, company, report_key, filters):
     for asset in assets:
         at = attribution[asset.pk]
         row = {
+            "_asset_id": asset.pk,
             "asset_code": asset.asset_code or (asset.draft_number if "asset_list_filters" in filters else f"草稿-{asset.pk}"),
             "asset_name": asset.asset_name,
             "category": asset.category.name,
@@ -377,10 +378,24 @@ def _asset_rows(*, actor, company, report_key, filters):
             "asset_status": asset_status_display(asset, at["asset_status"], as_of=as_of),
             "quantity": asset.quantity,
             "acquisition_date": asset.acquisition_date,
+            "equipment_number": asset.equipment_number,
+            "serial_number": asset.serial_number,
+            "brand": asset.brand,
+            "unit": asset.unit,
+            "_summary_identity": {
+                "department": getattr(at["department"], "pk", None),
+                "responsible_employee": getattr(at["responsible_employee"], "pk", None),
+            },
+            "_summary_labels": {
+                "department": str(at["department"]) if at["department"] else "",
+                "responsible_employee": str(at["responsible_employee"]) if at["responsible_employee"] else "",
+            },
         }
         if report_key == "fixed_asset_detail":
             finance = asset.finance
             balance = balances.get(asset.pk)
+            row["_summary_identity"]["fixed_asset_category"] = finance.fixed_asset_category_id
+            row["_summary_labels"]["fixed_asset_category"] = str(finance.fixed_asset_category) if finance.fixed_asset_category else ""
             row.update({
                 "accounting_treatment": finance.get_accounting_treatment_display(),
                 "fixed_asset_category": getattr(finance.fixed_asset_category, "name", ""),
@@ -411,11 +426,14 @@ def _depreciation_rows(*, actor, company, report_key, filters):
         rows = []
         for item in qs.order_by("asset__asset_code", "period_start", "sequence_no"):
             rows.append({
+                "_asset_id": item.asset_id,
                 "asset_code": item.asset.asset_code, "asset_name": item.asset.asset_name,
                 "period_start": item.period_start, "period_end": item.period_end,
                 "method": item.depreciation_profile.get_method_display(),
                 "theoretical_amount": item.planned_amount, "actual_amount": ZERO,
                 "source": "计划/理论（不入账）",
+                "schedule_status": item.get_status_display(),
+                "profile_version": item.depreciation_profile.version,
             })
         return rows
     qs = approved_depreciation_entries(
@@ -441,6 +459,7 @@ def _depreciation_rows(*, actor, company, report_key, filters):
             row = grouped.setdefault(
                 key,
                 {
+                    "_asset_id": item.asset_id,
                     "asset_code": item.asset.asset_code,
                     "asset_name": item.asset.asset_name,
                     "period_start": month_start,
@@ -448,10 +467,19 @@ def _depreciation_rows(*, actor, company, report_key, filters):
                     "method": item.depreciation_profile.get_method_display(),
                     "theoretical_amount": None,
                     "actual_amount": ZERO,
+                    "opening_amount": ZERO,
+                    "depreciation_amount": ZERO,
+                    "adjustment_amount": ZERO,
+                    "reversal_amount": ZERO,
                     "source": "已过账分录代数净额",
                 },
             )
             row["actual_amount"] = money(row["actual_amount"] + item.amount)
+            component = "reversal_amount" if item.reversal_of_id else {
+                "opening": "opening_amount", "batch": "depreciation_amount",
+                "adjustment": "adjustment_amount",
+            }[item.source_type]
+            row[component] = money(row[component] + item.amount)
         return sorted(
             grouped.values(), key=lambda row: (row["asset_code"], row["period_start"])
         )
@@ -459,6 +487,7 @@ def _depreciation_rows(*, actor, company, report_key, filters):
     for item in qs.order_by("asset__asset_code", "period_start", "created_at"):
         business_date = depreciation_entry_business_date(item)
         rows.append({
+            "_asset_id": item.asset_id,
             "asset_code": item.asset.asset_code, "asset_name": item.asset.asset_name,
             "period_start": item.period_start if item.source_type == "batch" and not item.reversal_of_id else business_date,
             "period_end": item.period_end if item.source_type == "batch" and not item.reversal_of_id else business_date + timedelta(days=1),
@@ -500,6 +529,7 @@ def _inventory_rows(*, actor, company, differences_only, filters):
         scan = next((s for s in item.scans.all() if s.is_effective), None)
         resolution = next((r for r in item.resolutions.all() if r.status == "active"), None)
         rows.append({
+            "_source_refs": {"task_code": ("inventory", str(item.inventory_task_id))},
             "task_code": item.inventory_task.task_code,
             "asset_code": item.expected_code_snapshot,
             "asset_name": item.expected_name_snapshot,
@@ -535,6 +565,7 @@ def _maintenance_rows(*, actor, company, report_key, filters):
                 completed_date__lte=filters["period_end"],
             )
         return [{
+            "_source_refs": {"plan_name": ("plan", str(r.maintenance_plan_id)), "completed_date": ("record", str(r.pk))},
             "asset_code": r.asset.asset_code, "asset_name": r.asset.asset_name,
             "plan_name": r.maintenance_plan.name, "scheduled_date": r.scheduled_date,
             "completed_date": r.completed_date, "completed_by": getattr(r.completed_by, "name", ""),
@@ -558,6 +589,7 @@ def _maintenance_rows(*, actor, company, report_key, filters):
         if due_scope == "overdue" and due != "逾期":
             continue
         rows.append({
+            "_source_refs": {"plan_name": ("plan", str(plan.pk))},
             "asset_code": plan.asset.asset_code, "asset_name": plan.asset.asset_name,
             "plan_name": plan.name, "responsible_employee": plan.responsible_employee.name,
             "cycle": f"{plan.cycle_value}{plan.get_cycle_unit_display()}",
@@ -578,6 +610,7 @@ def _offboarding_rows(*, actor, company, filters):
         qs = qs.filter(pk__in=filters["_authorized_clearance_item_ids"])
     qs = qs.select_related("clearance__employee")
     return [{
+        "_source_refs": {"employee_no": ("clearance", str(item.clearance_id))},
         "employee_no": item.clearance.employee.employee_no,
         "employee_name": item.clearance.employee.name,
         "asset_code": item.asset_code_snapshot, "asset_name": item.asset_name_snapshot,
@@ -597,6 +630,7 @@ def _disposal_rows(*, actor, company, filters):
     if start:
         qs = qs.filter(actual_disposal_date__gte=start, actual_disposal_date__lte=end)
     return [{
+        "_source_refs": {"disposal_type": ("disposal", str(d.pk))},
         "asset_code": d.asset.asset_code, "asset_name": d.asset.asset_name,
         "disposal_type": d.get_disposal_type_display(),
         "actual_disposal_date": d.actual_disposal_date, "status": d.get_status_display(),
@@ -666,6 +700,12 @@ def build_report_dataset(*, actor, company, report_key, filters=None):
             rows = _disposal_rows(actor=actor, company=company, filters=clean)
         else:
             raise ReportValidationError(("未知报表查询。",))
+        keyword = str(clean.get("q") or "").strip().casefold()
+        if len(keyword) > 100:
+            raise ReportValidationError(("关键词不得超过 100 个字符。",))
+        if keyword:
+            search_columns = [column.key for column in definition.columns if column.kind in {"text", "identifier"}]
+            rows = [row for row in rows if any(keyword in str(row.get(name) or "").casefold() for name in search_columns)]
         return ReportDataset(
             definition=definition, rows=_frozen_rows(rows),
             filters=MappingProxyType(clean), data_snapshot_at=snapshot_at,

@@ -14,6 +14,7 @@ from django.views.decorators.http import require_GET
 from apps.masterdata.models import InitializationSetting
 from apps.masterdata.permissions import current_company
 from apps.reports.queries import build_dashboard
+from apps.assets.workbenches import lifecycle_work_summary
 
 from .context_processors import build_application_navigation
 
@@ -178,6 +179,7 @@ def task_center(request):
             "app_navigation": navigation,
             "dashboard": dashboard,
             "supply_dashboard": supply_dashboard,
+            "lifecycle_work": lifecycle_work_summary(request.user, company) if company else None,
         },
     )
     response["Cache-Control"] = "private, no-store"

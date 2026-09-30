@@ -33,6 +33,7 @@ from apps.audit.services import request_audit_context, write_business_audit_log
 from apps.assets.permissions import can_create_asset_draft
 from apps.assets.services import _validate_filename, create_asset_draft
 from apps.finance.permissions import can_manage_finance
+from apps.imports.identifiers import opening_stock_document_key
 from apps.masterdata.normalization import clean_display_identifier, normalize_identifier
 from apps.masterdata.permissions import (
     current_company,
@@ -3039,9 +3040,7 @@ def _confirm_import_batch_atomic(*, actor, batch, request=None):
                 data={
                     "business_date": timezone.localdate(),
                     "target_warehouse": warehouse,
-                    "idempotency_key": (
-                        f"opening-stock-import:{batch.pk}:{warehouse.pk}"
-                    ),
+                    "idempotency_key": opening_stock_document_key(batch.pk, warehouse.pk),
                     "remark": f"由期初库存导入批次 {batch.pk} 生成，尚未过账。",
                 },
                 lines=[

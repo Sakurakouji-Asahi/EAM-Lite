@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+from apps.core.multi_upload import upload_many
 from django.contrib import messages
+from apps.core.pagination import paginate_query
+from apps.audit.models import AuditLog
+from apps.maintenance.assignment import ProblemAssignmentForm, assign_problem
+from apps.maintenance.domain import business_date
+from django.db.models.functions import Coalesce
 from django.contrib.auth.decorators import login_required
 from django import forms
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.storage import default_storage
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Case, Count, Q, When
 from django.http import FileResponse, Http404, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils.encoding import escape_uri_path
 
 from apps.assets.models import Asset
 from apps.assets.models import AttachmentLink
@@ -20,7 +27,9 @@ from apps.maintenance.forms import (
     MaintenanceAttachmentUploadForm,
     MaintenancePlanForm,
     MaintenanceProblemCloseForm,
+    MaintenanceProblemFilterForm,
     MaintenanceRecordVoidForm,
+    MaintenanceRecordFilterForm,
 )
 from apps.maintenance.models import (
     MaintenancePlan,
@@ -54,7 +63,7 @@ from apps.maintenance.services import (
     void_maintenance_attachment,
     void_maintenance_record,
 )
-from apps.masterdata.models import InitializationSetting
+from apps.masterdata.models import InitializationSetting, Employee
 from apps.masterdata.permissions import current_company
 
 
@@ -94,7 +103,8 @@ def _record(request, pk):
     company = _company()
     record = get_object_or_404(
         MaintenanceRecord.objects.select_related(
-            "company", "maintenance_plan", "asset", "completed_by", "voided_by"
+            "company", "maintenance_plan", "asset", "completed_by", "voided_by",
+            "problem__owner_employee", "problem__closed_by",
         ),
         pk=pk,
         company=company,
@@ -162,33 +172,15 @@ def _can_manage_any_plan(user, company):
 
 @login_required
 def plan_list(request):
+    from .workspaces import PlanQueryForm
     company = _company()
-    plans = _plans(request.user, company)
-    query = request.GET.get("q", "").strip()
-    status = request.GET.get("status", "").strip()
-    if query:
-        plans = plans.filter(
-            Q(name__icontains=query)
-            | Q(asset__asset_code__icontains=query)
-            | Q(asset__asset_name__icontains=query)
-        )
-    if status in MaintenancePlan.Status.values:
-        plans = plans.filter(status=status)
-    page_obj, pagination_query = _paginate(
-        request, plans.order_by("next_maintenance_date", "asset__asset_code")
-    )
-    return render(
-        request,
-        "maintenance/plan_list.html",
-        {
-            "plans": page_obj,
-            "page_obj": page_obj,
-            "pagination_query": pagination_query,
-            "status_choices": MaintenancePlan.Status.choices,
-            "filters": {"q": query, "status": status},
-            "can_manage": _can_manage_any_plan(request.user, company),
-        },
-    )
+    plans = _plans(request.user,company)
+    form = PlanQueryForm(request.GET,plans=plans)
+    selected = form.apply(plans).order_by('next_maintenance_date','asset__asset_code','pk')
+    page,query = _paginate(request,selected)
+    return render(request,'maintenance/plan_list.html',{'plans':page,'page_obj':page,'pagination_query':query,
+        'filter_form':form,'filters':{'q':request.GET.get('q',''),'status':request.GET.get('status','')},
+        'can_manage':_can_manage_any_plan(request.user,company)},status=200 if form.is_valid() else 400)
 
 
 @login_required
@@ -226,6 +218,7 @@ def plan_create(request):
 
 @login_required
 def plan_edit(request, pk):
+    from .services import plan_date_preview
     plan = _plan(request, pk)
     require_manage_maintenance_plan(request.user, plan)
     form = MaintenancePlanForm(
@@ -235,6 +228,16 @@ def plan_edit(request, pk):
         instance=plan,
     )
     if request.method == "POST" and form.is_valid():
+        if request.POST.get('action') == 'preview':
+            try:
+                dates = plan_date_preview(plan, **{key:form.cleaned_data[key] for key in ('cycle_value','cycle_unit','first_due_date')})
+            except ValidationError as exc:
+                _service_error(form, exc)
+            else:
+                return render(request, 'maintenance/plan_form.html', {'form':form, 'title':'编辑保养计划',
+                    'has_eligible_assets':True, 'editing':True, 'date_preview':dates})
+            return render(request, 'maintenance/plan_form.html', {'form':form, 'title':'编辑保养计划',
+                'has_eligible_assets':True, 'editing':True})
         try:
             plan = update_maintenance_plan(
                 actor=request.user,
@@ -254,30 +257,29 @@ def plan_edit(request, pk):
     return render(
         request,
         "maintenance/plan_form.html",
-        {"form": form, "title": "编辑保养计划", "has_eligible_assets": True},
+        {"form": form, "title": "编辑保养计划", "has_eligible_assets": True, "editing":True},
     )
 
 
 @login_required
 def plan_detail(request, pk):
-    plan = _plan(request, pk)
-    return render(
-        request,
-        "maintenance/plan_detail.html",
-        {
-            "plan": plan,
-            "records": plan.records.select_related("completed_by").all(),
-            "can_manage": can_manage_maintenance_plan(request.user, plan),
-            "can_complete": plan.status == "active"
-            and can_complete_maintenance(request.user, plan),
-        },
-    )
+    from .workspaces import PlanHistoryForm
+    plan = _plan(request,pk)
+    form = PlanHistoryForm(request.GET)
+    records = form.apply(plan.records.select_related('completed_by','maintenance_plan','asset')).order_by('-completed_date','-created_at','pk')
+    page,query = _paginate(request,records,per_page=form.cleaned_data.get('page_size') or 25)
+    return render(request,'maintenance/plan_detail.html',{'plan':plan,'records':page,'page_obj':page,
+        'pagination_query':query,'filter_form':form,'can_manage':can_manage_maintenance_plan(request.user,plan),
+        'can_complete':plan.status == 'active' and can_complete_maintenance(request.user,plan)},status=200 if form.is_valid() else 400)
 
 
 @login_required
 def due_list(request):
     company = _company()
     plans = _plans(request.user, company).filter(status="active")
+    from .workspaces import PlanQueryForm
+    form = PlanQueryForm(request.GET,plans=plans,due=True)
+    plans = form.apply(plans)
     items = []
     counts = {"upcoming": 0, "due_today": 0, "overdue": 0}
     labels = {"upcoming": "即将到期", "due_today": "今日到期", "overdue": "逾期"}
@@ -296,16 +298,19 @@ def due_list(request):
                     "can_complete": can_complete_maintenance(request.user, plan),
                 }
             )
+    if form.is_valid() and form.cleaned_data["due_scope"]:
+        items = [item for item in items if item["due_status"] == form.cleaned_data["due_scope"]]
     page_obj, pagination_query = _paginate(request, items)
     return render(
         request,
         "maintenance/due_list.html",
         {
             "items": page_obj,
+            "filter_form": form,
             "counts": counts,
             "page_obj": page_obj,
             "pagination_query": pagination_query,
-        },
+        }, status=200 if form.is_valid() else 400,
     )
 
 
@@ -335,7 +340,7 @@ def _complete_view(request, plan, *, scheduled_date=None):
                     **completion_data,
                 )
                 if form.cleaned_data.get("uploaded_file"):
-                    upload_maintenance_attachment(
+                    upload_many(upload_maintenance_attachment,
                         actor=request.user,
                         target=record,
                         uploaded_file=form.cleaned_data["uploaded_file"],
@@ -392,8 +397,23 @@ def record_list(request):
     records = MaintenanceRecord.objects.filter(
         maintenance_plan__in=plans
     ).select_related("maintenance_plan", "asset", "completed_by")
+    form = MaintenanceRecordFilterForm(request.GET)
+    valid = form.is_valid()
+    if valid:
+        query = form.cleaned_data["q"]
+        if query:
+            records = records.filter(Q(asset__asset_code__icontains=query) | Q(asset__equipment_number__icontains=query)
+                                     | Q(asset__asset_name__icontains=query) | Q(maintenance_plan__name__icontains=query))
+        if form.cleaned_data["date_from"]:
+            records = records.filter(completed_date__gte=form.cleaned_data["date_from"])
+        if form.cleaned_data["date_to"]:
+            records = records.filter(completed_date__lte=form.cleaned_data["date_to"])
+        if form.cleaned_data["status"]:
+            records = records.filter(status=form.cleaned_data["status"])
+    else:
+        records = records.none()
     page_obj, pagination_query = _paginate(
-        request, records.order_by("-completed_date", "-created_at")
+        request, records.order_by("-completed_date", "-created_at", "pk"), per_page=form.cleaned_data.get("page_size") or 25
     )
     return render(
         request,
@@ -402,7 +422,10 @@ def record_list(request):
             "records": page_obj,
             "page_obj": page_obj,
             "pagination_query": pagination_query,
+            "filter_form": form,
+            "show_asset_columns": True,
         },
+        status=200 if valid else 400,
     )
 
 
@@ -432,11 +455,14 @@ def record_detail(request, pk):
                         ),
                     }
                 )
+    assignment_history = AuditLog.objects.filter(company=record.company,object_type="MaintenanceProblem",
+        object_id=str(problem.pk),action="maintenance.problem_assigned").select_related("user").order_by("-created_at","pk") if problem else []
+    assignment_page, assignment_query = paginate_query(request,assignment_history,parameter="assignment_page",per_page=10)
     return render(
         request,
         "maintenance/record_detail.html",
         {
-            "record": record,
+            "record": record, "assignment_page":assignment_page, "assignment_query":assignment_query,
             "problem": problem,
             "can_void": record.status == "confirmed"
             and can_void_maintenance_record(request.user, record),
@@ -512,13 +538,59 @@ def problem_list(request):
         maintenance_record__maintenance_plan__in=plans,
         maintenance_record__status="confirmed",
     ).select_related(
-        "maintenance_record__maintenance_plan", "asset__department"
+        "maintenance_record__maintenance_plan", "asset__department", "closed_by", "owner_employee"
     )
+    form = MaintenanceProblemFilterForm(request.GET)
+    form.fields["owner_employee"].queryset = Employee.objects.filter(company=_company(),
+        owned_maintenance_problems__maintenance_record__maintenance_plan__in=plans).distinct().order_by("normalized_employee_no")
+    today = business_date()
+    valid = form.is_valid()
+    if valid:
+        query = form.cleaned_data["q"]
+        if query:
+            problems = problems.filter(
+                Q(asset__asset_code__icontains=query)
+                | Q(asset__equipment_number__icontains=query)
+                | Q(asset__asset_name__icontains=query)
+                | Q(maintenance_record__maintenance_plan__name__icontains=query)
+                | Q(description__icontains=query)
+                | Q(closure_note__icontains=query)
+            )
+        if form.cleaned_data["owner_employee"]:
+            problems = problems.filter(owner_employee=form.cleaned_data["owner_employee"])
+        if form.cleaned_data["mine"]:
+            problems = problems.filter(owner_employee__user=request.user)
+        if form.cleaned_data["due_scope"] == "overdue":
+            problems = problems.filter(status="open",target_date__lt=today)
+        elif form.cleaned_data["due_scope"] == "today":
+            problems = problems.filter(status="open",target_date=today)
+        elif form.cleaned_data["due_scope"] == "unassigned":
+            problems = problems.filter(status="open").filter(Q(owner_employee__isnull=True)|Q(target_date__isnull=True))
+        if form.cleaned_data["date_from"]:
+            problems = problems.filter(maintenance_record__completed_date__gte=form.cleaned_data["date_from"])
+        if form.cleaned_data["date_to"]:
+            problems = problems.filter(maintenance_record__completed_date__lte=form.cleaned_data["date_to"])
+    else:
+        problems = problems.none()
+    counts = problems.aggregate(
+        open=Count("pk", filter=Q(status="open")),
+        closed=Count("pk", filter=Q(status="closed")),
+    )
+    if valid and form.cleaned_data["status"]:
+        problems = problems.filter(status=form.cleaned_data["status"])
     page_obj, pagination_query = _paginate(
-        request, problems.order_by("status", "-created_at")
+        request,
+        problems.order_by(Case(When(status="open", then=0), default=1), Coalesce("target_date","maintenance_record__completed_date"), "created_at", "pk"),
+        per_page=form.cleaned_data.get("page_size") or 25,
     )
+    summary_params = request.GET.copy()
+    summary_params.pop("page", None)
+    problem_links = {}
+    for status in ("open", "closed"):
+        summary_params["status"] = status
+        problem_links[status] = "?" + summary_params.urlencode()
     items = [
-        {"problem": problem, "can_close": problem.status == "open" and can_close_maintenance_problem(request.user, problem)}
+        {"problem": problem, "is_overdue":problem.status == "open" and problem.target_date is not None and problem.target_date < today, "can_close": problem.status == "open" and can_close_maintenance_problem(request.user, problem)}
         for problem in page_obj.object_list
     ]
     return render(
@@ -528,8 +600,32 @@ def problem_list(request):
             "items": items,
             "page_obj": page_obj,
             "pagination_query": pagination_query,
+            "filter_form": form,
+            "problem_counts": counts,
+            "problem_links": problem_links,
         },
+        status=200 if valid else 400,
     )
+
+
+@login_required
+def problem_assign(request, pk):
+    problem = _problem(request,pk)
+    require_close_maintenance_problem(request.user,problem)
+    if problem.status != "open" or problem.maintenance_record.status != "confirmed":
+        raise PermissionDenied("已关闭或来源已作废的问题不能分派。")
+    form = ProblemAssignmentForm(request.POST or None,actor=request.user,problem=problem)
+    if request.method == "POST" and form.is_valid():
+        try:
+            assign_problem(actor=request.user,problem=problem,request=request,**form.cleaned_data)
+        except ValidationError as exc:
+            _service_error(form,exc)
+        else:
+            messages.success(request,"负责人和目标日期已保存，原分派历史已保留。")
+            return redirect("maintenance:record-detail",pk=problem.maintenance_record_id)
+    return render(request,"maintenance/action_form.html",{"form":form,"title":"分派或调整问题跟进",
+        "button_label":"保存分派","description":"登记负责人不改变账号权限；问题仍由设备管理员或授权部门主管核验后关闭。",
+        "cancel_url":f"/maintenance/records/{problem.maintenance_record_id}/"})
 
 
 @login_required
@@ -585,7 +681,7 @@ def attachment_upload(request, target_type, target_pk):
     )
     if request.method == "POST" and form.is_valid():
         try:
-            upload_maintenance_attachment(
+            upload_many(upload_maintenance_attachment,
                 actor=request.user, target=target,
                 uploaded_file=form.cleaned_data["uploaded_file"],
                 security_class=form.cleaned_data["security_class"],
@@ -611,7 +707,7 @@ def attachment_download(request, pk):
     except OSError as exc:
         raise Http404("附件存储文件不可用。") from exc
     response = FileResponse(handle, content_type=link.attachment.mime_type)
-    response["Content-Disposition"] = "attachment"
+    response["Content-Disposition"] = "attachment; filename*=UTF-8''" + escape_uri_path(link.attachment.safe_filename)
     response["Cache-Control"] = "private, no-store"
     response["X-Content-Type-Options"] = "nosniff"
     return response

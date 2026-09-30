@@ -3,20 +3,24 @@
 from __future__ import annotations
 
 import uuid
+from calendar import monthrange
 from urllib.parse import urlencode
 from decimal import Decimal
+from django import forms
 
 from django.contrib import messages
+from apps.finance.history_workspace import entry_history_context
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import Paginator
-from django.db.models import Q, Sum
+from django.db.models import Count, Q, Sum
 from django.http import Http404, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 
 from apps.assets.models import Asset
+from apps.finance.workspaces import batch_review_context, ManualAmountForm, TheoreticalBusinessForm
 from apps.finance.readiness import pending_finance_assets, missing_finance_base_fields, filter_pending_finance_assets
 from apps.finance.confirmation_initial import finance_confirmation_initial as _finance_initial
 from apps.finance.forms import (
@@ -24,6 +28,7 @@ from apps.finance.forms import (
     AssetCategoryPolicyForm,
     ConfirmFormalizationForm,
     DepreciationBatchGenerateForm,
+    DepreciationBatchFilterForm,
     DepreciationPolicyForm,
     DangerousActionForm,
     FinanceDraftForm,
@@ -194,7 +199,7 @@ def finance_preview(request, pk):
     result = None
     if form.is_valid():
         if form.cleaned_data["accounting_treatment"] == "controlled_non_fixed":
-            messages.info(request, "受控非固定资产不建立折旧 Profile 或折旧计划。")
+            messages.info(request, "受控非固定资产不建立折旧 折旧参数 或折旧计划。")
         else:
             try:
                 calculation = preview_asset_depreciation(
@@ -297,6 +302,11 @@ def asset_finance_detail(request, pk):
     entries = asset.depreciation_entries.order_by("period_start", "created_at")
     actual_ad = entries.aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
     book_value = finance.original_cost - finance.impairment_balance_cache - actual_ad
+    today = timezone.localdate()
+    current_profiles = [profile for profile in profiles if
+                        profile.status in {"active", "suspended", "completed", "stopped"}
+                        and profile.effective_from <= today
+                        and (profile.effective_to is None or profile.effective_to >= today)]
     return render(
         request,
         "finance/asset_finance_detail.html",
@@ -304,9 +314,11 @@ def asset_finance_detail(request, pk):
             "asset": asset,
             "finance": finance,
             "profiles": profiles,
-            "entries": entries,
+            **entry_history_context(request, entries),
             "actual_ad": actual_ad,
             "book_value": book_value,
+            "can_record_work_usage": can_manage_finance(request.user)
+            and len(current_profiles) == 1 and current_profiles[0].method == "units_of_production",
             "depreciation_state": get_asset_depreciation_status(actor=request.user, asset=asset),
             "can_manage": can_manage_finance(request.user),
         },
@@ -579,19 +591,33 @@ def finance_settings(request):
 @login_required
 def batch_list(request):
     require_view_finance(request.user)
-    queryset = DepreciationBatch.objects.filter(company=_company()).order_by(
-        "-period_start", "-generation_no"
-    )
-    page_obj = Paginator(queryset, 25).get_page(request.GET.get("page"))
+    queryset = DepreciationBatch.objects.filter(company=_company())
+    form = DepreciationBatchFilterForm(request.GET)
+    valid = form.is_valid()
+    if valid:
+        period = form.cleaned_data["period"]
+        if period:
+            month_end = period.replace(day=monthrange(period.year, period.month)[1])
+            queryset = queryset.filter(period_start__lte=month_end, period_end__gt=period)
+        if form.cleaned_data["status"]:
+            queryset = queryset.filter(status=form.cleaned_data["status"])
+    else:
+        queryset = queryset.none()
+    queryset = queryset.annotate(item_count=Count("items")).order_by("-period_start", "-generation_no", "pk")
+    page_obj = Paginator(queryset, form.cleaned_data.get("page_size") or 25).get_page(request.GET.get("page"))
+    query = request.GET.copy()
+    query.pop("page", None)
     return render(
         request,
         "finance/batch_list.html",
         {
             "batches": page_obj,
             "page_obj": page_obj,
-            "pagination_query": "",
+            "pagination_query": query.urlencode(),
+            "filter_form": form,
             "can_manage": can_manage_finance(request.user),
         },
+        status=200 if valid else 400,
     )
 
 
@@ -600,45 +626,41 @@ def batch_generate(request):
     require_manage_finance(request.user)
     company = _company()
     form = DepreciationBatchGenerateForm(request.POST or None, actor=request.user)
-    if request.method == "POST" and form.is_valid():
-        try:
-            batch = generate_depreciation_batch(
-                actor=request.user,
-                company=company,
-                **form.service_period_values(),
-                idempotency_key=form.cleaned_data["idempotency_key"],
-                manual_inputs=form.cleaned_data["manual_inputs_json"],
-                request=request,
-            )
-        except ValidationError as exc:
-            _service_error(form, exc)
+    form.fields["manual_inputs_json"].widget = forms.HiddenInput()
+    valid = form.is_valid() if request.method == "POST" else False
+    period = form.service_period_values() if valid else None
+    manual_profiles = AssetDepreciationProfile.objects.filter(company=company, method="manual")
+    has_manual_profiles = manual_profiles.exists()
+    if period:
+        manual_profiles = manual_profiles.filter(effective_from__lt=period["period_end"]).filter(
+            Q(effective_to__isnull=True) | Q(effective_to__gte=period["period_start"]))
+    manual_assets = scoped_finance_assets(request.user, company).filter(pk__in=manual_profiles.values("asset_id"))
+    manual_rows = [ManualAmountForm(request.POST if request.method == "POST" else None,
+                   prefix=f"manual-{asset.pk}", asset=asset) for asset in manual_assets.distinct().order_by("asset_code")]
+    rows_valid = all([row.is_valid() for row in manual_rows]) if request.method == "POST" else False
+    if request.method == "POST" and valid and rows_valid and request.POST.get("action") != "refresh_manual":
+        manual_inputs = form.cleaned_data["manual_inputs_json"]
+        entered = {str(row.asset.pk): {"amount": str(row.cleaned_data["amount"]), "reason": row.cleaned_data["reason"]}
+                   for row in manual_rows if row.cleaned_data.get("amount") is not None}
+        if manual_inputs and entered:
+            form.add_error(None, "本次存在两组手工金额，请仅使用页面明细填写。")
         else:
-            return redirect("finance:batch-detail", pk=batch.pk)
-    return render(request, "finance/form.html", {
-        "form": form, "title": "生成折旧批次试算", "submit_label": "生成试算",
-        "description": "期间填写月初至月末，包含结束当天。生成试算后核对明细，再确认过账。",
-        "cancel_url": reverse("finance:batch-list"), "cancel_label": "返回折旧批次",
-    })
+            try:
+                batch = generate_depreciation_batch(actor=request.user, company=company, **period,
+                    idempotency_key=form.cleaned_data["idempotency_key"], manual_inputs=entered or manual_inputs, request=request)
+            except ValidationError as exc:
+                _service_error(form, exc)
+            else:
+                return redirect("finance:batch-detail", pk=batch.pk)
+    return render(request, "finance/batch_generate.html", {"form": form, "manual_rows": manual_rows, "has_manual_profiles":has_manual_profiles})
 
 
 @login_required
 def batch_detail(request, pk):
     require_view_finance(request.user)
     batch = get_object_or_404(DepreciationBatch, pk=pk, company=_company())
-    return render(
-        request,
-        "finance/batch_detail.html",
-        {
-            "batch": batch,
-            "items": batch.items.select_related("asset"),
-            "can_manage": can_manage_finance(request.user),
-            "confirm_form": (
-                DangerousActionForm(actor=request.user)
-                if can_manage_finance(request.user) and batch.status == "draft"
-                else None
-            ),
-        },
-    )
+    context = batch_review_context(request, batch)
+    return render(request, "finance/batch_detail.html", context, status=200 if context["filters_valid"] else 400)
 
 
 @login_required
@@ -649,28 +671,13 @@ def batch_confirm(request, pk):
     batch = get_object_or_404(DepreciationBatch, pk=pk, company=_company())
     form = DangerousActionForm(request.POST, actor=request.user)
     if not form.is_valid():
-        return render(
-            request,
-            "finance/batch_detail.html",
-            {
-                "batch": batch,
-                "items": batch.items.select_related("asset"),
-                "can_manage": True,
-                "confirm_form": form,
-            },
-            status=400,
-        )
+        return render(request, "finance/batch_detail.html", batch_review_context(request, batch, confirm_form=form), status=400)
     try:
-        confirm_depreciation_batch(
-            actor=request.user,
-            batch=batch,
-            reason=form.cleaned_data["reason"],
-            request=request,
-        )
+        confirm_depreciation_batch(actor=request.user, batch=batch, reason=form.cleaned_data["reason"], request=request)
     except ValidationError as exc:
         messages.error(request, "; ".join(exc.messages))
     else:
-        messages.success(request, "折旧批次已原子确认，实际分录已追加。")
+        messages.success(request, "折旧批次已确认，实际分录已追加。")
     return redirect("finance:batch-detail", pk=batch.pk)
 
 
@@ -719,9 +726,9 @@ def _profile_for_asset(company, pk):
         .order_by("-effective_from", "-version")[:2]
     )
     if not profiles:
-        raise Http404("当前业务日没有生效的折旧 Profile。")
+        raise Http404("当前业务日没有生效的折旧 折旧参数。")
     if len(profiles) != 1:
-        raise ValidationError("当前业务日存在多个生效 Profile，请停止并复核数据。")
+        raise ValidationError("当前业务日存在多个生效 折旧参数，请停止并复核数据。")
     return profiles[0]
 
 
@@ -757,7 +764,7 @@ def profile_continuation_review(request, profile_pk):
     return render(
         request,
         "finance/form.html",
-        {"form": form, "title": f"复核 Profile v{profile.version} 实际接续日"},
+        {"form": form, "title": f"复核 折旧参数 v{profile.version} 实际接续日"},
     )
 
 
@@ -765,6 +772,9 @@ def profile_continuation_review(request, profile_pk):
 def work_usage(request, pk):
     require_manage_finance(request.user)
     profile = _profile_for_asset(_company(), pk)
+    if profile.method != "units_of_production":
+        messages.info(request, "当前折旧方法无需录入工作量。")
+        return redirect("finance:asset-finance-detail", pk=pk)
     form = WorkUsageForm(request.POST or None, actor=request.user, initial={"work_unit": profile.work_unit})
     if request.method == "POST" and form.is_valid():
         values = {**form.cleaned_data, **form.service_period_values()}
@@ -827,9 +837,9 @@ def profile_version(request, pk):
         except ValidationError as exc:
             _service_error(form, exc)
         else:
-            messages.success(request, "已创建前瞻生效的新 Profile 版本，历史版本未改写。")
+            messages.success(request, "已创建前瞻生效的新 折旧参数 版本，历史版本未改写。")
             return redirect("finance:asset-finance-detail", pk=pk)
-    return render(request, "finance/form.html", {"form": form, "title": "新建折旧 Profile 版本"})
+    return render(request, "finance/form.html", {"form": form, "title": "新建折旧 折旧参数 版本"})
 
 
 @login_required
@@ -884,7 +894,7 @@ def theoretical_run(request, pk):
         Asset.objects.select_related("finance"), pk=pk, company=_company()
     )
     _require_depreciable_asset(asset)
-    form = TheoreticalRunForm(request.POST or None, actor=request.user)
+    form = TheoreticalBusinessForm(request.POST or None, actor=request.user, asset=asset)
     if request.method == "POST" and form.is_valid():
         try:
             run = run_theoretical_depreciation(
@@ -900,7 +910,7 @@ def theoretical_run(request, pk):
         else:
             messages.success(request, "理论历史试算已保存为只读参考，不影响实际账面。")
             return redirect("finance:theoretical-detail", pk=pk, run_pk=run.pk)
-    return render(request, "finance/form.html", {"form": form, "title": "理论历史折旧试算"})
+    return render(request, "finance/form.html", {"form": form, "title": "理论历史折旧试算", "description": "参数默认引用资产现有财务资料，可调整后作参考试算；结果不改变实际账面。", "cancel_url": reverse("finance:asset-finance-detail", args=[asset.pk]), "submit_label": "生成参考试算"})
 
 
 @login_required

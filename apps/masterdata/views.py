@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 
+from apps.core.return_navigation import safe_return_url
+from apps.maintenance.handover import employee_maintenance_handover
+from apps.masterdata.reference_preview import reference_preview
 from django.contrib import messages
+from apps.core.pagination import paginate_query
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.core import signing
@@ -154,7 +158,7 @@ def _status_filter(queryset, request):
     return queryset.filter(is_active=True), "active"
 
 
-def _tree_rows(objects, *, level_attr=None):
+def _tree_rows(objects, *, level_attr=None, ancestors=None):
     objects = list(objects)
     children = {}
     for obj in objects:
@@ -183,6 +187,13 @@ def _tree_rows(objects, *, level_attr=None):
                     else 0,
                 }
             )
+    lookup={obj.pk:obj for obj in (ancestors if ancestors is not None else objects)}
+    for row in rows:
+        labels=[]; parent_id=row['object'].parent_id; visited=set()
+        while parent_id in lookup and parent_id not in visited:
+            visited.add(parent_id); parent=lookup[parent_id]
+            labels.append(parent.name); parent_id=parent.parent_id
+        row['ancestor_path']=' / '.join(reversed(labels))
     return rows
 
 
@@ -414,6 +425,7 @@ def department_list(request):
         company,
         Department.objects.select_related("parent", "manager_employee"),
     )
+    ancestors = list(queryset)
     q = request.GET.get("q", "").strip()
     if q:
         queryset = queryset.filter(Q(code__icontains=q) | Q(name__icontains=q))
@@ -422,7 +434,7 @@ def department_list(request):
         request,
         "masterdata/department_list.html",
         {
-            "rows": _tree_rows(queryset),
+            "rows": _tree_rows(queryset, ancestors=ancestors),
             "q": q,
             "status": status,
             "company": company,
@@ -479,11 +491,12 @@ def employee_list(request):
         filter_errors.append("当前筛选范围内没有所选岗位，请重新选择或清除筛选。")
     if source_mark and source_mark not in sources:
         filter_errors.append("当前筛选范围内没有所选人员标记，请重新选择或清除筛选。")
+    employee_page, pagination_query = paginate_query(request, queryset, per_page=50)
     return render(
         request,
         "masterdata/employee_list.html",
         {
-            "objects": queryset,
+            "objects": employee_page, "page_obj": employee_page, "pagination_query": pagination_query,
             "department_options": department_options,
             "selected_department": selected_department,
             "position_options": positions,
@@ -508,6 +521,7 @@ def location_list(request):
     require_view_masterdata(request.user, "location")
     company = _company_or_404()
     queryset = Location.objects.filter(company=company).select_related("parent")
+    ancestors = list(queryset)
     q = request.GET.get("q", "").strip()
     if q:
         queryset = queryset.filter(Q(code__icontains=q) | Q(name__icontains=q))
@@ -516,7 +530,7 @@ def location_list(request):
         request,
         "masterdata/location_list.html",
         {
-            "rows": _tree_rows(queryset, level_attr="level"),
+            "rows": _tree_rows(queryset, level_attr="level", ancestors=ancestors),
             "q": q,
             "status": status,
             "company": company,
@@ -530,6 +544,7 @@ def category_list(request):
     require_view_masterdata(request.user, "asset_category")
     company = _company_or_404()
     queryset = AssetCategory.objects.filter(company=company).select_related("parent")
+    ancestors = list(queryset)
     q = request.GET.get("q", "").strip()
     if q:
         queryset = queryset.filter(Q(code__icontains=q) | Q(name__icontains=q))
@@ -538,7 +553,7 @@ def category_list(request):
         request,
         "masterdata/category_list.html",
         {
-            "rows": _tree_rows(queryset, level_attr="category_level"),
+            "rows": _tree_rows(queryset, level_attr="category_level", ancestors=ancestors),
             "q": q,
             "status": status,
             "company": company,
@@ -880,7 +895,9 @@ def _render_master_detail(
             ),
             "edit_url": reverse(f"masterdata:{slug}-edit", args=[obj.pk]),
             "status_url": reverse(f"masterdata:{slug}-status", args=[obj.pk]),
-            "back_url": reverse(f"masterdata:{slug}-list"),
+            "back_url": safe_return_url(request, reverse(f"masterdata:{slug}-list")),
+            "maintenance_handover": employee_maintenance_handover(request.user, obj) if resource == "employee" else None,
+            "reference_preview": reference_preview(request.user,resource,obj) if obj.is_active and can_manage_masterdata(request.user,resource) else [],
             "technical_link_url": technical_link_url,
             "clearance_url": clearance_url,
             "clearance_label": clearance_label,
@@ -982,7 +999,7 @@ def _master_form_view(
                         f"部门改挂已使 {len(obj.scope_impact)} 名用户的授权部门集合发生变化，影响摘要已写入审计日志。",
                     )
                 slug = "category" if resource == "asset_category" else resource
-                return redirect(f"masterdata:{slug}-detail", pk=obj.pk)
+                return redirect(safe_return_url(request, reverse(f"masterdata:{slug}-detail", args=[obj.pk])))
     slug = "category" if resource == "asset_category" else resource
     return render(
         request,
@@ -990,11 +1007,7 @@ def _master_form_view(
         {
             "form": form,
             "title": f"{'新增' if instance is None else '编辑'}{RESOURCE_CONFIG[resource]['label']}",
-            "cancel_url": reverse(
-                f"masterdata:{slug}-detail", args=[instance.pk]
-            )
-            if instance
-            else reverse(f"masterdata:{slug}-list"),
+            "cancel_url": safe_return_url(request, reverse(f"masterdata:{slug}-detail", args=[instance.pk]) if instance else reverse(f"masterdata:{slug}-list")),
             "department_scope_impact": department_scope_impact,
         },
     )
@@ -1123,7 +1136,7 @@ def employee_user_link(request, pk):
             _service_error(form, exc)
         else:
             messages.success(request, "人员登录账号技术关联已更新。")
-            return redirect("masterdata:employee-detail", pk=employee.pk)
+            return redirect(safe_return_url(request, reverse("masterdata:employee-detail", args=[employee.pk])))
     return render(
         request,
         "masterdata/form.html",
@@ -1201,7 +1214,7 @@ def status_change(request, resource, pk):
         else:
             messages.success(request, f"已{'启用' if new_status else '停用'}该记录。")
     slug = "category" if resource == "asset_category" else resource
-    return redirect(f"masterdata:{slug}-detail", pk=obj.pk)
+    return redirect(safe_return_url(request, reverse(f"masterdata:{slug}-detail", args=[obj.pk])))
 
 
 @login_required
@@ -1269,6 +1282,16 @@ def user_permissions_list(request):
     scopes_by_user = {}
     for scope in active_scopes:
         scopes_by_user.setdefault(scope.user_id, []).append(scope)
+    query = request.GET.get("q", "").strip()
+    role = request.GET.get("role", "").strip()
+    active = request.GET.get("active", "")
+    if query:
+        users = [user for user in users if query.casefold() in (user.username+" "+user.display_name).casefold()]
+    if role:
+        users = [user for user in users if role in assigned_role_names_for(user)]
+    if active in {"yes","no"}:
+        users = [user for user in users if is_login_capable(user) == (active == "yes")]
+    page, pagination_query = paginate_query(request, users, per_page=50)
     rows = [
         {
             "user": user,
@@ -1278,12 +1301,12 @@ def user_permissions_list(request):
             "scopes": scopes_by_user.get(user.pk, []),
             "login_capable": is_login_capable(user),
         }
-        for user in users
+        for user in page
     ]
     return render(
         request,
         "masterdata/user_permissions_list.html",
-        {"rows": rows, "company": company},
+        {"rows": rows, "company": company, "page_obj":page, "pagination_query":pagination_query, "query":query, "selected_role":role, "selected_active":active, "role_options":ROLE_LABELS.items()},
     )
 
 

@@ -171,6 +171,11 @@ def _dataset(actor, report_key, filters, rows, *, warnings=()):
 
 
 def _item_filters(queryset, filters, *, prefix="item__"):
+    if filters.get("q"):
+        queryset = queryset.filter(
+            Q(**{f"{prefix}normalized_item_code__icontains": normalize_identifier(filters["q"])})
+            | Q(**{f"{prefix}name__icontains": filters["q"]})
+        )
     if filters.get("category"):
         queryset = queryset.filter(**{f"{prefix}category_id": filters["category"]})
     if filters.get("item_code"):
@@ -314,6 +319,11 @@ def _low_stock_rows(*, actor, company, filters):
     if filters.get("item_code"):
         queryset = queryset.filter(
             normalized_item_code=normalize_identifier(filters["item_code"])
+        )
+    if filters.get("q"):
+        queryset = queryset.filter(
+            Q(normalized_item_code__icontains=normalize_identifier(filters["q"]))
+            | Q(name__icontains=filters["q"])
         )
     if filters.get("management_mode"):
         queryset = queryset.filter(item_type=filters["management_mode"])
@@ -510,6 +520,7 @@ def _stock_ledger_rows(*, actor, company, filters):
         row = {
             "business_date": ledger.document.business_date,
             "created_at": ledger.occurred_at,
+            "_source_refs": {"document_no": ("document", str(ledger.document_id))},
             "document_no": ledger.document.document_no,
             "original_document_type": original.document.get_document_type_display(),
             "movement_type": ledger.get_movement_type_display(),
@@ -731,7 +742,8 @@ def _issue_detail_rows(*, actor, company, filters):
             root_total = totals[_root_issue_line_id(ledger)]
             row = {
                 "business_date": ledger.document.business_date,
-                "document_no": ledger.document.document_no,
+                "_source_refs": {"document_no": ("document", str(ledger.document_id)), "original_issue_document": ("document",str(root_line.document_id))},
+            "document_no": ledger.document.document_no,
                 "business_type": (
                     "冲销"
                     if ledger.movement_type == SupplyStockMovementType.REVERSAL
@@ -827,6 +839,7 @@ def _issue_summary_rows(*, actor, company, filters, employee):
     def mapper(row):
         result = {
             "department": row["report_department"] or "",
+            "_summary_identity": {"department": row["report_department_id"]},
             "item_code": row["item__item_code"],
             "item_name": row["item__name"],
             "unit": row["item__unit"],
@@ -841,6 +854,7 @@ def _issue_summary_rows(*, actor, company, filters, employee):
         }
         if employee:
             result["employee"] = row["report_employee"] or ""
+            result["_summary_identity"]["employee"] = row["report_employee_id"]
         if include_cost:
             result.update(
                 issue_amount=quantize_money(row["issue_amount"]),
@@ -968,6 +982,9 @@ def _custody_balance_rows(*, actor, company, filters):
                 if value is not None
             ]
             row = {
+                "_source_refs": {"custody_id": ("custody", str(custody.pk)),
+                    "parent_custody": ("custody", str(custody.parent_custody_id or "")),
+                    "source_reference": ("document", str(root.origin_issue_line.document_id) if root.origin_issue_line_id else "")},
                 "custody_id": str(custody.pk),
                 "item": f"{custody.item.item_code} / {custody.item.name}",
                 "unit": custody.item.unit,
@@ -1040,6 +1057,11 @@ def _custody_movement_rows(*, actor, company, filters):
         count_line = getattr(movement, "source_count_line", None)
         clearance_item = next(iter(movement.clearance_items.all()), None)
         row = {
+            "_source_refs": {"from_custody": ("custody", str(movement.from_custody_id or "")),
+                "to_custody": ("custody", str(movement.to_custody_id or "")),
+                "source_document": ("document", str(movement.source_document_line.document_id) if movement.source_document_line_id else ""),
+                "count_task": ("count", str(count_line.count_task_id) if count_line else ""),
+                "clearance": ("clearance", str(clearance_item.clearance_id) if clearance_item else "")},
             "business_date": movement.business_date,
             "action": movement.get_action_display(),
             "item": f"{movement.item.item_code} / {movement.item.name}",
@@ -1135,6 +1157,8 @@ def _count_difference_rows(*, actor, company, filters):
     def mapper(line):
         task = line.count_task
         row = {
+            "_source_refs": {"task_no": ("count", str(task.pk)),
+                "adjustment_document": ("document", str(line.adjustment_document_line.document_id) if line.adjustment_document_line_id else "")},
             "task_no": task.task_no,
             "count_domain": task.get_count_domain_display(),
             "status": task.get_status_display(),
@@ -1278,7 +1302,10 @@ def _controlled_asset_rows(*, actor, company, filters):
 
     def mapper(asset):
         row = {
+            "_asset_id": asset.pk,
             "asset_code": asset.asset_code,
+            "_summary_identity": {"department": asset.department_id},
+            "_summary_labels": {"department": str(asset.department) if asset.department else ""},
             "asset_name": asset.asset_name,
             "category": asset.category.name,
             "department": getattr(asset.department, "name", ""),

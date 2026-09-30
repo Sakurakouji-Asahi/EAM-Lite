@@ -18,6 +18,7 @@ urlpatterns = [
     path("records/<uuid:pk>/", views.record_detail, name="record-detail"),
     path("records/<uuid:pk>/void/", views.record_void, name="record-void"),
     path("records/<uuid:pk>/redo/", views.record_redo, name="record-redo"),
+    path("problems/<uuid:pk>/assign/", views.problem_assign, name="problem-assign"),
     path("problems/<uuid:pk>/close/", views.problem_close, name="problem-close"),
     path("<str:target_type>/<uuid:target_pk>/attachments/upload/", views.attachment_upload, name="attachment-upload"),
     path("attachments/<uuid:pk>/download/", views.attachment_download, name="attachment-download"),

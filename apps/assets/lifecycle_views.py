@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from apps.core.return_navigation import safe_return_url
+from apps.core.multi_upload import upload_many
 from django.contrib import messages
+from django.urls import reverse
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.storage import default_storage
@@ -127,6 +130,7 @@ def _action_form(
     button_class="primary",
     initial=None,
     enctype=False,
+    success_message=None,
 ):
     if request.method not in {"GET", "POST"}:
         return HttpResponseNotAllowed(["GET", "POST"])
@@ -148,15 +152,16 @@ def _action_form(
                 raise
             _form_error(form, exc)
         else:
-            messages.success(request, f"{title}已完成。")
+            messages.success(request, success_message or f"{title}已完成。")
             if isinstance(result, AssetDisposal):
-                return redirect("assets:disposal-detail", pk=result.pk)
-            return redirect("assets:asset-detail", pk=asset.pk)
+                return redirect(safe_return_url(request, reverse("assets:disposal-detail", args=[result.pk])))
+            return redirect(safe_return_url(request, reverse("assets:asset-detail", args=[asset.pk])))
     return render(
         request,
         "assets/lifecycle_action.html",
         {
             "asset": asset,
+            "cancel_url": safe_return_url(request, reverse('assets:asset-detail', args=[asset.pk])),
             "form": form,
             "title": title,
             "description": description,
@@ -270,10 +275,16 @@ def asset_loan(request, pk):
 @login_required
 def asset_loan_return(request, pk):
     asset = _asset(request, pk)
-    loan = get_object_or_404(AssetLoan.objects.select_related("asset"), asset=asset, status="active")
+    loans = AssetLoan.objects.select_related("asset").filter(asset=asset)
+    replay_key = request.POST.get("idempotency_key", "").strip() if request.method == "POST" else ""
+    loan = loans.filter(status="returned", return_idempotency_key=replay_key).first() if replay_key else None
+    replay = loan is not None
+    if loan is None:
+        loan = get_object_or_404(loans, status="active")
     return _action_form(
         request, asset=asset, action="loan_return", form_class=AssetLoanReturnForm,
         title="资产归还", description="归还必须指定接收人、责任归属、叶级位置和归还后状态。",
+        success_message="该次归还已办理，本次未重复更新记录。" if replay else None,
         callback=lambda data: return_loan(
             actor=request.user, loan=loan, returned_at=data["returned_at"],
             received_by_employee=data["received_by_employee"],
@@ -463,7 +474,7 @@ def disposal_attachment_upload(request, pk):
         form_class=DisposalAttachmentUploadForm, title="上传处置证据",
         description="文件保存在私有存储，下载必须重新通过处置对象权限。",
         enctype=True,
-        callback=lambda data: upload_disposal_attachment(
+        callback=lambda data: upload_many(upload_disposal_attachment,
             actor=request.user, disposal=disposal,
             uploaded_file=data["uploaded_file"], security_class=data["security_class"],
             request=request,

@@ -5,11 +5,14 @@ from __future__ import annotations
 import uuid
 
 from django import forms
+from apps.core.multi_upload import MultiFileField
+from apps.core.query_forms import DateRangeQueryForm
 from apps.core.form_widgets import normalize_date_widgets
 from django.core.exceptions import PermissionDenied
 
 from apps.assets.models import Asset
 from apps.maintenance.domain import business_date
+from apps.maintenance.models import MaintenanceProblem, MaintenanceRecord
 from apps.maintenance.permissions import (
     can_close_maintenance_problem,
     can_complete_maintenance,
@@ -30,6 +33,49 @@ def _style(form):
             "class",
             "form-select" if isinstance(field.widget, forms.Select) else "form-control",
         )
+
+
+class MaintenanceRecordFilterForm(DateRangeQueryForm):
+    q = forms.CharField(label="设备或保养计划", required=False, max_length=200,
+                        widget=forms.TextInput(attrs={"placeholder": "资产编号、设备编号、名称或保养计划"}))
+    status = forms.ChoiceField(label="记录状态", required=False,
+                               choices=(("", "全部状态"), *MaintenanceRecord.Status.choices))
+    page_size = forms.TypedChoiceField(label="每页显示", required=False, coerce=int, initial=25,
+                                       choices=((25,"25 条"),(50,"50 条"),(100,"100 条"),(200,"200 条")))
+    field_order = ("q", "date_from", "date_to", "status", "page_size")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["date_from"].label = "完成开始日期"
+        self.fields["date_to"].label = "完成结束日期"
+        _style(self)
+
+
+class MaintenanceProblemFilterForm(DateRangeQueryForm):
+    owner_employee = forms.ModelChoiceField(label="跟进负责人",required=False,queryset=Employee.objects.none())
+    due_scope = forms.ChoiceField(label="期限情况",required=False,choices=(
+        ('','全部期限'),('overdue','已逾期未关闭'),('today','今日到期未关闭'),('unassigned','待分派或未设期限'),
+    ))
+    mine = forms.BooleanField(label="只看本人跟进",required=False)
+    q = forms.CharField(
+        label="设备或问题", required=False, max_length=200,
+        widget=forms.TextInput(attrs={"placeholder": "资产编号、设备编号、名称、计划或问题处理内容"}),
+    )
+    status = forms.ChoiceField(
+        label="跟进状态", required=False,
+        choices=(("", "全部状态"), *MaintenanceProblem.Status.choices),
+    )
+    page_size = forms.TypedChoiceField(
+        label="每页显示", required=False, coerce=int, initial=25,
+        choices=((25, "25 条"), (50, "50 条"), (100, "100 条"), (200, "200 条")),
+    )
+    field_order = ("q", "status", "owner_employee", "due_scope", "mine", "date_from", "date_to", "page_size")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["date_from"].label = "保养开始日期"
+        self.fields["date_to"].label = "保养结束日期"
+        _style(self)
 
 
 class MaintenancePlanForm(forms.Form):
@@ -102,7 +148,7 @@ class MaintenanceCompletionForm(forms.Form):
         label="问题说明", required=False, widget=forms.Textarea
     )
     remark = forms.CharField(label="备注", required=False, widget=forms.Textarea)
-    uploaded_file = forms.FileField(label="照片/附件", required=False)
+    uploaded_file = MultiFileField(label="照片/附件", required=False)
     security_class = forms.ChoiceField(
         label="附件安全分类",
         choices=(("A0", "普通附件（A0）"), ("A1", "财务附件（A1）")),
@@ -169,7 +215,7 @@ class MaintenanceProblemCloseForm(forms.Form):
 
 
 class MaintenanceAttachmentUploadForm(forms.Form):
-    uploaded_file = forms.FileField(label="保养证据")
+    uploaded_file = MultiFileField(label="保养证据")
     security_class = forms.ChoiceField(
         label="附件安全分类",
         choices=(("A0", "普通附件（A0）"), ("A1", "财务附件（A1）")),

@@ -4,7 +4,7 @@
 <header class="app-page-header">
   <div><h1 class="h3 mb-1">物品盘点</h1><p class="text-secondary mb-0">仓库库存盘点与数量型耐用品保管盘点分开管理。</p></div>
   {% if can_create_warehouse or can_create_custody %}<a class="btn btn-primary" href="{% url 'supplies:count-task-create' %}">新建盘点任务</a>{% endif %}
-</header>
+</header>{% include '_filter_errors.html' %}
 <form method="get" class="card card-body shadow-sm mb-3">
   <div class="row g-2">
     <div class="col-12 col-lg-3"><label class="form-label" for="q">任务号/名称</label><input class="form-control" id="q" name="q" value="{{ query }}"></div>

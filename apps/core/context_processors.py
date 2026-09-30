@@ -42,6 +42,8 @@ _TASK_SUPPLY_VIEWS = frozenset(
         "supplies:count-task-list",
         "supplies:count-task-create",
         "supplies:count-task-detail",
+        "supplies:count-task-bulk-entry",
+        "supplies:count-sheet",
         "supplies:count-task-publish",
         "supplies:count-task-add-item",
         "supplies:count-line-record",
@@ -103,6 +105,9 @@ _PAGE_LABELS = {
     "task-center": "我的待办",
     "settings-center": "设置首页",
     "assets:asset-list": "全部逐件资产",
+    "assets:loan-workbench": "借用归还待办",
+    "assets:disposal-workbench": "资产处置待办",
+    "reports:export-history": "报表导出记录",
     "assets:asset-list-export": "资产台账导出",
     "assets:asset-create": "新增逐件资产",
     "assets:bulk-registration": "批量建档",
@@ -174,7 +179,7 @@ def _active_section(view_name: str, namespace: str) -> str:
         return "assets"
     if view_name in _INDIVIDUAL_DURABLE_VIEWS:
         return "assets"
-    if view_name == "task-center" or namespace in {
+    if view_name in {"task-center", "assets:loan-workbench", "assets:disposal-workbench"} or namespace in {
         "inventory",
         "maintenance",
         "offboarding",
@@ -240,6 +245,8 @@ def _active_item(view_name: str, active_section: str, query=None) -> str:
             return "supply_items"
         return "supply_stock"
     if active_section == "tasks":
+        if view_name in {"assets:loan-workbench", "assets:disposal-workbench"}:
+            return "loan_workbench" if view_name == "assets:loan-workbench" else "disposal_workbench"
         if view_name == "task-center":
             return "task_center"
         if view_name.startswith("assets:label-") or view_name.startswith(
@@ -538,6 +545,7 @@ def build_application_navigation(request) -> dict:
             "can_manage_items": can_manage_items,
         },
         "tasks": {
+            "can_view_lifecycle_work": initialized and bool(roles.intersection({"finance", "equipment", "employee", "warehouse", "department_manager"})),
             "can_view_asset_inventory": initialized
             and bool(
                 roles.intersection({"finance", "equipment", "employee", "warehouse"})

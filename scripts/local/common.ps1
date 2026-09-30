@@ -45,6 +45,14 @@ function ConvertTo-EamComposePath {
     return ([System.IO.Path]::GetFullPath($Path) -replace "\\", "/")
 }
 
+function Get-EamFileSha256 {
+    param([Parameter(Mandatory = $true)][string]$LiteralPath)
+    $stream = [System.IO.File]::OpenRead($LiteralPath)
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try { return [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-','').ToLowerInvariant() }
+    finally { $algorithm.Dispose(); $stream.Dispose() }
+}
+
 function Get-EamDocumentsDirectory {
     $documents = [Environment]::GetFolderPath([Environment+SpecialFolder]::MyDocuments)
     if ([string]::IsNullOrWhiteSpace($documents)) {
@@ -410,6 +418,7 @@ function Invoke-EamGit {
 
 function Test-EamGitRepository {
     param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+    if (-not (Test-Path -LiteralPath (Join-Path $RepositoryRoot ".git"))) { return $false }
     $gitExe = Resolve-EamGitExecutable
     if (-not $gitExe) {
         if (Test-Path -LiteralPath (Join-Path $RepositoryRoot ".git")) {
@@ -480,7 +489,7 @@ function Get-EamStableIdentity {
 
     $manifestPath = Join-Path $RepositoryRoot "release-manifest.json"
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
-        throw "当前目录既不是 Git 仓库，也没有 release-manifest.json。"
+        return (Get-EamSourceArchiveIdentity -RepositoryRoot $RepositoryRoot -Version $version)
     }
     $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
     foreach ($field in @("version", "commit", "app_image", "app_image_digest", "postgres_image", "caddy_image", "created_at", "repository")) {
@@ -500,6 +509,15 @@ function Get-EamStableIdentity {
     if ($manifest.app_image -match '(^|:)latest$') {
         throw "Release 清单不得引用 latest 镜像。"
     }
+    if ($manifest.PSObject.Properties.Name -contains 'bundled_source' -and $manifest.bundled_source) {
+        $packageRoot = [System.IO.Path]::GetFullPath($RepositoryRoot).TrimEnd([char[]]@('\','/')) + [System.IO.Path]::DirectorySeparatorChar
+        if (-not ($manifest.PSObject.Properties.Name -contains 'source_files')) { throw '发行包缺少源码文件校验清单。' }
+        foreach ($entry in $manifest.source_files.PSObject.Properties) {
+            $sourcePath = [System.IO.Path]::GetFullPath((Join-Path $RepositoryRoot $entry.Name))
+            if (-not $sourcePath.StartsWith($packageRoot,[StringComparison]::OrdinalIgnoreCase) -or $entry.Value -notmatch '^[0-9a-f]{64}$') { throw '发行包源码校验路径或摘要无效。' }
+            if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf) -or (Get-EamFileSha256 -LiteralPath $sourcePath) -ne $entry.Value) { throw "发行包文件缺失或被修改：$($entry.Name)" }
+        }
+    }
     return [pscustomobject]@{
         Kind = "release"
         Version = [string]$manifest.version
@@ -510,6 +528,66 @@ function Get-EamStableIdentity {
         CaddyImage = [string]$manifest.caddy_image
         Source = "GitHub Release"
         Repository = [string]$manifest.repository
+        BundledSource = ($manifest.PSObject.Properties.Name -contains 'bundled_source' -and $manifest.bundled_source)
+    }
+}
+
+function Ensure-EamApplicationImage {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot, [Parameter(Mandatory = $true)]$Identity)
+    if ($Identity.Kind -ne 'release') {
+        Build-EamImage -RepositoryRoot $RepositoryRoot -Identity $Identity
+        return
+    }
+    try { Pull-EamImage -Image $Identity.AppImage }
+    catch {
+        if (-not ($Identity.PSObject.Properties.Name -contains 'BundledSource') -or -not $Identity.BundledSource) { throw }
+        Write-Host '预构建镜像暂不可用，正在使用已校验的随包源码构建。' -ForegroundColor Yellow
+        $Identity.AppImage = "eam-lite-local:release-$($Identity.Commit)"
+        Build-EamImage -RepositoryRoot $RepositoryRoot -Identity $Identity
+    }
+}
+
+function Get-EamSourceArchiveIdentity {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot, [Parameter(Mandatory = $true)][string]$Version)
+    if ($Version -notmatch '^\d+\.\d+\.\d+([.-][0-9A-Za-z.-]+)?$') { throw "源码包 VERSION 无效，请重新下载完整版本。" }
+    foreach ($relative in @("manage.py", "config\settings.py", "requirements\production.lock", "deploy\Dockerfile", "deploy\compose.local.yaml", "deploy\postgres-init.sh", "static\vendor\bootstrap\5.3.8\css\bootstrap.min.css")) {
+        if (-not (Test-Path -LiteralPath (Join-Path $RepositoryRoot $relative) -PathType Leaf)) {
+            throw "源码包不完整，缺少 $relative。请下载整个仓库 ZIP 并完整解压。"
+        }
+    }
+    $rootPath = [System.IO.Path]::GetFullPath($RepositoryRoot).TrimEnd([char[]]@('\','/'))
+    $files = @{}
+    foreach ($folder in @("apps", "config", "requirements", "static", "templates", "deploy", "scripts")) {
+        $folderPath = Join-Path $rootPath $folder
+        if (-not (Test-Path -LiteralPath $folderPath -PathType Container)) { throw "源码包缺少 $folder 目录。" }
+        foreach ($file in Get-ChildItem -LiteralPath $folderPath -File -Recurse) {
+            if ($file.FullName -match '[\\/]__pycache__[\\/]' -or $file.Extension -in @('.pyc','.pyo')) { continue }
+            $relative = $file.FullName.Substring($rootPath.Length + 1).Replace('\','/')
+            $files[$relative] = $file.FullName
+        }
+    }
+    foreach ($relative in @('manage.py','VERSION','.dockerignore')) {
+        $path = Join-Path $rootPath $relative
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "源码包缺少 $relative。" }
+        $files[$relative] = $path
+    }
+    [string[]]$names = @($files.Keys)
+    [Array]::Sort($names, [StringComparer]::Ordinal)
+    $content = New-Object System.Text.StringBuilder
+    foreach ($name in $names) {
+        $digest = Get-EamFileSha256 -LiteralPath $files[$name]
+        [void]$content.Append($name).Append("`t").Append($digest).Append("`n")
+    }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $digest = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($content.ToString()))).Replace('-','').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    # A source identifier, not a claimed Git commit. It changes with runtime files.
+    $sourceId = $digest.Substring(0,40)
+    return [pscustomobject]@{
+        Kind='source'; Version=$Version; Commit=$sourceId;
+        BuildTime=(Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ');
+        AppImage="eam-lite-local:source-$sourceId"; PostgresImage=$script:PostgresImage; CaddyImage=$script:CaddyImage;
+        Source='完整源码 ZIP（内容校验标识）'; Repository='Sakurakouji-Asahi/EAM-Lite'
     }
 }
 
@@ -818,9 +896,16 @@ function Build-EamImage {
         }
     }
     else {
-        $inspect = & docker.exe image inspect $Identity.AppImage --format "{{ index .Config.Labels `"org.opencontainers.image.revision`" }}" 2>$null
-        if ($LASTEXITCODE -eq 0 -and ($inspect -join "").Trim() -eq $Identity.Commit) {
-            return
+        $previousPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $inspect = & docker.exe image inspect $Identity.AppImage 2>$null
+            $inspectExitCode = $LASTEXITCODE
+        }
+        finally { $ErrorActionPreference = $previousPreference }
+        if ($inspectExitCode -eq 0) {
+            $metadata = @(ConvertFrom-Json -InputObject ($inspect -join "`n"))[0]
+            if ($metadata.Config.Labels -and $metadata.Config.Labels.'org.opencontainers.image.revision' -eq $Identity.Commit) { return }
         }
     }
     Write-Host "正在构建与 commit $($Identity.Commit.Substring(0, [Math]::Min(12, $Identity.Commit.Length))) 一致的应用镜像……" -ForegroundColor Cyan
@@ -1059,7 +1144,7 @@ function Invoke-EamCurrentReleaseDelegation {
         [string[]]$ForwardArguments = @()
     )
 
-    if (Test-EamGitRepository -RepositoryRoot $RepositoryRoot) {
+    if ((Test-EamGitRepository -RepositoryRoot $RepositoryRoot) -or (Test-Path -LiteralPath (Join-Path $RepositoryRoot "manage.py"))) {
         return $false
     }
     $state = Initialize-EamState -Mode local

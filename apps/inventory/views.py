@@ -5,12 +5,13 @@ from __future__ import annotations
 import uuid
 
 from django.contrib import messages
+from apps.core.multi_upload import upload_many
 from django.contrib.auth.decorators import login_required
 from django.core import signing
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.files.storage import default_storage
 from django.core.paginator import Paginator
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Prefetch, Q
 from django.http import FileResponse, Http404, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -25,6 +26,7 @@ from apps.inventory.forms import (
     InventoryAttachmentVoidForm,
     InventoryResolutionCorrectionForm,
     InventoryResolutionForm,
+    InventoryResultFilterForm,
     InventoryScanForm,
     InventoryStopForm,
     InventorySurplusForm,
@@ -307,6 +309,14 @@ def task_list(request):
             "scope_department", "scope_category", "scope_location", "created_by"
         ),
     )
+    work = request.GET.get("work", "")
+    if work == "unscanned":
+        queryset = queryset.filter(status="in_progress",task_assets__inventory_status="pending").distinct()
+    elif work == "unresolved":
+        queryset = queryset.filter(status="reconciliation").filter(
+            Q(task_assets__inventory_status__in=("exception","missing")) | Q(surpluses__resolution_status="pending")).distinct()
+    elif work:
+        queryset = queryset.none()
     status = (request.GET.get("status") or "").strip()
     if status:
         queryset = (
@@ -333,7 +343,7 @@ def task_list(request):
             "tasks": page_obj,
             "page_obj": page_obj,
             "pagination_query": pagination_params.urlencode(),
-            "status": status,
+            "status": status, "work":work,
             "query": query,
             "status_choices": InventoryTask.Status.choices,
             "can_create": can_create,
@@ -511,9 +521,47 @@ def task_detail(request, pk):
         "expected_department",
         "expected_employee",
         "expected_location",
-    ).prefetch_related("scans", "resolutions")
+    ).prefetch_related(
+        Prefetch("scans", queryset=InventoryScan.objects.select_related(
+            "inventory_task", "actual_location", "actual_employee"
+        )),
+        "resolutions",
+    )
+    form = InventoryResultFilterForm(request.GET)
+    valid = form.is_valid()
+    if valid:
+        query = form.cleaned_data["q"]
+        if query:
+            rows = rows.filter(
+                Q(expected_code_snapshot__icontains=query)
+                | Q(expected_name_snapshot__icontains=query)
+                | Q(expected_employee_snapshot__icontains=query)
+                | Q(asset__equipment_number__icontains=query)
+            )
+        view = form.cleaned_data["row_view"]
+        effective_scans = InventoryScan.objects.filter(task_asset=OuterRef("pk"), is_effective=True)
+        active_resolutions = InventoryResolution.objects.filter(
+            inventory_task_asset=OuterRef("pk"), status="active"
+        )
+        if view == "missing":
+            rows = rows.filter(~Exists(effective_scans))
+        elif view == "scanned":
+            rows = rows.filter(Exists(effective_scans))
+        elif view == "normal":
+            rows = rows.filter(Exists(effective_scans.filter(result="normal")))
+        elif view == "exception":
+            rows = rows.filter(Exists(effective_scans.exclude(result="normal")))
+        elif view == "unresolved":
+            rows = rows.filter(inventory_status__in=("exception", "missing")).filter(~Exists(active_resolutions))
+        elif view == "resolved":
+            rows = rows.filter(Exists(active_resolutions))
+    else:
+        rows = rows.none()
+    page_obj = Paginator(rows, form.cleaned_data.get("page_size") or 25).get_page(request.GET.get("page"))
+    pagination_params = request.GET.copy()
+    pagination_params.pop("page", None)
     row_items = []
-    for row in rows:
+    for row in page_obj:
         scans = list(row.scans.all())
         resolutions = list(row.resolutions.all())
         effective_scan = next((item for item in scans if item.is_effective), None)
@@ -553,10 +601,19 @@ def task_detail(request, pk):
         {
             "task": task,
             "summary": summary,
+            "summary_links": {
+                "expected": "?row_view=#inventory-results",
+                "scanned": "?row_view=scanned#inventory-results",
+                "exception": "?row_view=exception#inventory-results",
+                "missing": "?row_view=missing#inventory-results",
+            },
+            "filter_form": form,
+            "page_obj": page_obj,
+            "pagination_query": pagination_params.urlencode(),
             **_publication_preview(request, task),
             "row_items": row_items,
             "assignees": task.assignees.select_related("user").order_by("user__username"),
-            "surpluses": task.surpluses.select_related(
+            "surpluses": (task.surpluses.filter(resolution_status="pending") if request.GET.get("surplus_view") == "pending" else task.surpluses.all()).select_related(
                 "found_by", "resolved_by", "linked_asset"
             ).order_by("found_at"),
             "attachments": _attachment_rows(request.user, task),
@@ -571,6 +628,7 @@ def task_detail(request, pk):
                 and can_close_inventory_task(request.user, task),
             },
         },
+        status=200 if valid else 400,
     )
 
 
@@ -1202,7 +1260,7 @@ def attachment_upload(request, task_pk, target_type, target_pk):
         from apps.inventory.services import upload_inventory_attachment
 
         try:
-            upload_inventory_attachment(
+            upload_many(upload_inventory_attachment,
                 actor=request.user,
                 target=target,
                 uploaded_file=form.cleaned_data["uploaded_file"],

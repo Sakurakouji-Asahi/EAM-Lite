@@ -6,7 +6,9 @@ import uuid
 from urllib.parse import urlencode
 from pathlib import Path
 
+from apps.core.multi_upload import upload_many
 from django.contrib import messages
+from apps.core.pagination import paginate_query
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import FieldDoesNotExist, PermissionDenied, ValidationError
 from django.core.files.storage import default_storage
@@ -349,12 +351,14 @@ def asset_list_export(request):
     company = asset_company_for_request()
     require_export_report(request.user, "asset_ledger")
     source = request.POST if request.method == "POST" else request.GET
-    if set(source) - set(FILTER_LABELS) - {"csrfmiddlewaretoken", "idempotency_key"}:
+    if set(source) - set(FILTER_LABELS) - {"csrfmiddlewaretoken", "idempotency_key", "page"}:
         from django.http import HttpResponseBadRequest
         return HttpResponseBadRequest("包含不支持的台账筛选条件。")
     errors, dataset, filters = [], None, {}
     key = source.get("idempotency_key") or uuid.uuid4().hex
     try:
+        source = source.copy()
+        source.pop("page",None)
         filters = normalize_list_filters(source, actor=request.user, company=company)
         payload = {"asset_list_filters": filters}
         if request.method == "POST":
@@ -368,10 +372,12 @@ def asset_list_export(request):
         dataset = build_report_dataset(actor=request.user, company=company, report_key="asset_ledger", filters=payload)
     except (ValidationError, ReportValidationError) as exc:
         errors = getattr(exc, "messages", None) or exc.errors
+    from apps.core.pagination import paginate_query
+    preview_page,pagination_query=paginate_query(request,dataset.rows if dataset else [],per_page=100)
     response = render(request, "assets/asset_export.html", {
         "filters": filters, "filter_query": urlencode({k: v for k, v in filters.items() if v}),
         "display_filters": describe_list_filters(filters, company=company),
-        "dataset": dataset, "preview_rows": dataset.rows[:100] if dataset else (),
+        "dataset": dataset, "preview_rows": preview_page, "page_obj":preview_page,"pagination_query":pagination_query,
         "idempotency_key": key, "errors": errors,
     }, status=400 if errors else 200)
     add_never_cache_headers(response)
@@ -630,6 +636,11 @@ def asset_detail(request, pk):
         if can_p1
         else []
     )
+    movement_rows = asset.movements.select_related("from_department","to_department","from_employee",
+        "to_employee","from_location","to_location","operated_by").order_by("-effective_at","-created_at","pk") if can_p1 else []
+    movement_page, movement_query = paginate_query(request,movement_rows,parameter="movement_page")
+    composition_rows = asset.composition_revisions.select_related("recorded_by").order_by("-revision","pk") if can_p1 else []
+    composition_page, composition_query = paginate_query(request,composition_rows,parameter="composition_page",per_page=10)
     return render(
         request,
         "assets/asset_detail.html",
@@ -683,7 +694,7 @@ def asset_detail(request, pk):
             "origin_outgoing": asset.origin_outgoing.filter(target_asset__in=scoped_assets_p1(request.user, company))
                 .select_related("target_asset", "target_issued_code", "reversal").order_by("recorded_at") if can_p1 else [],
             "composition": asset.composition_revisions.first() if can_p1 else None,
-            "composition_history": asset.composition_revisions.defer("members").select_related("recorded_by")[:10] if can_p1 else [],
+            "composition_history": composition_page, "composition_page":composition_page, "composition_query":composition_query,
             "custody_return_record": getattr(asset, "custody_return_record", None) if can_p1 else None,
             "custody_return_history": asset.custody_returns.select_related("recorded_by", "reversal__recorded_by").order_by("-recorded_at") if can_p1 else [],
             "can_correct_trace": bool(can_p1 and not archived and can_create_asset_draft(request.user, company, asset.department)),
@@ -696,14 +707,7 @@ def asset_detail(request, pk):
             "maintenance_plans": maintenance_plans,
             "can_create_maintenance_plan": can_create_maintenance_plan,
             "clearance_items": clearance_items,
-            "movements": (
-                asset.movements.select_related(
-                    "from_department", "to_department", "from_employee", "to_employee",
-                    "from_location", "to_location", "operated_by",
-                ).order_by("-effective_at", "-created_at")[:25]
-                if can_p1
-                else []
-            ),
+            "movements":movement_page, "movement_page":movement_page, "movement_query":movement_query,
             "lifecycle_actions": {
                 "transfer": not archived and can_lifecycle_action(request.user, asset, "transfer") and asset.asset_status in {"in_use", "idle"},
                 "idle": not archived and can_lifecycle_action(request.user, asset, "idle") and asset.asset_status == "in_use",
@@ -881,7 +885,7 @@ def attachment_upload(request, pk):
         })
     if request.method == "POST" and form.is_valid():
         try:
-            upload_asset_attachment(
+            upload_many(upload_asset_attachment,
                 actor=request.user,
                 asset=asset,
                 uploaded_file=form.cleaned_data["file"],

@@ -13,8 +13,8 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_http_methods
 
 from apps.audit.services import request_audit_context, write_business_audit_log
-from apps.imports.forms import ImportUploadForm
-from apps.imports.presentation import asset_import_context
+from apps.imports.forms import ImportUploadForm, ImportHistoryFilterForm, ImportRowFilterForm
+from apps.imports.presentation import asset_import_context, opening_stock_import_context
 from apps.imports.services import (
     TEMPLATE_REGISTRY,
     build_template_workbook,
@@ -92,10 +92,29 @@ def import_home(request):
             or definition.import_type == "item_master" and not roles.intersection({"system_admin", "finance", "warehouse"})):
             condition &= Q(uploaded_by=request.user)
         permitted |= condition
-    batches = ImportBatch.objects.filter(company=company).filter(permitted).select_related("uploaded_by", "file_attachment").order_by("-uploaded_at")
+    batches = ImportBatch.objects.filter(company=company).filter(permitted).select_related("uploaded_by", "file_attachment")
+    form = ImportHistoryFilterForm(request.GET, definitions=allowed)
+    valid = form.is_valid()
+    if valid:
+        query = form.cleaned_data["q"]
+        if query:
+            condition = Q(file_attachment__original_filename__icontains=query)
+            if query.isdecimal() and 0 < int(query) <= 9223372036854775807:
+                condition |= Q(pk=int(query))
+            batches = batches.filter(condition)
+        if form.cleaned_data["import_type"]:
+            batches = batches.filter(import_type=form.cleaned_data["import_type"])
+        if form.cleaned_data["status"]:
+            batches = batches.filter(status=form.cleaned_data["status"])
+    else:
+        batches = batches.none()
+    batches = batches.order_by("-uploaded_at", "-pk")
     page = Paginator(batches, 20).get_page(request.GET.get("page"))
+    query = request.GET.copy()
+    query.pop("page", None)
     return render(request, "imports/home.html", {"company": company, "definitions": allowed,
-                                                 "recent_batches": page.object_list, "page_obj": page})
+                  "recent_batches": page.object_list, "page_obj": page, "filter_form": form,
+                  "pagination_query": query.urlencode()}, status=200 if valid else 400)
 
 
 @never_cache
@@ -158,29 +177,51 @@ def batch_detail(request, pk):
         company=company,
     )
     _require_batch(request.user, batch)
-    if set(request.GET) - {"page"}:
+    if set(request.GET) - {"page", "row_view", "row_number"}:
         return HttpResponse("包含不支持的导入预览参数。", status=400)
-    paginator = Paginator(batch.rows.order_by("row_number"), 50)
+    form = ImportRowFilterForm(request.GET)
+    valid = form.is_valid()
+    selected = batch.rows.all()
+    if valid:
+        view = form.cleaned_data["row_view"]
+        if view == "errors":
+            selected = selected.exclude(errors_json=[])
+        elif view == "warnings":
+            selected = selected.exclude(warnings_json=[])
+        elif view == "clean":
+            selected = selected.filter(validation_status__in=("valid", "created"), errors_json=[], warnings_json=[])
+        if form.cleaned_data["row_number"]:
+            selected = selected.filter(row_number=form.cleaned_data["row_number"])
+    else:
+        selected = selected.none()
+    paginator = Paginator(selected.order_by("row_number"), 50)
     try:
         page_obj = paginator.page(request.GET.get("page", "1"))
     except (PageNotAnInteger, EmptyPage):
         return HttpResponse("页码无效。", status=400)
     rows = list(page_obj.object_list)
     progress = asset_import_context(actor=request.user, batch=batch, rows=rows)
+    query = request.GET.copy()
+    query.pop("page", None)
     return render(
         request,
         "imports/batch_detail.html",
         {
             "batch": batch,
             "rows": rows,
+            "error_row_count": batch.rows.exclude(errors_json=[]).count(),
             "page_obj": page_obj,
+            "filter_form": form,
+            "pagination_query": query.urlencode(),
             "definition": _definition_or_404(batch.import_type, company=company),
             "is_asset_initialization": batch.import_type == "asset_initialization",
             "is_item_master": batch.import_type == "item_master",
             "is_opening_stock": batch.import_type == "opening_stock",
             "is_opening_custody": batch.import_type == "opening_custody",
             **progress,
+            **opening_stock_import_context(actor=request.user, batch=batch, rows=rows),
         },
+        status=200 if valid else 400,
     )
 
 
@@ -272,4 +313,24 @@ def download_source(request, pk):
         "attachment; filename*=UTF-8''" + escape_uri_path(Path(attachment.safe_filename).name)
     )
     response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@never_cache
+@login_required
+@require_GET
+def download_error_rows(request,pk):
+    from apps.masterdata.models import ImportBatch
+    from .error_workbook import build_error_rows_workbook
+    batch=get_object_or_404(ImportBatch,pk=pk,company=_company_or_404())
+    _require_batch(request.user,batch)
+    try:
+        data,count=build_error_rows_workbook(batch)
+    except ValidationError as exc:
+        return HttpResponse('；'.join(exc.messages),status=400)
+    write_business_audit_log(company=batch.company,user=request.user,action='import_error_rows_download',
+        object_type='ImportBatch',object_id=batch.pk,new_data={'rows':count,'template_version':batch.template_version},**request_audit_context(request))
+    response=HttpResponse(data,content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    response['Content-Disposition']=f'attachment; filename=error-rows-{batch.pk}.xlsx'
+    response['X-Content-Type-Options']='nosniff'
     return response

@@ -20,7 +20,7 @@ from tests.test_sprint3_support import make_company, make_user
 pytestmark = pytest.mark.django_db
 
 
-def test_blank_required_identifiers_have_one_actionable_error_each():
+def test_new_masterdata_numbers_allow_auto_numbering_and_keep_other_required_errors():
     company = make_company("FORM-ERRORS")
     finance = make_user("form-errors-finance", "finance")
     equipment = make_user("form-errors-equipment", "equipment")
@@ -39,9 +39,20 @@ def test_blank_required_identifiers_have_one_actionable_error_each():
 
     for form, field_name in cases:
         assert not form.is_valid()
-        errors = list(form.errors[field_name])
-        assert len(errors) == 1
-        assert "必填" in errors[0]
+        assert form.fields[field_name].required is False
+        assert field_name not in form.errors
+        assert "自动生成" in form.fields[field_name].help_text
+        errors = list(form.errors["name"])
+        assert len(errors) == 1 and "必填" in errors[0]
+
+        # Once a record exists, its identifier must not be silently emptied.
+        form.instance._state.adding = False
+        from apps.core.numbering import configure_auto_number_field
+        configure_auto_number_field(form)
+        assert form.fields[field_name].required is True
+        form.full_clean()
+        edit_errors = list(form.errors[field_name])
+        assert len(edit_errors) == 1 and "必填" in edit_errors[0]
 
 
 def test_blank_coding_segment_does_not_add_unsupported_type_errors():

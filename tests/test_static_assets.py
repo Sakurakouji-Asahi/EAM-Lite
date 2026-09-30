@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 import pytest
 from django.conf import settings
@@ -29,8 +30,8 @@ def test_home_request_uses_only_local_bootstrap_and_htmx(client):
     assert "/static/vendor/bootstrap/5.3.8/css/bootstrap.min.css" in html
     assert "/static/vendor/bootstrap/5.3.8/js/bootstrap.bundle.min.js" in html
     assert "/static/vendor/htmx/2.0.10/htmx.min.js" in html
-    assert "/static/js/app.js?v=20260831-usability1" in html
-    assert "/static/css/app.css?v=20260831-usability1" in html
+    assert re.search(r'/static/js/app\.js\?v=[a-zA-Z0-9-]+', html)
+    assert re.search(r'/static/css/app\.css\?v=[a-zA-Z0-9-]+', html)
     htmx_config = '<meta name="htmx-config" content=\'{"includeIndicatorStyles": false}\'>'
     assert htmx_config in html
     assert html.index(htmx_config) < html.index("/static/vendor/htmx/2.0.10/htmx.min.js")
@@ -112,20 +113,23 @@ def test_application_interaction_script_prevents_repeat_submit_without_disabling
     assert 'document.addEventListener("submit"' in content
     assert 'form.dataset.eamSubmitting === "true"' in content
     assert 'event.preventDefault()' in content
-    assert ".disabled" not in content
+    submit_handler = content.split('document.addEventListener("submit"', 1)[1].split('for (const eventName', 1)[0]
+    assert ".disabled" not in submit_handler
+    assert 'setAttribute("disabled"' not in submit_handler
     assert "fetch(" not in content
 
 
-def test_finance_confirmation_script_clears_nonfixed_depreciation_controls():
+def test_finance_confirmation_script_preserves_inputs_when_switching_recognition():
     script = Path(finders.find("js/finance-confirm-form.js"))
     content = script.read_text(encoding="utf-8")
 
     assert 'treatment.value === "controlled_non_fixed"' in content
-    assert '"id_fixed_asset_category"' in content
-    assert '"id_depreciation_policy"' in content
-    assert '"id_method"' in content
-    assert '"id_opening_actual_accumulated_depreciation"' in content
-    assert 'field.value = ""' in content
-    assert "field.disabled = controlled" in content
-    assert 'field.value = "0.00"' in content
+    for name in ('fixed_asset_category','depreciation_policy','method','opening_actual_accumulated_depreciation'):
+        assert f'"{name}"' in content
+    assert 'document.getElementById("id_" + name)' in content
+    assert 'input.disabled = hidden' in content
+    assert 'input.value = ""' not in content
+    assert 'input.value = "0.00"' in content
+    assert 'previousZeros.set(name, input.value)' in content
+    assert 'input.value = previousZeros.get(name)' in content
     assert "fetch(" not in content

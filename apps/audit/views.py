@@ -35,6 +35,7 @@ _ALLOWED_QUERY_KEYS = frozenset(
         "correlation_id",
         "page_size",
         "page",
+        "q",
     }
 )
 

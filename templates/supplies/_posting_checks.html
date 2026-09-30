@@ -1,0 +1,2 @@
+{% if posting_blockers %}<div class="alert alert-warning"><strong>当前暂不能过账</strong><ul class="mb-0">{% for blocker in posting_blockers %}<li>{{ blocker }}</li>{% endfor %}</ul></div>{% endif %}
+{% if posting_comparison %}<div class="alert alert-{% if posting_comparison.changed %}warning{% else %}success{% endif %}">本次核对：确认页预估 ¥{{ posting_comparison.before }}，实际过账 ¥{{ posting_comparison.total }}，差额 ¥{{ posting_comparison.difference }}。{% if posting_comparison.changed %}预估后库存或来源数据发生变化，实际金额按过账时的数据计算；请核对下方明细。{% endif %}</div>{% endif %}

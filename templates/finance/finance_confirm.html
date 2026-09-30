@@ -2,6 +2,7 @@
 {% block title %}财务确认 {{ asset }} - EAM-Lite{% endblock %}
 {% block content %}
 <header class="app-page-header"><div><h1 class="h3 mb-1">财务确认</h1><p class="text-secondary mb-0">{{ asset.asset_code|default:asset.draft_number }} · {{ asset.asset_name }}</p></div><a class="btn btn-outline-secondary" href="{% url 'finance:pending-list' %}">返回财务待办</a></header>
+<p class="text-secondary small">选择不同的会计认定不会改变资产编号或二维码。</p>
 <div class="row g-4"><aside class="col-12 col-xl-3"><section class="card mb-3"><div class="card-header">实物资料</div><div class="card-body"><dl class="mb-0 app-summary-list"><dt>实物分类</dt><dd>{{ asset.category }}</dd><dt>部门 / 责任人</dt><dd>{{ asset.department }} / {{ asset.responsible_employee }}</dd><dt>位置</dt><dd>{{ asset.location }}</dd><dt>达到可使用状态</dt><dd>{{ asset.commissioning_date|default:"未填写" }}</dd>{% if asset.management_attribute %}<dt>首次管理属性</dt><dd>{{ asset.get_management_attribute_display }}</dd>{% endif %}</dl><a href="{% url 'assets:asset-detail' asset.pk %}">查看资产详情</a><br><a href="{% url 'assets:attachment-upload' asset.pk %}?role=invoice">补充发票或财务附件</a></div></section><p class="small text-secondary">保存后仍是财务草稿。确认后启用折旧设置；月度折旧另行办理。</p></aside>
 <div class="col-12 col-xl-9">
 {% if not has_fixed_asset_categories %}<div class="alert alert-warning" data-fixed-asset-category-warning>尚未配置固定资产会计类别。请先<a href="{% url 'finance:fixed-category-create' %}">新建会计类别</a>。</div>{% endif %}

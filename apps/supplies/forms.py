@@ -168,6 +168,11 @@ class SupplyItemForm(SupplyFormMixin, forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         current_type = self.instance.item_type if self.instance.pk else None
+        from .services import supply_item_unit_is_locked
+
+        if supply_item_unit_is_locked(self.instance):
+            self.fields["unit"].disabled = True
+            self.fields["unit"].help_text = "已有业务记录，计量单位已锁定；使用其他单位时请另建物品档案。"
         if current_type:
             require_manage_supply_item(self.actor, current_type)
         else:
@@ -485,6 +490,7 @@ class SupplyDocumentLineEntryForm(forms.Form):
         self.fields["item"].queryset = SupplyItem.objects.filter(
             company=company, is_active=True
         ).select_related("category").order_by("normalized_item_code")
+        self.fields["item"].label_from_instance = lambda item: f"{item.item_code} / {item.name}（{item.unit}）"
         if document_type in {
             SupplyDocumentType.OPENING,
             SupplyDocumentType.RECEIPT,
@@ -799,6 +805,7 @@ class SupplyDocumentCancelForm(forms.Form):
 
 
 class SupplyDocumentPostForm(forms.Form):
+    preview_token = forms.CharField(required=False, widget=forms.HiddenInput())
     confirm = forms.BooleanField(
         label="我已核对仓库、物品和数量；确认立即过账且历史不可编辑。",
         widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
@@ -921,6 +928,7 @@ class SupplyCountTaskForm(forms.Form):
 
 
 class SupplyCountRecordForm(forms.Form):
+    expected_counted_at = forms.CharField(required=False,widget=forms.HiddenInput)
     counted_quantity = forms.DecimalField(
         label="实盘数量",
         max_digits=18,
@@ -958,6 +966,7 @@ class SupplyCountRecordForm(forms.Form):
         initial.setdefault("remark", line.remark)
         initial.setdefault("adjustment_unit_cost", line.adjustment_unit_cost)
         initial.setdefault("zero_cost_reason", line.zero_cost_reason)
+        initial.setdefault("expected_counted_at", line.counted_at.isoformat() if line.counted_at else "")
         super().__init__(*args, initial=initial, **kwargs)
         show_adjustment_cost = bool(
             can_view_supply_cost(actor)
@@ -1095,6 +1104,10 @@ class SupplyCountCustodyResolutionForm(forms.Form):
 
     def clean(self):
         cleaned = super().clean()
+        if self.line.difference_quantity is None:
+            raise ValidationError("尚未录入实盘数量，请先完成实盘录入。")
+        if self.line.difference_quantity == 0:
+            raise ValidationError("该行没有盘点差异，无需处理。")
         resolution_type = cleaned.get("resolution_type")
         if resolution_type == SupplyCountResolutionType.RETURN:
             if cleaned.get("target_warehouse") is None:

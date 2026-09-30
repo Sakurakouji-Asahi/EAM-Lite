@@ -6,6 +6,7 @@ from apps.imports import views
 app_name = "imports"
 
 urlpatterns = [
+    path("batches/<int:pk>/errors.xlsx",views.download_error_rows,name="error-rows"),
     path("", views.import_home, name="home"),
     path("<str:import_type>/template.xlsx", views.download_template, name="template"),
     path("<str:import_type>/upload/", views.upload_import, name="upload"),

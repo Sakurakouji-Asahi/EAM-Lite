@@ -214,14 +214,20 @@ def _latest_valid_record(plan):
     ).first()
 
 
-def _recalculate_plan_dates(plan):
+def plan_date_preview(plan, *, cycle_value=None, cycle_unit=None, first_due_date=None):
     latest = _latest_valid_record(plan)
     last_date = latest.completed_date if latest else None
-    next_date = (
-        add_calendar_cycle(last_date, plan.cycle_value, plan.cycle_unit)
-        if last_date
-        else plan.first_due_date
-    )
+    try:
+        next_date = (add_calendar_cycle(last_date, cycle_value or plan.cycle_value, cycle_unit or plan.cycle_unit)
+                     if last_date else (first_due_date or plan.first_due_date))
+    except (OverflowError, ValueError) as exc:
+        raise ValidationError({'cycle_value':'周期超出日期可计算范围。'}) from exc
+    return {'last_date':last_date, 'old_next_date':plan.next_maintenance_date, 'next_date':next_date}
+
+
+def _recalculate_plan_dates(plan):
+    dates = plan_date_preview(plan)
+    last_date, next_date = dates['last_date'], dates['next_date']
     _base_update(
         type(plan),
         plan.pk,

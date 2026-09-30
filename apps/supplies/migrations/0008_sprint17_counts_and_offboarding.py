@@ -563,7 +563,13 @@ def restore_previous_guards(apps, schema_editor):
     offboarding = importlib.import_module(
         "apps.offboarding.migrations.0002_postgresql_clearance_guards"
     )
-    schema_editor.execute(offboarding.OFFBOARDING_GUARDS_SQL)
+    # Only these two clearance functions were replaced by Sprint 17. Replaying
+    # the entire older script also overwrites newer asset/loan guards installed
+    # by independent migrations which are still applied at this point.
+    for name in ("offboarding_validate_clearance_commit", "offboarding_validate_employee_commit"):
+        start = offboarding.OFFBOARDING_GUARDS_SQL.index("CREATE OR REPLACE FUNCTION " + name + "()")
+        end = offboarding.OFFBOARDING_GUARDS_SQL.index("\n$$;", start) + len("\n$$;")
+        schema_editor.execute(offboarding.OFFBOARDING_GUARDS_SQL[start:end])
 
 
 class Migration(migrations.Migration):

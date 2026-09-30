@@ -20,6 +20,20 @@ HEX64_VALIDATOR = RegexValidator(
     message="摘要必须是 64 位小写十六进制字符串。",
 )
 
+
+class ReportPreset(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.PROTECT)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    report_key = models.CharField(max_length=48)
+    name = models.CharField('常用查询名称', max_length=80)
+    query = models.JSONField(default=dict)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ('name', 'pk')
+        constraints = [models.UniqueConstraint(fields=('company','user','report_key','name'), name='uq_report_preset_owner_name')]
+
 REPORT_TOTALS_SCHEMA_VERSION = REPORT_SCHEMA_VERSION
 TPLUS_TOTALS_SCHEMA_VERSION = TPLUS_SCHEMA_VERSION
 TPLUS_TOTAL_METRIC_KEYS = TPLUS_TOTAL_METRICS

@@ -17,6 +17,7 @@ from django.utils import timezone
 
 from apps.finance.models import (
     AssetFinance,
+    DepreciationBatch,
     AssetValueAdjustment,
     DepreciationMethod,
     DepreciationPolicy,
@@ -61,6 +62,20 @@ class PendingFinanceFilterForm(forms.Form):
         self.fields["import_batch"].queryset = ImportBatch.objects.filter(
             company=company,import_type="asset_initialization",status="confirmed").order_by("-uploaded_at")
         self.fields["import_batch"].empty_label = "全部来源"
+        _bootstrap_widgets(self)
+
+
+class DepreciationBatchFilterForm(forms.Form):
+    period = forms.DateField(label="会计月份", required=False, input_formats=["%Y-%m"],
+                             widget=forms.DateInput(format="%Y-%m", attrs={"type": "month"}),
+                             help_text="显示期间与所选月份有交集的批次。")
+    status = forms.ChoiceField(label="批次状态", required=False,
+                               choices=(("", "全部状态"), *DepreciationBatch.Status.choices))
+    page_size = forms.TypedChoiceField(label="每页显示", required=False, coerce=int, initial=25,
+                                       choices=((25,"25 条"),(50,"50 条"),(100,"100 条"),(200,"200 条")))
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         _bootstrap_widgets(self)
 
 

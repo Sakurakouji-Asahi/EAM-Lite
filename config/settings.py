@@ -500,3 +500,6 @@ LOGGING = {
         }
     },
 }
+
+# A signed 200-row count entry page can contain 1002 fields.
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 2000

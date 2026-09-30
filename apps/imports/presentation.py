@@ -3,6 +3,30 @@ from apps.assets.models import Asset
 from apps.assets.permissions import scoped_assets_p1
 from apps.finance.permissions import can_view_finance, can_manage_finance
 from apps.finance.readiness import pending_finance_assets
+from apps.imports.identifiers import opening_stock_document_key
+
+
+def opening_stock_import_context(*, actor, batch, rows=()):
+    if batch.import_type != "opening_stock" or batch.status != "confirmed":
+        return {}
+    from apps.supplies.models import SupplyDocument
+    from apps.supplies.permissions import scoped_supply_documents
+
+    warehouses = list(batch.rows.filter(validation_status="created").values_list("normalized_data_json__warehouse_id", flat=True))
+    keys = {opening_stock_document_key(batch.pk, identifier) for identifier in warehouses if identifier}
+    documents = list(scoped_supply_documents(actor, batch.company, SupplyDocument.objects.select_related("target_warehouse"))
+                     .filter(document_type="opening", idempotency_key__in=keys).order_by("document_no", "pk"))
+    progress = {"draft": 0, "posted": 0, "reversed": 0, "cancelled": 0}
+    for document in documents:
+        progress[document.status] += 1
+    progress["documents"] = documents
+    progress["unavailable"] = len(keys) - len(documents)
+    progress["missing_source_rows"] = sum(not identifier for identifier in warehouses)
+    lookup = {document.idempotency_key: document for document in documents}
+    for row in rows:
+        identifier = (row.normalized_data_json or {}).get("warehouse_id")
+        row.created_document = lookup.get(opening_stock_document_key(batch.pk, identifier)) if identifier else None
+    return {"opening_stock_progress": progress}
 
 
 def asset_import_context(*, actor, batch, rows):

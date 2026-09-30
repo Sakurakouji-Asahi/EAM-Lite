@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 from django import forms
+from django.utils import timezone
 from apps.core.form_widgets import normalize_date_widgets
 
 from apps.masterdata.models import (
@@ -44,6 +45,8 @@ ACCOUNTING_TREATMENT_CHOICES = (
 
 class ReportFilterForm(forms.Form):
     report_type = forms.ChoiceField(label="报表类型", choices=())
+    q = forms.CharField(label="关键词", required=False, max_length=100,
+                        widget=forms.TextInput(attrs={"placeholder": "编号、名称、设备编号或型号"}))
     as_of_date = forms.DateField(label="基准日期", required=False, widget=forms.DateInput(attrs={"type": "date"}))
     period_start = forms.DateField(label="期间开始", required=False, widget=forms.DateInput(attrs={"type": "date"}))
     period_end = forms.DateField(label="期间结束", required=False, widget=forms.DateInput(attrs={"type": "date"}))
@@ -124,6 +127,16 @@ class ReportFilterForm(forms.Form):
             )
         if actor is not None and not can_view_financial_fields(actor):
             self.fields.pop("fixed_asset_category", None)
+        from apps.reports.catalog import FILTERS_BY_REPORT
+
+        self.report_key = (self.data.get("report_type") if self.is_bound else self.initial.get("report_type")) or "asset_ledger"
+        allowed = FILTERS_BY_REPORT.get(self.report_key, set()) | {"report_type"}
+        self.unsupported_fields = set(self.fields) - allowed
+        for name in self.unsupported_fields:
+            self.fields.pop(name)
+        self.fields["report_type"].widget = forms.HiddenInput()
+        if self.report_key not in {"asset_ledger", "department_assets", "employee_assets", "fixed_asset_detail"} and "q" in self.fields:
+            self.fields["q"].widget.attrs["placeholder"] = "按报表中的编号、名称或人员查找"
         for field in self.fields.values():
             if isinstance(field.widget, (forms.Select, forms.SelectMultiple)):
                 field.widget.attrs.setdefault("class", "form-select")
@@ -142,11 +155,32 @@ class ReportFilterForm(forms.Form):
             and self.data.get("fixed_asset_category") not in (None, "")
         ):
             raise forms.ValidationError("您无权使用固定资产会计类别筛选。")
+        if any(self.data.get(name) not in (None, "", False, "false", "False") for name in self.unsupported_fields):
+            raise forms.ValidationError("包含不适用于当前报表的筛选条件，请重新选择条件。")
+        if cleaned.get("label_scope") == "not_attached":
+            cleaned["asset_scope"] = "managed"
+        status = cleaned.get("asset_status")
+        if status in {"draft", "pending_finance"} and "include_drafts" in self.fields:
+            cleaned["include_drafts"] = True
+        if status in {"disposed", "sold", "other_disposed"} and "include_disposed" in self.fields:
+            cleaned["include_disposed"] = True
+        if cleaned.get("asset_scope") == "managed" and status in {"draft", "pending_finance", "disposed", "sold", "other_disposed"}:
+            raise forms.ValidationError("仅在管资产不能同时筛选草稿或已处置状态。")
         start, end = cleaned.get("period_start"), cleaned.get("period_end")
         if bool(start) != bool(end):
             raise forms.ValidationError("期间开始和期间结束必须同时填写。")
         if start and end and end < start:
             raise forms.ValidationError("期间结束不得早于期间开始。")
+        if "as_of_date" in self.fields and not cleaned.get("as_of_date") and "as_of_date" not in self.errors:
+            cleaned["as_of_date"] = timezone.localdate()
+        # Render and re-submit the applied scope, including linked checkbox
+        # choices, rather than leaving stale user input beside the results.
+        data = self.data.copy()
+        for name in ("asset_scope", "include_drafts", "include_disposed", "as_of_date"):
+            if name in cleaned:
+                value = cleaned[name]
+                data[name] = value.isoformat() if isinstance(value, date) else value or ""
+        self.data = data
         return cleaned
 
 

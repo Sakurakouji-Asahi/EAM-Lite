@@ -114,9 +114,11 @@ def apply_audit_filters(queryset, filters):
 
 
 def audit_log_queryset(*, user, company, filters):
-    return apply_audit_filters(
+    from .business_search import filter_business_audit
+    queryset = apply_audit_filters(
         scoped_audit_logs(user, company).select_related("user"), filters
-    ).order_by("-created_at", "-pk")
+    )
+    return filter_business_audit(queryset,actor=user,company=company,query=filters.get('q','')).order_by("-created_at", "-pk")
 
 
 def visible_audit_actors(*, user, company):

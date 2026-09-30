@@ -15,6 +15,8 @@
     <div><h2 class="h5 mb-1" id="task-summary-heading">需要关注</h2><p class="text-secondary small mb-0">数据按当前公司和账号范围统计。</p></div>
   </div>
   <div class="task-card-grid">
+{% if lifecycle_work.can_view_loans %}<a class="task-card" href="{% url 'assets:loan-workbench' %}"><span>借用归还</span><strong>{{ lifecycle_work.loans.active }}</strong><small>逾期 {{ lifecycle_work.loans.overdue }} 笔，未来 7 天内到期 {{ lifecycle_work.loans.due }} 笔</small></a>{% endif %}
+{% if lifecycle_work.can_view_disposals %}<a class="task-card" href="{% url 'assets:disposal-workbench' %}"><span>资产处置</span><strong>{{ lifecycle_work.disposals.actual|add:lifecycle_work.disposals.finance|add:lifecycle_work.disposals.complete }}</strong><small>补结果 {{ lifecycle_work.disposals.actual }} · 财务核对 {{ lifecycle_work.disposals.finance }} · 待完成 {{ lifecycle_work.disposals.complete }}</small></a>{% endif %}
     {% if app_navigation.finance_reports.can_manage_finance %}
       <a class="task-card" href="{% url 'finance:pending-list' %}" data-task-card="pending_finance"><span>财务确认</span><strong>{{ dashboard.pending.pending_finance|default:0 }}</strong><small>资料齐备后确认金额和折旧</small></a>
     {% endif %}
@@ -22,17 +24,17 @@
       <a class="task-card" href="{% url 'assets:label-queue' %}" data-task-card="pending_labels"><span>待贴标签</span><strong>{{ dashboard.pending.pending_label|default:0 }}</strong><small>打印二维码并逐项确认贴标</small></a>
     {% endif %}
     {% if app_navigation.tasks.can_view_asset_inventory %}
-      <a class="task-card" href="{% url 'inventory:task-list' %}" data-task-card="asset_inventory"><span>待资产盘点</span><strong>{{ dashboard.pending.inventory_pending|default:0 }}</strong><small>查看指派任务和执行进度</small></a>
-      <a class="task-card" href="{% url 'inventory:task-list' %}" data-task-card="asset_exceptions"><span>资产盘点异常</span><strong>{{ dashboard.pending.inventory_exceptions|default:0 }}</strong><small>核对差异并形成处理结论</small></a>
+      <a class="task-card" href="{% url 'inventory:task-list' %}?work=unscanned" data-task-card="asset_inventory"><span>待资产盘点</span><strong>{{ dashboard.pending.inventory_pending|default:0 }}</strong><small>查看指派任务和执行进度</small></a>
+      <a class="task-card" href="{% url 'inventory:task-list' %}?work=unresolved" data-task-card="asset_exceptions"><span>资产盘点异常</span><strong>{{ dashboard.pending.inventory_exceptions|default:0 }}</strong><small>核对差异并形成处理结论</small></a>
     {% endif %}
     {% if app_navigation.tasks.can_view_supply_inventory and supply_dashboard %}
-      <a class="task-card" href="{% url 'supplies:count-task-list' %}" data-task-card="supply_inventory"><span>未关闭物品盘点</span><strong>{{ supply_dashboard.open_count_task_count|default:0 }}</strong><small>处理仓库库存和保管盘点</small></a>
+      <a class="task-card" href="{% url 'supplies:count-task-list' %}?status=open" data-task-card="supply_inventory"><span>未关闭物品盘点</span><strong>{{ supply_dashboard.open_count_task_count|default:0 }}</strong><small>处理仓库库存和保管盘点</small></a>
     {% endif %}
     {% if app_navigation.tasks.can_view_maintenance %}
       <a class="task-card" href="{% url 'maintenance:due-list' %}" data-task-card="maintenance"><span>待保养</span><strong>{{ dashboard.pending.maintenance_upcoming|default:0 }}</strong><small>逾期 {{ dashboard.pending.maintenance_overdue|default:0 }} 项</small></a>
     {% endif %}
     {% if app_navigation.tasks.can_view_offboarding %}
-      <a class="task-card" href="{% url 'offboarding:clearance-list' %}" data-task-card="offboarding"><span>离职未清事项</span><strong>{{ dashboard.pending.offboarding_unresolved|default:0 }}</strong><small>{% if supply_dashboard %}另有数量耐用品待处理 {{ supply_dashboard.pending_clearance_count|default:0 }} 项{% else %}查看清退进度和处理证据{% endif %}</small></a>
+      <a class="task-card" href="{% url 'offboarding:clearance-list' %}?status=unfinished" data-task-card="offboarding"><span>离职未清事项</span><strong>{{ dashboard.pending.offboarding_unresolved|default:0 }}</strong><small>{% if supply_dashboard %}另有数量耐用品待处理 {{ supply_dashboard.pending_clearance_count|default:0 }} 项{% else %}查看清退进度和处理证据{% endif %}</small></a>
     {% endif %}
     {% if supply_dashboard and app_navigation.supplies.can_view_stock %}
       <a class="task-card" href="{% url 'reports:supply-report-detail' 'supply_low_stock' %}" data-task-card="low_stock"><span>低库存预警</span><strong>{{ supply_dashboard.low_stock_count|default:0 }}</strong><small>查看当前数量与最低库存缺口</small></a>

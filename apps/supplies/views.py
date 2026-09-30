@@ -4,16 +4,23 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
+from apps.core.return_navigation import safe_return_url, return_query
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import Paginator
+from django.core import signing
+from django.http import HttpResponseBadRequest, QueryDict
+from urllib.parse import urlencode
+from apps.supplies.count_workspace import CountResultFilterForm, BulkCountLineForm, visible_count_lines, count_summary, filter_count_lines, record_count_page
+from apps.supplies.posting_preview import document_posting_preview, posting_blockers, preview_token, post_with_preview, posting_comparison
 from django.db.models import Q, Sum
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 
 from apps.assets.permissions import can_create_asset_draft
+from apps.core.query_forms import DateRangeQueryForm, date_query_errors
 from apps.masterdata.models import InitializationSetting
 from apps.masterdata.normalization import normalize_identifier
 from apps.masterdata.permissions import (
@@ -198,11 +205,13 @@ def _pagination_query(request):
     return values.urlencode()
 
 
-def _iso_date(value):
-    try:
-        return date.fromisoformat(str(value or "").strip())
-    except ValueError:
-        return None
+def _date_filter_values(request, *, include_end=True):
+    data = {"date_from": request.GET.get("date_from", "")}
+    if include_end:
+        data["date_to"] = request.GET.get("date_to", "")
+    form = DateRangeQueryForm(data)
+    form.is_valid()
+    return form.cleaned_data.get("date_from"), form.cleaned_data.get("date_to"), date_query_errors(form)
 
 
 def _uuid_or_none(value):
@@ -747,8 +756,9 @@ def document_list(request):
         queryset = queryset.filter(
             lines__item__normalized_item_code=normalize_identifier(item_value)
         )
-    date_from = _iso_date(date_from_value)
-    date_to = _iso_date(date_to_value)
+    date_from, date_to, filter_errors = _date_filter_values(request)
+    if filter_errors:
+        queryset = queryset.none()
     if date_from_value:
         queryset = queryset.filter(business_date__gte=date_from) if date_from else queryset.none()
     if date_to_value:
@@ -787,6 +797,7 @@ def document_list(request):
             "selected_item": item_value,
             "date_from": date_from_value,
             "date_to": date_to_value,
+            "filter_errors": filter_errors,
             "return_intent": return_intent,
             "document_types": SPRINT15_DOCUMENT_TYPE_CHOICES,
             "statuses": SPRINT15_STATUS_CHOICES,
@@ -795,6 +806,7 @@ def document_list(request):
             ),
             "can_manage": can_create_supply_document(request.user),
         },
+        status=400 if filter_errors else 200,
     )
 
 
@@ -1014,6 +1026,10 @@ def document_detail(request, pk):
         {
             "document": document,
             "line_rows": line_rows,
+            "posting_preview": document_posting_preview(actor=request.user, document=document),
+            "posting_blockers": posting_blockers(document),
+            "posting_comparison": posting_comparison(request.user, document),
+            "workflow_return_url": safe_return_url(request, ""),
             "show_cost": show_cost,
             "total_amount": total_amount if show_cost else None,
             "can_manage": can_create_supply_document(
@@ -1090,21 +1106,25 @@ def document_post(request, pk):
     )
     require_post_supply_document(request.user, document=document)
     if request.method == "GET" and document.status == SupplyDocumentStatus.POSTED:
-        return redirect("supplies:document-detail", pk=document.pk)
+        return redirect(safe_return_url(request, reverse("supplies:document-detail", args=[document.pk])))
     if document.status not in {
         SupplyDocumentStatus.DRAFT,
         SupplyDocumentStatus.POSTED,
     }:
         raise PermissionDenied("该单据不能过账。")
+    preview = document_posting_preview(actor=request.user, document=document)
+    blockers = posting_blockers(document)
     form = SupplyDocumentPostForm(
         request.POST or None,
         document=document,
+        initial={"preview_token": preview_token(request.user, document, preview)},
     )
     if request.method == "POST" and form.is_valid():
         try:
-            post_supply_document(
+            post_with_preview(
                 actor=request.user,
                 document=document,
+                token=form.cleaned_data['preview_token'],
                 idempotency_key=form.cleaned_data["idempotency_key"],
                 request=request,
             )
@@ -1112,7 +1132,10 @@ def document_post(request, pk):
             _service_error(form, exc)
         else:
             messages.success(request, "库存单据已过账，余额和不可变流水已同步生成。")
-            return redirect("supplies:document-detail", pk=document.pk)
+            return redirect(safe_return_url(request, reverse("supplies:document-detail", args=[document.pk])))
+    if form.is_bound:
+        form.data = form.data.copy()
+        form.data['preview_token'] = preview_token(request.user, document, preview)
     return render(
         request,
         "supplies/document_post_confirm.html",
@@ -1120,6 +1143,8 @@ def document_post(request, pk):
             "document": document,
             "form": form,
             "lines": document.lines.all(),
+            "posting_preview": preview,
+            "posting_blockers": blockers,
             "show_cost": can_view_supply_cost(request.user),
         },
     )
@@ -1307,7 +1332,9 @@ def custody_list(request):
         queryset = queryset.filter(status=status)
     else:
         status = ""
-    date_from = _iso_date(date_from_value)
+    date_from, _date_to, filter_errors = _date_filter_values(request, include_end=False)
+    if filter_errors:
+        queryset = queryset.none()
     if date_from_value:
         queryset = (
             queryset.filter(started_on__gte=date_from)
@@ -1378,6 +1405,7 @@ def custody_list(request):
             "selected_employee": employee_value,
             "selected_status": status,
             "date_from": date_from_value,
+            "filter_errors": filter_errors,
             "source_document": source_document,
             "source_type": source_type,
             "departments": scoped_departments(
@@ -1388,6 +1416,7 @@ def custody_list(request):
             ).select_related("department").order_by("normalized_employee_no"),
             "show_cost": can_view_supply_cost(request.user),
         },
+        status=400 if filter_errors else 200,
     )
 
 
@@ -1552,7 +1581,7 @@ def durable_return_create(request, pk):
             _service_error(form, exc)
         else:
             messages.success(request, "耐用品归还草稿已创建；过账前尚未改变库存或保管。")
-            return redirect("supplies:document-detail", pk=document.pk)
+            return redirect(reverse("supplies:document-detail", args=[document.pk])+"?"+return_query(request))
     return render(
         request,
         "supplies/custody_action_form.html",
@@ -1595,7 +1624,7 @@ def custody_transfer(request, pk):
             _service_error(form, exc)
         else:
             messages.success(request, "责任转交已完成；目标形成独立保管来源链，仓库库存未变化。")
-            return redirect("supplies:custody-detail", pk=target.pk)
+            return redirect(safe_return_url(request, reverse("supplies:custody-detail", args=[target.pk])))
     return render(
         request,
         "supplies/custody_action_form.html",
@@ -1641,7 +1670,7 @@ def custody_write_off(request, pk, action):
             _service_error(form, exc)
         else:
             messages.success(request, f"{title}已记录；未增加仓库库存，也未生成会计凭证。")
-            return redirect("supplies:custody-detail", pk=custody.pk)
+            return redirect(safe_return_url(request, reverse("supplies:custody-detail", args=[custody.pk])))
     return render(
         request,
         "supplies/custody_action_form.html",
@@ -1787,8 +1816,9 @@ def stock_ledger_list(request):
         queryset = queryset.filter(
             item__normalized_item_code=normalize_identifier(item_value)
         )
-    date_from = _iso_date(date_from_value)
-    date_to = _iso_date(date_to_value)
+    date_from, date_to, filter_errors = _date_filter_values(request)
+    if filter_errors:
+        queryset = queryset.none()
     if date_from_value:
         queryset = queryset.filter(document__business_date__gte=date_from) if date_from else queryset.none()
     if date_to_value:
@@ -1806,6 +1836,7 @@ def stock_ledger_list(request):
             "selected_item": item_value,
             "date_from": date_from_value,
             "date_to": date_to_value,
+            "filter_errors": filter_errors,
             "document_types": SPRINT15_DOCUMENT_TYPE_CHOICES,
             "statuses": SPRINT15_STATUS_CHOICES,
             "warehouses": scoped_supply_warehouses(request.user, company).order_by(
@@ -1813,6 +1844,7 @@ def stock_ledger_list(request):
             ),
             "show_cost": can_view_supply_cost(request.user),
         },
+        status=400 if filter_errors else 200,
     )
 
 
@@ -1890,8 +1922,9 @@ def count_task_list(request):
         queryset = queryset.filter(department_id=department_id) if department_id else queryset.none()
     if employee_value:
         queryset = queryset.filter(employee_id=employee_id) if employee_id else queryset.none()
-    date_from = _iso_date(date_from_value)
-    date_to = _iso_date(date_to_value)
+    date_from, date_to, filter_errors = _date_filter_values(request)
+    if filter_errors:
+        queryset = queryset.none()
     if date_from_value:
         queryset = queryset.filter(planned_start__gte=date_from) if date_from else queryset.none()
     if date_to_value:
@@ -1910,6 +1943,7 @@ def count_task_list(request):
             "selected_employee": employee_value,
             "date_from": date_from_value,
             "date_to": date_to_value,
+            "filter_errors": filter_errors,
             "domains": SupplyCountDomain.choices,
             "statuses": (("open", "未关闭"), *SupplyCountStatus.choices),
             "warehouses": scoped_supply_warehouses(
@@ -1927,6 +1961,7 @@ def count_task_list(request):
                 department=scoped_departments(request.user, company).first(),
             ),
         },
+        status=400 if filter_errors else 200,
     )
 
 
@@ -1957,40 +1992,103 @@ def count_task_create(request):
     return render(request, "supplies/count_task_form.html", {"form": form})
 
 
+def _count_page_context(request, task):
+    base = visible_count_lines(request.user,task)
+    form = CountResultFilterForm(request.GET,show_cost=can_view_supply_cost(request.user))
+    lines = filter_count_lines(base,form)
+    page = Paginator(lines,form.cleaned_data.get("page_size") or 25).get_page(request.GET.get("page"))
+    params = request.GET.copy()
+    params.pop("page",None)
+    return {"task":task,"filter_form":form,"page_obj":page,"pagination_query":params.urlencode(),
+            "count_summary":count_summary(base),"show_cost":can_view_supply_cost(request.user),
+            "can_execute":can_execute_supply_count_task(request.user,task),
+            "return_query":request.GET.urlencode()}
+
+
 @login_required
 def count_task_detail(request, pk):
-    company = _company_or_404()
-    task = _count_task_or_404(request, company, pk)
-    lines = SupplyCountLine.objects.filter(count_task=task).select_related(
-        "item",
-        "stock_balance",
-        "custody__department",
-        "custody__employee",
-        "adjustment_document_line__document",
-        "resolution_custody_movement__from_custody",
-        "resolution_custody_movement__to_custody",
-        "counted_by",
-        "resolved_by",
-    )
-    roles = role_names_for(request.user)
-    if "employee" in roles and not roles.intersection(
-        {"system_admin", "finance", "warehouse", "equipment", "management", "department_manager"}
-    ):
-        lines = lines.filter(custody__employee__user=request.user)
-    line_rows = [
-        {"line": line, "can_record": can_record_supply_count(request.user, line)}
-        for line in lines.order_by("item_code_snapshot", "pk")
-    ]
-    return render(
-        request,
-        "supplies/count_task_detail.html",
-        {
-            "task": task,
-            "line_rows": line_rows,
-            "show_cost": can_view_supply_cost(request.user),
-            "can_execute": can_execute_supply_count_task(request.user, task),
-        },
-    )
+    task = _count_task_or_404(request,_company_or_404(),pk)
+    context = _count_page_context(request,task)
+    context["line_rows"] = [{"line":line,"can_record":can_record_supply_count(request.user,line)}
+                            for line in context["page_obj"]]
+    context["can_bulk_record"] = task.status == "in_progress" and any(row["can_record"] for row in context["line_rows"])
+    return render(request,"supplies/count_task_detail.html",context,status=200 if context["filter_form"].is_valid() else 400)
+
+
+@login_required
+def count_sheet(request, pk):
+    from django.http import HttpResponse
+    from .count_transfer import CountTransferForm, count_workbook, read_count_rows, import_count_rows
+    task = _count_task_or_404(request, _company_or_404(), pk)
+    if task.status != 'in_progress' or not any(can_record_supply_count(request.user, line)
+            for line in visible_count_lines(request.user, task)):
+        raise PermissionDenied('当前任务没有可录入的盘点行。')
+    form = CountTransferForm(request.POST or None, request.FILES or None)
+    if request.method == 'GET' and request.GET.get('download') == '1':
+        try:
+            content = count_workbook(request.user, task)
+        except ValidationError as exc:
+            return HttpResponseBadRequest('；'.join(exc.messages))
+        response = HttpResponse(content, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        response['Content-Disposition'] = f'attachment; filename="count-{task.task_no}.xlsx"'
+        response['Cache-Control'] = 'no-store'
+        return response
+    if request.method == 'POST' and form.is_valid():
+        try:
+            changed = import_count_rows(actor=request.user, task=task, rows=read_count_rows(form.cleaned_data), request=request)
+        except ValidationError as exc:
+            for message in exc.messages:
+                form.add_error(None, message)
+        else:
+            messages.success(request, f'盘点表已保存 {changed} 行；空白和未变化的行未重复写入。')
+            return redirect('supplies:count-task-detail', pk=task.pk)
+    return render(request, 'supplies/count_sheet.html', {'task':task, 'form':form})
+
+
+@login_required
+def count_task_bulk_entry(request, pk):
+    task = _count_task_or_404(request,_company_or_404(),pk)
+    if task.status != "in_progress":
+        raise PermissionDenied("只有进行中的盘点任务可以录入。")
+    context = _count_page_context(request,task)
+    if not context["filter_form"].is_valid():
+        return render(request,"supplies/count_bulk_entry.html",context,status=400)
+    if request.method == "POST":
+        try:
+            manifest = signing.loads(request.POST.get("line_manifest",""),salt="supply-count-entry",max_age=28800)
+            if manifest["task"] != str(task.pk) or manifest["actor"] != request.user.pk or len(manifest["ids"]) > 200:
+                raise ValueError
+            ids = manifest["ids"]
+            rows = list(visible_count_lines(request.user,task).filter(pk__in=ids))
+            if len(rows) != len(ids):
+                raise ValueError
+        except (signing.BadSignature,ValueError,KeyError,TypeError,ValidationError):
+            return HttpResponseBadRequest("本页录入范围已失效，请重新打开任务后录入。")
+    else:
+        rows = [line for line in context["page_obj"] if can_record_supply_count(request.user,line)]
+    if not rows or any(not can_record_supply_count(request.user,line) for line in rows):
+        raise PermissionDenied("当前页没有可录入的盘点行。")
+    row_forms = [BulkCountLineForm(request.POST if request.method == "POST" else None,
+                 prefix=f"line-{line.pk}",actor=request.user,line=line) for line in rows]
+    context["row_forms"] = row_forms
+    context["line_manifest"] = signing.dumps({"task":str(task.pk),"actor":request.user.pk,"ids":[str(line.pk) for line in rows]},salt="supply-count-entry")
+    if request.method == "POST" and all([form.is_valid() for form in row_forms]):
+        entries = [{**form.cleaned_data,"line_id":form.line.pk} for form in row_forms
+                   if form.cleaned_data.get("counted_quantity") is not None]
+        try:
+            changed = record_count_page(actor=request.user,task=task,entries=entries,request=request)
+        except ValidationError as exc:
+            mapping = getattr(exc,"message_dict",{})
+            if mapping and any(str(form.line.pk) in mapping for form in row_forms):
+                for form in row_forms:
+                    for message in mapping.get(str(form.line.pk),[]):
+                        form.add_error(None,message)
+            else:
+                context["save_error"] = "；".join(exc.messages)
+        else:
+            messages.success(request,f"已保存 {changed} 行；空白和未变化的行未重复写入。")
+            return redirect(reverse("supplies:count-task-detail",args=[task.pk])+("?"+request.GET.urlencode() if request.GET else ""))
+    return render(request,"supplies/count_bulk_entry.html",context)
 
 
 def _count_confirm_action(request, *, task, title, warning, service, success):
@@ -2084,39 +2182,36 @@ def count_task_cancel(request, pk):
 
 @login_required
 def count_line_record(request, pk, line_pk):
-    company = _company_or_404()
-    task = _count_task_or_404(request, company, pk)
-    line = get_object_or_404(
-        SupplyCountLine.objects.select_related(
-            "count_task", "custody__employee", "custody__department"
-        ),
-        pk=line_pk,
-        count_task=task,
-    )
-    if not can_record_supply_count(request.user, line):
+    task = _count_task_or_404(request,_company_or_404(),pk)
+    line = get_object_or_404(SupplyCountLine.objects.select_related("count_task","item","custody__employee","custody__department"),pk=line_pk,count_task=task)
+    if not can_record_supply_count(request.user,line):
         raise PermissionDenied("您不能录入此盘点行。")
-    form = SupplyCountRecordForm(request.POST or None, actor=request.user, line=line)
+    values = QueryDict(request.POST.get("return_query",request.GET.get("return_query","")))
+    params = QueryDict(mutable=True)
+    for key in ("q","row_view","page_size","page"):
+        if key in values:
+            params[key] = values[key]
+    return_query = params.urlencode()
+    form = SupplyCountRecordForm(request.POST or None,actor=request.user,line=line)
     if request.method == "POST" and form.is_valid():
+        entry = {**form.cleaned_data,"line_id":line.pk}
+        if "expected_counted_at" not in request.POST:
+            entry["expected_counted_at"] = line.counted_at.isoformat() if line.counted_at else ""
         try:
-            record_supply_count(
-                line=line,
-                counted_quantity=form.cleaned_data["counted_quantity"],
-                remark=form.cleaned_data.get("remark", ""),
-                adjustment_unit_cost=form.cleaned_data.get("adjustment_unit_cost"),
-                zero_cost_reason=form.cleaned_data.get("zero_cost_reason", ""),
-                actor=request.user,
-                request=request,
-            )
+            changed = record_count_page(actor=request.user,task=task,entries=[entry],request=request)
         except ValidationError as exc:
-            _service_error(form, exc)
+            _service_error(form,exc)
         else:
-            messages.success(request, "实盘数量已保存。")
-            return redirect("supplies:count-task-detail", pk=task.pk)
-    return render(
-        request,
-        "supplies/count_record_form.html",
-        {"task": task, "line": line, "form": form, "show_cost": can_view_supply_cost(request.user)},
-    )
+            messages.success(request,"实盘数量已保存。" if changed else "本行已保存，本次没有重复写入。")
+            if request.POST.get("next_action") == "next":
+                next_form = CountResultFilterForm(params,show_cost=can_view_supply_cost(request.user))
+                candidates = filter_count_lines(visible_count_lines(request.user,task),next_form).filter(counted_quantity__isnull=True)
+                next_line = next((candidate for candidate in candidates if can_record_supply_count(request.user,candidate)),None)
+                if next_line is not None:
+                    return redirect(reverse("supplies:count-line-record",args=[task.pk,next_line.pk])+"?"+urlencode({"return_query":return_query}))
+                messages.info(request,"当前查询范围已无未录入项目。")
+            return redirect(reverse("supplies:count-task-detail",args=[task.pk])+("?"+return_query if return_query else ""))
+    return render(request,"supplies/count_record_form.html",{"task":task,"line":line,"form":form,"return_query":return_query})
 
 
 @login_required
@@ -2229,5 +2324,6 @@ def count_line_resolve(request, pk, line_pk):
     return render(
         request,
         "supplies/count_resolution_form.html",
-        {"task": task, "line": line, "form": form},
+        {"task": task, "line": line, "form": form,
+         "resolution_quantity": abs(line.difference_quantity) if line.difference_quantity is not None else None},
     )

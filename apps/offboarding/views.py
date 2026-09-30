@@ -1,8 +1,12 @@
 """Server-rendered HTTP boundary for Sprint 10 employee asset clearance."""
 
 from __future__ import annotations
+from apps.core.return_navigation import safe_return_url
+from apps.maintenance.handover import employee_maintenance_handover
 
+from apps.core.multi_upload import upload_many
 from django.contrib import messages
+from apps.core.pagination import paginate_query
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import Paginator
@@ -27,6 +31,7 @@ from apps.offboarding.forms import (
     ClearanceAttachmentUploadForm,
     ClearanceAttachmentVoidForm,
     ClearanceCompleteForm,
+    ClearanceDetailFilterForm,
     ClearanceInitiateForm,
     ClearanceItemReturnForm,
     ClearanceItemTransferForm,
@@ -181,7 +186,7 @@ def _render_action(
         {
             "form": form,
             "title": title,
-            "cancel_url": cancel_url,
+            "cancel_url": safe_return_url(request, cancel_url),
             "description": description,
             "button_label": button_label,
             "danger": danger,
@@ -255,7 +260,9 @@ def clearance_list(request):
             | Q(employee__name__icontains=query)
             | Q(employee__department__name__icontains=query)
         )
-    if status in EmployeeAssetClearance.Status.values:
+    if status == "unfinished":
+        clearances = clearances.filter(status__in=("open","blocked"))
+    elif status in EmployeeAssetClearance.Status.values:
         clearances = clearances.filter(status=status)
     clearances = clearances.annotate(
         processed_assets=ExpressionWrapper(
@@ -279,7 +286,7 @@ def clearance_list(request):
             "clearances": page_obj,
             "page_obj": page_obj,
             "pagination_query": pagination_params.urlencode(),
-            "status_choices": EmployeeAssetClearance.Status.choices,
+            "status_choices": (("unfinished","未完成"), *EmployeeAssetClearance.Status.choices),
             "filters": {"q": query, "status": status},
             "can_initiate": "hr" in role_names_for(request.user),
         },
@@ -317,7 +324,7 @@ def clearance_initiate(request):
             _service_error(form, exc)
         else:
             messages.success(request, "员工已进入离职处理中，清退快照已建立。")
-            return redirect("offboarding:clearance-detail", pk=clearance.pk)
+            return redirect(safe_return_url(request, reverse("offboarding:clearance-detail", args=[clearance.pk])))
     return _render_action(
         request,
         form=form,
@@ -336,21 +343,21 @@ def clearance_detail(request, pk):
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
     clearance = _clearance(request, pk)
-    items = list(
-        scoped_clearance_items(
-            request.user,
-            clearance.company,
-            clearance.items.select_related(
-                "asset__department",
-                "asset__responsible_employee",
-                "asset__location",
-                "source_loan",
-                "movement",
-                "disposal",
-                "resolved_by",
-            ),
-        )
-    )
+    form = ClearanceDetailFilterForm(request.GET)
+    valid = form.is_valid()
+    items_query = scoped_clearance_items(request.user,clearance.company,clearance.items.select_related(
+        "asset__department","asset__responsible_employee","asset__location","source_loan","movement","disposal","resolved_by"))
+    if valid:
+        query = form.cleaned_data["q"]
+        if query:
+            items_query = items_query.filter(Q(asset__asset_code__icontains=query)|Q(asset__asset_name__icontains=query)|Q(asset__equipment_number__icontains=query)|Q(asset_code_snapshot__icontains=query)|Q(asset_name_snapshot__icontains=query))
+        if form.cleaned_data["resolution"] == "pending":
+            items_query = items_query.filter(resolution="pending")
+        elif form.cleaned_data["resolution"] == "resolved":
+            items_query = items_query.exclude(resolution="pending")
+    else:
+        items_query = items_query.none()
+    items, item_query = paginate_query(request,items_query.order_by("asset__asset_code","pk"))
     roles = role_names_for(request.user)
     active = clearance.status in {
         EmployeeAssetClearance.Status.OPEN,
@@ -430,18 +437,19 @@ def clearance_detail(request, pk):
                 "current_location_path": _location_path(item.asset.location),
             }
         )
-    supply_items = list(
-        EmployeeSupplyClearanceItem.objects.filter(clearance=clearance)
-        .select_related(
-            "custody__item",
-            "custody__department",
-            "custody__employee",
-            "custody_movement__to_custody__department",
-            "custody_movement__to_custody__employee",
-            "resolved_by",
-        )
-        .order_by("item_code_snapshot", "pk")
-    )
+    supply_query = EmployeeSupplyClearanceItem.objects.filter(clearance=clearance).select_related(
+        "custody__item","custody__department","custody__employee","custody_movement__to_custody__department",
+        "custody_movement__to_custody__employee","resolved_by")
+    if valid:
+        if form.cleaned_data["q"]:
+            supply_query = supply_query.filter(Q(item_code_snapshot__icontains=form.cleaned_data["q"])|Q(item_name_snapshot__icontains=form.cleaned_data["q"]))
+        if form.cleaned_data["resolution"] == "pending":
+            supply_query = supply_query.filter(resolution="pending")
+        elif form.cleaned_data["resolution"] == "resolved":
+            supply_query = supply_query.exclude(resolution="pending")
+    else:
+        supply_query = supply_query.none()
+    supply_items, supply_pagination_query = paginate_query(request,supply_query.order_by("item_code_snapshot","pk"),parameter="supply_page")
     supply_item_rows = []
     for supply_item in supply_items:
         custody = supply_item.custody
@@ -473,7 +481,9 @@ def clearance_detail(request, pk):
         "offboarding/clearance_detail.html",
         {
             "clearance": clearance,
-            "item_rows": item_rows,
+            "maintenance_handover": employee_maintenance_handover(request.user, clearance.employee),
+            "item_rows": item_rows, "filter_form":form, "asset_page":items, "asset_pagination_query":item_query,
+            "supply_page":supply_items, "supply_pagination_query":supply_pagination_query,
             "clearance_attachments": clearance_attachments,
             "is_hr": "hr" in roles,
             "can_refresh": active
@@ -503,6 +513,7 @@ def clearance_detail(request, pk):
             ),
             "show_supply_cost": can_view_supply_cost(request.user),
         },
+        status=200 if valid else 400,
     )
 
 
@@ -531,7 +542,7 @@ def clearance_refresh(request, pk):
             _service_error(form, exc)
         else:
             messages.success(request, "清退关联已重新核对；后补项目保留了发现原因与时间。")
-            return redirect("offboarding:clearance-detail", pk=clearance.pk)
+            return redirect(safe_return_url(request, reverse("offboarding:clearance-detail", args=[clearance.pk])))
     return _render_action(
         request,
         form=form,
@@ -583,7 +594,7 @@ def clearance_supplement(request, pk):
             _service_error(form, exc)
         else:
             messages.success(request, "补充清退单已建立；原单与原离职日期保持不变。")
-            return redirect("offboarding:clearance-detail", pk=clearance.pk)
+            return redirect(safe_return_url(request, reverse("offboarding:clearance-detail", args=[clearance.pk])))
     return _render_action(
         request,
         form=form,
@@ -624,7 +635,7 @@ def clearance_complete(request, pk):
                 request,
                 "清退已完成；记录、快照和证据将永久保留。",
             )
-            return redirect("offboarding:clearance-detail", pk=clearance.pk)
+            return redirect(safe_return_url(request, reverse("offboarding:clearance-detail", args=[clearance.pk])))
     description = (
         "这是补充清退：完成后不会改写员工原离职日期。"
         if clearance.is_supplement
@@ -733,7 +744,7 @@ def clearance_item_return(request, clearance_pk, pk):
             _service_error(form, exc)
         else:
             messages.success(request, "归还已通过正式借还流程完成，清退状态已同步。")
-            return redirect("offboarding:clearance-detail", pk=clearance.pk)
+            return redirect(safe_return_url(request, reverse("offboarding:clearance-detail", args=[clearance.pk])))
     return _render_action(
         request,
         form=form,
@@ -794,7 +805,7 @@ def clearance_item_transfer(request, clearance_pk, pk):
             _service_error(form, exc)
         else:
             messages.success(request, "责任转交已生成正式 AssetMovement，清退状态已同步。")
-            return redirect("offboarding:clearance-detail", pk=clearance.pk)
+            return redirect(safe_return_url(request, reverse("offboarding:clearance-detail", args=[clearance.pk])))
     return _render_action(
         request,
         form=form,
@@ -831,7 +842,7 @@ def clearance_attachment_upload(request, clearance_pk, target_type, target_pk):
         from apps.offboarding.services import upload_clearance_attachment
 
         try:
-            upload_clearance_attachment(
+            upload_many(upload_clearance_attachment,
                 actor=request.user,
                 target=target,
                 uploaded_file=form.cleaned_data["uploaded_file"],
@@ -842,7 +853,7 @@ def clearance_attachment_upload(request, clearance_pk, target_type, target_pk):
             _service_error(form, exc)
         else:
             messages.success(request, "清退证据已上传到私有附件存储。")
-            return redirect("offboarding:clearance-detail", pk=clearance.pk)
+            return redirect(safe_return_url(request, reverse("offboarding:clearance-detail", args=[clearance.pk])))
     return _render_action(
         request,
         form=form,
@@ -940,7 +951,7 @@ def clearance_attachment_void(request, clearance_pk, pk):
             _service_error(form, exc)
         else:
             messages.success(request, "清退证据已作废；文件元数据和审计仍永久保留。")
-            return redirect("offboarding:clearance-detail", pk=clearance.pk)
+            return redirect(safe_return_url(request, reverse("offboarding:clearance-detail", args=[clearance.pk])))
     return _render_action(
         request,
         form=form,

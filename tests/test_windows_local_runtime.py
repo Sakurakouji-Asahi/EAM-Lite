@@ -293,4 +293,9 @@ def test_release_builder_outputs_digest_bound_windows_package(tmp_path):
         assert "scripts/local/start.ps1" in names
         assert "deploy/compose.local.yaml" in names
         assert "README-本机使用版.md" in names
-        assert not any(name.endswith(".py") for name in names)
+        assert {"manage.py", "config/settings.py", "requirements/production.lock", "deploy/Dockerfile"} <= names
+        assert manifest['bundled_source'] is True
+        assert set(manifest['source_files']) == names - {'release-manifest.json'}
+        assert not any(name.startswith(('var/','media/','.git/','.venv/')) or name == '.env' or name.endswith(('.dump','.eambak','.sqlite3')) for name in names)
+        import hashlib
+        assert all(hashlib.sha256(archive.read(name)).hexdigest() == digest for name,digest in manifest['source_files'].items())

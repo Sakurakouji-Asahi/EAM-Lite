@@ -1,0 +1,8 @@
+{% extends 'base.html' %}
+{% block title %}盘点表填写与回传{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3">盘点表填写与回传</h1><p>{{ task.task_no }} · {{ task.name }}</p></div><a class="btn btn-outline-secondary" href="{% url 'supplies:count-task-detail' task.pk %}">返回任务</a></header>
+<p>下载当前可录入的全部明细，只填写实盘数量、差异原因及适用的盘盈成本。空白不保存，0 表示实盘为零。有差异必须填写原因。请保留行校验码、编号、名称、单位、应盘数量和责任来源。</p>
+<p><a class="btn btn-outline-primary" href="?download=1">下载盘点表</a></p>
+<form method="post" enctype="multipart/form-data" class="card card-body" data-unsaved-guard>{% csrf_token %}{{ form.as_p }}<p class="text-secondary">整份表格校验通过后统一保存；如行已被他人修改，会提示重新核对。</p><button class="btn btn-primary" type="submit">校验并保存实盘结果</button></form>
+{% endblock %}

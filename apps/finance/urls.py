@@ -1,12 +1,16 @@
 from django.urls import path
 
 from apps.finance import views
+from apps.finance.usage_workspace import monthly_usage
+from apps.finance.history_workspace import theoretical_history
 from apps.finance.bulk_views import bulk_finance_confirmation
 
 
 app_name = "finance"
 
 urlpatterns = [
+    path("usage/", monthly_usage, name="monthly-usage"),
+    path("assets/<uuid:pk>/theoretical-history/", theoretical_history, name="theoretical-history"),
     path("pending/", views.pending_finance_list, name="pending-list"),
     path("pending/bulk/", bulk_finance_confirmation, name="bulk-confirmation"),
     path("pending/<uuid:pk>/", views.finance_confirm, name="finance-confirm"),
