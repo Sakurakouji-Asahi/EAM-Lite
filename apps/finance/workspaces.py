@@ -11,6 +11,7 @@ from django.utils import timezone
 from apps.finance.forms import FinanceBoundForm, TheoreticalRunForm, _bootstrap_widgets
 from apps.finance.models import DepreciationMethod, PostingPeriod, SalvageMode, StartRule
 from apps.finance.permissions import can_manage_finance
+from apps.finance.batch_workspace import batch_detail_context
 
 
 class BatchItemFilterForm(forms.Form):
@@ -43,10 +44,13 @@ def batch_review_context(request, batch, *, confirm_form=None):
         if query:
             items = items.filter(Q(asset__asset_code__icontains=query) | Q(asset__equipment_number__icontains=query)
                                  | Q(asset__asset_name__icontains=query))
+        match_counts = items.aggregate(count=Count("pk"), ready=Count("pk", filter=Q(status="ready")),
+            errors=Count("pk", filter=Q(status="error")), skipped=Count("pk", filter=Q(status="skipped")))
         if form.cleaned_data["status"]:
             items = items.filter(status=form.cleaned_data["status"])
     else:
         items = items.none()
+        match_counts = {"count": 0, "ready": 0, "errors": 0, "skipped": 0}
     page = Paginator(items.order_by("asset__asset_code", "pk"), form.cleaned_data.get("page_size") or 25).get_page(request.GET.get("page"))
     for item in page:
         item.display_amount = -item.planned_amount if batch.batch_type == 'reversal' and item.planned_amount else item.planned_amount
@@ -59,6 +63,7 @@ def batch_review_context(request, batch, *, confirm_form=None):
         "confirm_form": confirm_form if confirm_form is not None else (
             DangerousActionForm(actor=request.user) if can_manage and batch.status == "draft" else None
         ),
+        **batch_detail_context(request, batch, form=form, counts=match_counts),
     }
 
 

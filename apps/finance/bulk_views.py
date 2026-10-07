@@ -9,6 +9,7 @@ from apps.finance.bulk_confirmation import preview_bulk_finance, confirm_bulk_fi
 from apps.finance.forms import PendingFinanceFilterForm
 from apps.finance.permissions import require_manage_finance, scoped_finance_assets
 from apps.finance.readiness import filter_pending_finance_assets
+from apps.finance.pending_workspace import pending_followup_url, pending_navigation
 from apps.finance.views import _company
 
 
@@ -18,10 +19,12 @@ from apps.finance.views import _company
 def bulk_finance_confirmation(request):
     require_manage_finance(request.user)
     company = _company()
+    navigation = pending_navigation(request)
     if request.method == "GET":
-        return redirect("finance:pending-list")
+        return redirect(navigation["pending_return_url"])
     context = {"preview":None,"result":None,"error":"","cleared_asset_ids":[],
-        "selection_key":f"eam-bulk-finance:{company.pk}:{request.user.pk}:{request.POST.get('import_batch','')}"}
+        "selection_key":f"eam-bulk-finance:{company.pk}:{request.user.pk}:{request.POST.get('import_batch','')}",
+        **navigation}
     try:
         if request.POST.get("action") == "confirm":
             result = confirm_bulk_finance(actor=request.user,company=company,token=request.POST.get("token"),
@@ -42,6 +45,11 @@ def bulk_finance_confirmation(request):
             raise ValidationError("未知的批量财务操作。")
     except (ValidationError,ValueError) as exc:
         context["error"] = "；".join(exc.messages) if isinstance(exc,ValidationError) else str(exc)
+    for key in ("preview", "result"):
+        for row in (context[key] or {}).get("rows", []):
+            if row["asset"] is not None:
+                row["finance_confirm_url"] = pending_followup_url("finance:finance-confirm", row["asset"], navigation["pending_query"])
+                row["finance_detail_url"] = pending_followup_url("finance:asset-finance-detail", row["asset"], navigation["pending_query"])
     response = render(request,"finance/bulk_confirmation.html",context,status=400 if context["error"] else 200)
     response["Cache-Control"] = "private, no-store"
     return response
