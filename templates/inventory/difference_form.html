@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}{{ title }} - {{ row.expected_code_snapshot }}{% endblock %}
+{% block extra_head %}<script defer src="{% static 'js/inventory-difference.js' %}"></script>{% endblock %}
+{% block content %}
+<header class="app-page-header align-items-start">
+  <div><div class="text-secondary">{{ task.task_code }} · {{ task.name }}</div><h1 class="h3 mb-1">{{ title }}</h1><p class="text-secondary mb-0">{{ row.expected_code_snapshot }} / {{ row.expected_name_snapshot }}</p></div>
+  <a class="btn btn-outline-secondary" href="{{ difference_return_to }}">返回明细查询</a>
+</header>
+<div class="workflow-guidance" role="status"><strong>核实依据</strong><span>{{ description }} 差异仍以 {{ task.snapshot_at|date:'Y-m-d H:i' }} 发布快照为基准。</span></div>
+<section class="card mb-3" aria-label="快照、有效现场结果和当前主档对比">
+  <div class="card-header d-flex flex-wrap justify-content-between gap-2"><strong>快照与现场对比</strong><span class="small text-secondary">主档可能已在发布后变化，请逐项核实。</span></div>
+  <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+    <thead><tr><th scope="col">项目</th><th scope="col">发布快照</th><th scope="col">有效现场结果</th><th scope="col">当前主档</th></tr></thead>
+    <tbody>{% for item in difference_comparison %}<tr>
+      <th scope="row" class="text-nowrap">{{ item.label }}</th><td>{{ item.expected }}</td>
+      <td{% if item.actual_differs %} class="table-warning"{% endif %}>{% if difference_scan %}{{ item.actual }}{% if item.actual_differs %}<span class="badge text-bg-warning ms-1">与快照不同</span>{% endif %}{% else %}<span class="text-secondary">尚无有效实盘记录</span>{% endif %}</td>
+      <td>{{ item.current }}{% if item.current_differs %}<span class="badge text-bg-light border ms-1">发布后已变化</span>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+  <div class="card-body border-top">
+    {% if difference_scan %}<div class="d-flex flex-wrap gap-2 mb-2"><span class="badge {% if difference_scan.result == 'normal' %}text-bg-success{% else %}text-bg-warning{% endif %}">{{ difference_scan.get_result_display }}</span><span class="small text-secondary">{{ difference_scan.scanned_at|date:'Y-m-d H:i:s' }} · {{ difference_scan.scanned_by.display_name|default:difference_scan.scanned_by.username }} · {{ difference_scan.get_scan_mode_display }}</span></div><div class="small"><strong>现场说明：</strong>{{ difference_scan.note|default:'未填写'|linebreaksbr }}</div>{% if difference_scan.supplement_reason %}<div class="small"><strong>补盘原因：</strong>{{ difference_scan.supplement_reason|linebreaksbr }}</div>{% endif %}
+    {% else %}<div class="alert alert-warning mb-0">{% if previous_resolution or difference_active_resolution %}此资产没有有效实盘记录，请结合既有结论和后续核实依据判断。{% else %}此资产没有有效实盘记录，当前为盘亏候选。请核实实际去向后形成结论。{% endif %}“确认盘亏”不会自动删除或处置资产。</div>{% endif %}
+  </div>
+</section>
+{% if previous_resolution %}<section class="card mb-3"><div class="card-header">原处理结论 · {{ previous_resolution.get_status_display }}</div><div class="card-body"><strong>{{ previous_resolution.get_resolution_type_display }}</strong><p class="mb-1">{{ previous_resolution.conclusion|linebreaksbr }}</p><div class="small text-secondary">{{ previous_resolution.resolved_at|date:'Y-m-d H:i:s' }} · {{ previous_resolution.resolved_by.display_name|default:previous_resolution.resolved_by.username }}</div></div></section>
+{% elif difference_active_resolution %}<div class="alert alert-info">此资产已有有效结论：{{ difference_active_resolution.get_resolution_type_display }} · {{ difference_active_resolution.conclusion }}。请返回明细查看记录。</div>{% endif %}
+{% if not difference_can_save %}<div class="alert alert-warning" role="status">当前记录或任务状态不允许新增此类结论。请返回明细核对任务状态、有效实盘和现有结论。</div>{% endif %}
+<div class="row g-3 align-items-start">
+  <div class="col-12 col-lg-5"><section class="card"><div class="card-body">
+    <h2 class="h5">选择处理结论</h2>
+    <dl class="mb-0 small">
+      <dt>确认主档无误</dt><dd>核实现场差异并说明原因，保留当前资产主档。</dd>
+      <dt>确认盘亏</dt><dd>记录盘亏结论，后续处置仍需按正常流程办理。</dd>
+      <dt>其他处理</dt><dd>记录其他核实结论和后续安排，保留当前资产主档。</dd>
+      <dt>执行正式主档变动</dt><dd class="mb-0">提交后执行正式调拨或在用/闲置状态变动，并形成资产变动记录。至少填写一个实际需要变更的目标值与生效时间。</dd>
+    </dl>
+  </div></section>{% if not previous_resolution %}<p class="small text-secondary mt-2">当前明细查询中还有 {{ difference_other_pending }} 条其他待处理应盘差异。连续处理按同一查询范围前进；盘盈仍在任务明细中单独处理。</p>{% endif %}</div>
+  <div class="col-12 col-lg-7">
+    <form method="post" class="card shadow-sm" data-inventory-difference data-unsaved-guard="{% if form.is_bound %}true{% else %}false{% endif %}">
+      {% csrf_token %}<input type="hidden" name="return_to" value="{{ difference_return_to }}">
+      <div class="card-body">
+        {% if form.non_field_errors %}<div class="alert alert-danger" role="alert">{{ form.non_field_errors }}</div>{% endif %}
+        {% for field in form.hidden_fields %}{{ field }}{% for error in field.errors %}<div class="text-danger" role="alert">{{ error }}</div>{% endfor %}{% endfor %}
+        {% include 'inventory/_difference_field.html' with field=form.resolution_type %}
+        <p class="form-text" data-difference-selection-hint role="status" aria-live="polite">请先选择与核实情况相符的处理结论。</p>
+        {% include 'inventory/_difference_field.html' with field=form.conclusion %}
+        {% if previous_resolution %}{% include 'inventory/_difference_field.html' with field=form.correction_reason %}{% endif %}
+        <fieldset class="border rounded p-3" data-difference-master-fields data-has-errors="{% if form.to_department.errors or form.to_responsible_employee.errors or form.to_location.errors or form.to_status.errors or form.effective_at.errors %}true{% else %}false{% endif %}">
+          <legend class="float-none w-auto fs-6 px-2">正式主档变动目标</legend>
+          <p class="small text-secondary">仅选择“执行正式主档变动”时使用。空白目标沿用当前主档，不会直接套用发布快照或现场结果。</p>
+          {% include 'inventory/_difference_field.html' with field=form.to_department %}
+          {% include 'inventory/_difference_field.html' with field=form.to_responsible_employee %}
+          {% include 'inventory/_difference_field.html' with field=form.to_location %}
+          {% include 'inventory/_difference_field.html' with field=form.to_status %}
+          {% include 'inventory/_difference_field.html' with field=form.effective_at %}
+        </fieldset>
+      </div>
+      <div class="card-footer d-flex flex-wrap gap-2">
+        <button class="btn btn-primary" type="submit"{% if not difference_can_save %} disabled{% endif %}>{{ button_label }}</button>
+        {% if not previous_resolution and difference_can_save and difference_other_pending %}<button class="btn btn-outline-primary" name="action" value="continue" type="submit">保存并继续下一条</button>{% endif %}
+        <a class="btn btn-outline-secondary" href="{{ difference_return_to }}">取消</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

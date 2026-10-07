@@ -13,4 +13,5 @@
     {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
     {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
   </div>
+  {% if scope_assistance and field.name == 'scope_type' %}<p class="alert alert-info small" role="status" aria-live="polite" data-inventory-scope-hint hidden></p>{% endif %}
 {% endfor %}

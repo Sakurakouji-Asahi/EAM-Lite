@@ -2,20 +2,28 @@
 {% block title %}盘点任务 - EAM-Lite{% endblock %}
 {% block content %}
   <header class="app-page-header">
-    <div><h1 class="h3 mb-1">盘点任务</h1><p class="text-secondary mb-0">任务指派仅授予本任务的非财务快照与扫码权限。</p></div>
+    <div><h1 class="h3 mb-1">盘点任务</h1><p class="text-secondary mb-0">查找任务，跟进现场盘点和差异处理。</p></div>
     {% if can_create %}<a class="btn btn-primary" href="{% url 'inventory:task-create' %}">新建盘点任务</a>{% endif %}
   </header>
-  <form method="get" class="card card-body shadow-sm mb-3 app-filter-card">
-    <div class="row g-2 align-items-end">
-      <div class="col-12 col-md-6"><label class="form-label" for="q">任务编号或名称</label><input id="q" class="form-control" type="search" name="q" value="{{ query }}"></div>
-      <div class="col-8 col-md-3"><label class="form-label" for="status">状态</label><select id="status" class="form-select" name="status"><option value="">全部状态</option>{% for value,label in status_choices %}<option value="{{ value }}"{% if status == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-      <div class="col-12 col-md-3"><label class="form-label" for="work">待办范围</label><select class="form-select" name="work" id="work"><option value="">全部任务</option><option value="unscanned"{% if work == 'unscanned' %} selected{% endif %}>有未盘资产</option><option value="unresolved"{% if work == 'unresolved' %} selected{% endif %}>有待处理异常或盘盈</option></select></div>
-      <div class="col-4 col-md-3"><button class="btn btn-outline-primary w-100" type="submit">筛选</button></div>
-    </div>
-  </form>
+  <div class="row row-cols-2 row-cols-md-3 row-cols-xl-6 g-2 mb-2" aria-label="当前查询的任务状态汇总">
+    {% for card in status_cards %}<div class="col"><a class="btn {% if card.active %}btn-primary{% else %}btn-outline-secondary{% endif %} w-100" href="{{ card.url }}"{% if card.active %} aria-current="true"{% endif %}>{{ card.label }}：{{ card.count }}</a></div>{% endfor %}
+  </div>
+  <p class="small text-secondary">仅统计您可查看的任务。汇总随搜索、任务关系和待办范围变化，点击即可切换状态。</p>
+  {% include "_list_filters.html" %}
+  {% if active_filters %}<div class="d-flex flex-wrap gap-2 align-items-center mb-3" aria-label="已应用的筛选"><span class="small text-secondary">当前条件：</span>{% for filter in active_filters %}<a class="btn btn-sm btn-outline-secondary text-break text-start" href="{{ filter.url }}" aria-label="移除筛选：{{ filter.label }}：{{ filter.value }}">{{ filter.label }}：{{ filter.value }} <span aria-hidden="true">×</span></a>{% endfor %}</div>{% endif %}
+  <p class="small text-secondary">匹配 {{ page_obj.paginator.count }} 项任务 · 最近创建的任务在前</p>
   <div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover align-middle mb-0">
     <thead><tr><th>任务编号</th><th>名称</th><th>类型</th><th>范围</th><th>计划日期</th><th>状态</th><th>应盘数</th><th></th></tr></thead>
-    <tbody>{% for task in tasks %}<tr><td class="text-nowrap">{{ task.task_code }}</td><td>{{ task.name }}</td><td>{{ task.get_inventory_type_display }}</td><td>{{ task.get_scope_type_display }}{% if task.scope_department %} · {{ task.scope_department.name }}{% elif task.scope_category %} · {{ task.scope_category.name }}{% elif task.scope_location %} · {{ task.scope_location.name }}{% endif %}</td><td class="text-nowrap">{{ task.planned_start|date:'Y-m-d' }} ～ {{ task.planned_end|date:'Y-m-d' }}</td><td><span class="badge text-bg-secondary">{{ task.get_status_display }}</span></td><td>{{ task.expected_asset_count|default_if_none:'—' }}</td><td><a class="btn btn-sm btn-outline-primary" href="{% url 'inventory:task-detail' task.pk %}{% if work == 'unresolved' %}?row_view=unresolved&amp;surplus_view=pending#inventory-results{% elif work == 'unscanned' %}?row_view=missing#inventory-results{% endif %}">查看</a></td></tr>{% empty %}<tr><td colspan="8"><div class="app-empty-state"><strong>当前没有盘点任务</strong><span>调整筛选条件后仍无结果。{% if can_create %}可以建立一项新的盘点任务。{% endif %}</span>{% if can_create %}<a class="btn btn-sm btn-primary" href="{% url 'inventory:task-create' %}">新建盘点任务</a>{% endif %}</div></td></tr>{% endfor %}</tbody>
+    <tbody>{% for task in tasks %}<tr>
+      <td class="text-nowrap">{{ task.task_code }}</td>
+      <td>{{ task.name }}<div class="small text-secondary mt-1">创建人：{{ task.created_by.display_name|default:task.created_by.username|default:'历史账号' }}</div><div class="d-flex flex-wrap gap-1 mt-1">{% if task.is_assigned_to_me %}<span class="badge text-bg-light">已指派给我</span>{% endif %}{% if task.created_by_id == request.user.pk %}<span class="badge text-bg-light">我创建</span>{% endif %}</div></td>
+      <td>{{ task.get_inventory_type_display }}</td>
+      <td>{{ task.get_scope_type_display }}{% if task.scope_department %} · {{ task.scope_department.name }}{% elif task.scope_category %} · {{ task.scope_category.name }}{% elif task.scope_location %} · {{ task.scope_location.name }}{% endif %}</td>
+      <td class="text-nowrap">{{ task.planned_start|date:'Y-m-d' }} ～ {{ task.planned_end|date:'Y-m-d' }}</td>
+      <td><span class="badge {% if task.status == 'in_progress' %}text-bg-primary{% elif task.status == 'reconciliation' %}text-bg-warning{% elif task.status == 'closed' %}text-bg-success{% else %}text-bg-secondary{% endif %}">{{ task.get_status_display }}</span></td>
+      <td>{{ task.expected_asset_count|default_if_none:'—' }}</td>
+      <td><div class="d-flex flex-wrap gap-2">{% if task.can_scan_from_list %}<a class="btn btn-sm btn-primary" href="{% url 'inventory:task-scan' task.pk %}">继续扫码</a>{% endif %}<a class="btn btn-sm btn-outline-primary" href="{% url 'inventory:task-detail' task.pk %}{% if work == 'unresolved' %}?row_view=unresolved&amp;surplus_view=pending#inventory-results{% elif work == 'unscanned' %}?row_view=missing#inventory-results{% endif %}">查看{% if work %}待办{% else %}任务{% endif %}</a></div></td>
+    </tr>{% empty %}<tr><td colspan="8"><div class="app-empty-state"><strong>没有符合当前条件的任务</strong><span>可以移除某个筛选条件，或重置后查看当前可访问的任务。</span><a class="btn btn-sm btn-outline-primary" href="{% url 'inventory:task-list' %}">重置筛选</a>{% if can_create %}<a class="btn btn-sm btn-primary" href="{% url 'inventory:task-create' %}">新建盘点任务</a>{% endif %}</div></td></tr>{% endfor %}</tbody>
   </table></div></div>
   {% include "_pagination.html" %}
 {% endblock %}
