@@ -224,10 +224,13 @@ def test_assigned_employee_qr_scope_can_complete_via_mobile_http():
     assert complete_url in body
     assert "原值" not in body and "账面净值" not in body
 
+    form_page = client.get(complete_url, HTTP_USER_AGENT="Mozilla/5.0 Mobile")
+    assert form_page.status_code == 200
     completed = client.post(
         complete_url,
         {
             "idempotency_key": "S9ASSIGNEDQR-complete",
+            "completion_instance": form_page.context["form"]["completion_instance"].value(),
             "scheduled_date": ctx["plan"].next_maintenance_date.isoformat(),
             "completed_date": timezone.localdate().isoformat(),
             "actual_content": "责任人扫码后完成现场保养",

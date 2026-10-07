@@ -280,10 +280,13 @@ def test_current_maintenance_instance_cannot_complete_before_or_on_previous_date
     assert "completed_date" in exc_info.value.message_dict
 
     client.force_login(context["responsible_user"])
+    form_page = client.get(reverse("maintenance:plan-complete", args=[context["plan"].pk]))
+    assert form_page.status_code == 200
     response = client.post(
         reverse("maintenance:plan-complete", args=[context["plan"].pk]),
         {
             "idempotency_key": "CORRMAINT-http",
+            "completion_instance": form_page.context["form"]["completion_instance"].value(),
             "completed_date": first.completed_date.isoformat(),
             "actual_content": "HTTP 倒序保养应拒绝",
             "result": "normal",

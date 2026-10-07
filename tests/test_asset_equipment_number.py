@@ -6,6 +6,7 @@ from django.urls import reverse
 from apps.assets.models import Asset
 from apps.assets.services import update_asset_equipment_number
 from apps.audit.models import AuditLog
+from tests.test_asset_edit_revision import edit_revision
 from tests.test_sprint3_http import form_data, make_context
 from tests.test_sprint3_support import make_user
 from tests.test_unified_asset_identity import context, registered
@@ -43,6 +44,7 @@ def test_draft_equipment_number_is_saved_searched_displayed_and_audited(client):
 
     changed = client.post(reverse("assets:asset-edit", args=[asset.pk]), {
         **values, "equipment_number": "EQ-2026-002",
+        "expected_revision": edit_revision(client, reverse("assets:asset-edit", args=[asset.pk])),
     })
     assert changed.status_code == 302
     asset.refresh_from_db()
