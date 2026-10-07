@@ -78,6 +78,7 @@
 
 ### 当前说明与操作参考
 
+- [日常操作体验改进：快捷导航、库存、盘点、保养、报表与导入](Usability-Improvements-2026-10-04.md)
 - [项目首页与功能概览](../README.md)
 - [批量建档、租入归还与登记更正](Asset-Registration-Corrections.md)
 - [当前资产编码规则与组件、来源操作](Asset-Coding-Standard.md)
