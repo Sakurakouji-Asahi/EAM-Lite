@@ -1,0 +1,43 @@
+<section class="card shadow-sm" aria-labelledby="attachments-title" data-asset-attachments>
+  <div class="card-header d-flex align-items-center justify-content-between gap-2">
+    <h2 class="h5 mb-0" id="attachments-title">附件</h2>
+    {% if can_upload_a0 or can_upload_a1 %}<a class="btn btn-sm btn-primary" href="{% url 'assets:attachment-upload' asset.pk %}">上传</a>{% endif %}
+  </div>
+  <div class="card-body">
+    {% if attachment_rows %}
+      <p class="small text-secondary mb-2">{{ attachment_workspace.count }} 个有效附件 · {{ attachment_workspace.total_bytes|filesizeformat }}</p>
+      <form method="get" action="{% url 'assets:attachment-bundle' asset.pk %}" data-attachment-bundle data-max-files="{{ attachment_bundle_max_files }}" data-max-bytes="{{ attachment_bundle_max_bytes }}">
+      <div class="border rounded p-3 mb-3">
+        <div class="d-flex flex-wrap gap-2 mb-2"><button class="btn btn-sm btn-primary" type="submit" data-bundle-download>下载已选附件</button><button class="btn btn-sm btn-outline-secondary" type="button" data-bundle-visible hidden>选择当前显示</button><button class="btn btn-sm btn-outline-secondary" type="button" data-bundle-clear hidden>清空选择</button></div>
+        <p class="small mb-1" role="status" aria-live="polite" data-bundle-status>勾选文件后打包下载。</p>
+        <p class="small text-secondary mb-0">每包最多 {{ attachment_bundle_max_files }} 个文件、{{ attachment_bundle_max_bytes|filesizeformat }}，附文件清单。筛选不会取消已选文件。</p>
+      </div>
+      <div class="attachment-find-controls mb-3" data-attachment-controls hidden>
+        <label for="attachment-filename-query" class="small w-100">查找文件<input class="form-control form-control-sm mt-1" id="attachment-filename-query" type="search" maxlength="200" placeholder="文件名或用途" data-attachment-search></label>
+        <label for="attachment-role-query" class="small w-100">附件用途<select class="form-select form-select-sm mt-1" id="attachment-role-query" data-attachment-role><option value="">全部用途</option>{% for role in attachment_workspace.roles %}<option value="{{ role.value }}">{{ role.label }}（{{ role.count }}）</option>{% endfor %}</select></label>
+        <span class="small text-secondary" role="status" aria-live="polite" data-attachment-count></span>
+      </div>
+      <div class="list-group list-group-flush">
+        {% for row in attachment_rows %}
+          <div class="list-group-item px-0" data-attachment-row data-role="{{ row.link.role }}" data-search="{{ row.link.attachment.safe_filename }} {{ row.link.get_role_display }}">
+            <label class="d-flex align-items-start gap-2 fw-semibold text-break"><input class="form-check-input flex-shrink-0 mt-1" type="checkbox" name="attachment" value="{{ row.link.pk }}" data-bundle-file data-file-bytes="{{ row.link.attachment.file_size }}"><span>{{ row.link.attachment.safe_filename }}</span></label>
+            <div class="small text-secondary">{{ row.link.get_role_display }} · {{ row.link.get_security_class_display }} · {{ row.link.attachment.file_size|filesizeformat }}</div>
+            <div class="small text-secondary">{{ row.link.attachment.uploaded_at|date:"Y-m-d H:i" }}{% if row.link.attachment.uploaded_by %} · {{ row.link.attachment.uploaded_by.display_name|default:row.link.attachment.uploaded_by.username }}{% endif %}</div>
+            <div class="d-flex flex-wrap gap-2 mt-2">
+              {% if row.can_preview %}<button class="btn btn-sm btn-outline-primary" type="button" data-attachment-preview="{% url 'assets:attachment-download' asset.pk row.link.pk %}" data-filename="{{ row.link.attachment.safe_filename }}" hidden>预览图片</button>{% endif %}
+              <a class="btn btn-sm btn-outline-primary" href="{% url 'assets:attachment-download' asset.pk row.link.pk %}">下载</a>
+              {% if row.can_void %}<a class="btn btn-sm btn-outline-danger" href="{% url 'assets:attachment-void' asset.pk row.link.pk %}">作废</a>{% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+      <div class="text-center py-3" data-attachment-empty hidden><p class="small text-secondary mb-2">没有匹配的文件。</p><button class="btn btn-sm btn-outline-secondary" type="button" data-attachment-reset>显示全部附件</button></div>
+      </form>
+      <dialog class="asset-image-dialog" aria-labelledby="asset-image-title" data-attachment-dialog>
+        <div class="asset-image-heading"><h2 class="h6 mb-0 text-break" id="asset-image-title"></h2><button class="btn btn-sm btn-outline-secondary" type="button" data-attachment-close>关闭</button></div>
+        <div class="asset-image-stage"><p class="text-secondary text-center" role="status" data-attachment-preview-status></p><img alt="" data-attachment-image hidden></div>
+        <div class="asset-image-footer"><div class="d-flex gap-2"><button class="btn btn-sm btn-outline-secondary" type="button" data-attachment-prev>上一张</button><button class="btn btn-sm btn-outline-secondary" type="button" data-attachment-next>下一张</button></div><span class="small text-secondary" data-attachment-image-count></span><a class="btn btn-sm btn-primary" href="#" data-attachment-original>下载原图</a></div>
+      </dialog>
+    {% else %}<p class="text-secondary mb-0">暂无有权查看的有效附件。</p>{% endif %}
+  </div>
+</section>

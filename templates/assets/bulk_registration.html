@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% load static %}
 {% block title %}批量建档 - EAM-Lite{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/bulk-review.css' %}?v=20261004">{% endblock %}
 {% block content %}
 <header class="app-page-header">
   <div><h1 class="h3 mb-1">批量建档</h1><p class="text-secondary mb-0">选择草稿，补充并核对资料后建立正式编号。财务资料另行确认。</p></div>
@@ -31,17 +32,18 @@
   {% endif %}
 
   {% if assignment_preview %}
-    <section class="card mb-3">
+    <section class="card mb-3" data-bulk-review="assignment">
       <div class="card-header">核对补充资料 · {{ assignment_preview.count }} 件草稿</div>
       <div class="card-body"><p class="mb-0">补充说明：{{ assignment_preview.reason }}</p></div>
-      <div class="table-responsive app-work-table">
+      {% include 'assets/_bulk_review_controls.html' with review_id='assignment-review' %}
+      <div class="table-responsive app-work-table" data-scroll-table role="region" aria-label="草稿资料变更核对明细">
         <table class="table mb-0">
           <thead><tr><th>草稿</th><th>修改前 → 修改后</th><th>核对结果</th></tr></thead>
           <tbody>{% for row in assignment_preview.rows %}
-            <tr><td>{{ row.asset.draft_number }} · {{ row.asset.asset_name }}</td>
+            <tr data-bulk-review-row="{% if row.error %}error{% else %}ready{% endif %}"><td>{{ row.asset.draft_number }} · {{ row.asset.asset_name }}</td>
               <td>{% for change in row.changes %}<div>{{ change.label }}：{{ change.before }} → {{ change.after }}</div>{% endfor %}</td>
               <td>{% if row.error %}<span class="text-danger">{{ row.error }}</span>{% else %}可保存{% endif %}</td></tr>
-          {% endfor %}</tbody>
+          {% endfor %}<tr data-bulk-review-empty hidden><td colspan="3" class="text-center text-secondary py-4">没有匹配的明细，请调整查找条件或恢复全部显示。</td></tr></tbody>
         </table>
       </div>
       {% if assignment_preview.token %}
@@ -57,18 +59,19 @@
   {% endif %}
 
   {% if preview %}
-    <section class="card mb-3">
+    <section class="card mb-3" data-bulk-review="registration">
       <div class="card-header">核对结果：可建档 {{ preview.ready_count }} 件，需补充资料 {{ preview.error_count }} 件</div>
-      <div class="table-responsive app-work-table">
+      {% include 'assets/_bulk_review_controls.html' with review_id='registration-review' %}
+      <div class="table-responsive app-work-table" data-scroll-table role="region" aria-label="建档核对明细">
         <table class="table mb-0">
           <thead><tr><th>资产</th><th>分类／首次属性</th><th>部门／责任人</th><th>位置</th><th>核对结果</th></tr></thead>
           <tbody>{% for row in preview.rows %}
-            <tr><td>{{ row.asset.draft_number }} · {{ row.asset.asset_name }}{% if row.asset.equipment_number %}<br><small>设备编号：{{ row.asset.equipment_number }}</small>{% endif %}</td>
+            <tr data-bulk-review-row="{% if row.error %}error{% else %}ready{% endif %}"><td>{{ row.asset.draft_number }} · {{ row.asset.asset_name }}{% if row.asset.equipment_number %}<br><small>设备编号：{{ row.asset.equipment_number }}</small>{% endif %}</td>
               <td>{{ row.asset.category.name }} / {{ row.asset.management_attribute }}</td>
               <td>{{ row.asset.department.name }} / {{ row.asset.responsible_employee.name }}</td>
               <td>{{ row.asset.bulk_location_path|default:"未填写" }}</td>
               <td>{% if row.error %}<span class="text-danger">{{ row.error }}</span> <a href="{% url 'assets:asset-detail' row.asset.pk %}">补充资料</a>{% else %}可建档{% endif %}</td></tr>
-          {% endfor %}</tbody>
+          {% endfor %}<tr data-bulk-review-empty hidden><td colspan="5" class="text-center text-secondary py-4">没有匹配的明细，请调整查找条件或恢复全部显示。</td></tr></tbody>
         </table>
       </div>
       {% if preview.ready_count %}
@@ -140,4 +143,5 @@
 </div>
 <script src="{% static 'js/assignment-forms.js' %}" defer></script>
 <script src="{% static 'js/bulk-registration.js' %}?v=20260926-labels" defer></script>
+<script src="{% static 'js/bulk-review.js' %}?v=20261004" defer></script>
 {% endblock %}

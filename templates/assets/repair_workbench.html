@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}维修中资产 - EAM-Lite{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/asset-repair-workspace.css' %}?v=20261004">{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3 mb-1">维修中资产</h1><p class="text-secondary mb-0">查看当前送修情况，办理维修完成后返回本清单继续跟进。</p></div><a class="btn btn-outline-secondary" href="{% url 'assets:asset-list' %}">返回资产台账</a></header>
+<div class="d-flex flex-wrap gap-3 align-items-center mb-3"><strong>可见范围内维修中：{{ scope_count }} 件</strong><span class="small text-secondary">送修天数按自然日显示，供跟进时参考。</span></div>
+<form method="get" class="card shadow-sm mb-3" aria-label="查找维修中资产"><div class="card-body"><div class="row g-3 align-items-end">
+{% for field in form %}<div class="{% if field.name == 'q' %}col-12 col-lg-7{% else %}col-12 col-sm-7 col-lg-3{% endif %}"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</div>{% endfor %}
+<div class="col-12 col-sm-5 col-lg-2 d-flex gap-2"><button class="btn btn-primary" type="submit">查找</button><a class="btn btn-outline-secondary" href="{{ workbench_url }}">重置</a></div>
+</div></div></form>
+<p class="small text-secondary">{% if query %}当前搜索：<strong class="text-break">{{ query }}</strong> · {% endif %}匹配 {{ page_obj.paginator.count }} 件 · {% if order == 'recent' %}最近送修优先{% else %}送修时间从早到晚{% endif %}</p>
+<div class="repair-work-list">
+{% for asset in page_obj %}
+<article class="card shadow-sm mb-3"><div class="card-body"><div class="repair-work-row">
+<div><a href="{% url 'assets:asset-detail' asset.pk %}">{{ asset.asset_code }}</a><h2 class="h5 mt-1 text-break">{{ asset.asset_name }}</h2>{% if asset.equipment_number %}<div class="small text-secondary">设备：{{ asset.equipment_number }}</div>{% endif %}<div class="small text-secondary text-break">{{ asset.department.name|default:'—' }} · {{ asset.responsible_employee.name|default:'—' }}{% if asset.responsible_employee %}（{{ asset.responsible_employee.employee_no }}）{% endif %}</div></div>
+<div class="repair-work-history">{% if asset.repair_context.start %}<div><span class="badge text-bg-warning">{% if asset.repair_context.elapsed_days %}送修已 {{ asset.repair_context.elapsed_days }} 天{% else %}今日送修{% endif %}</span><span class="small text-secondary ms-2">{{ asset.repair_context.start.effective_at|date:'Y-m-d H:i' }}</span></div><p class="mb-1 mt-2 text-break repair-preserve">{{ asset.repair_context.start.reason }}</p><div class="small text-secondary">完成后恢复：{{ asset.repair_context.restore_status }}</div>{% else %}<div class="text-secondary">送修记录待核对</div><div class="small text-secondary">未找到可配对的送修记录，请先查看资产历史。</div>{% endif %}</div>
+<div class="d-flex flex-wrap gap-2 repair-work-actions">{% if asset.can_complete_repair %}<a class="btn btn-sm btn-success" href="{% url 'assets:lifecycle-repair-complete' asset.pk %}?{{ return_query }}">办理维修完成</a>{% endif %}<a class="btn btn-sm btn-outline-secondary" href="{% url 'assets:asset-detail' asset.pk %}#movement-history">查看历史</a></div>
+</div></div></article>
+{% empty %}<div class="card"><div class="app-empty-state"><strong>{% if query or form.errors %}没有匹配的维修中资产{% else %}当前可见范围没有维修中资产{% endif %}</strong><span>{% if query or form.errors %}可调整关键词，或恢复完整维修清单。{% else %}资产送修后会显示在这里。{% endif %}</span>{% if query or form.errors %}<a class="btn btn-outline-primary mt-2" href="{{ workbench_url }}">查看全部维修中资产</a>{% endif %}</div></div>{% endfor %}
+</div>
+{% include '_pagination.html' %}
+{% endblock %}

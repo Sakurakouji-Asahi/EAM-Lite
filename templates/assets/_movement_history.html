@@ -1,0 +1,17 @@
+<div id="movement-history" data-asset-history data-history-total="{{ movement_page.paginator.count }}">
+  <div class="asset-history-controls rounded border p-3 mb-2" data-asset-history-controls hidden>
+    <div class="row g-2 align-items-end">
+      <div class="col-12 col-md-4"><label class="form-label" for="history-event">事件类型</label><select class="form-select" id="history-event" data-history-event aria-describedby="history-filter-scope"><option value="">全部事件</option></select></div>
+      <div class="col-12 col-md-6"><label class="form-label" for="history-keyword">查找历史</label><input class="form-control" id="history-keyword" type="search" maxlength="200" placeholder="原因、责任人、部门、位置或日期" data-history-keyword aria-describedby="history-filter-scope"></div>
+      <div class="col-12 col-md-2"><button class="btn btn-outline-secondary w-100" type="button" data-history-reset disabled>恢复全部</button></div>
+    </div>
+    <div class="small text-secondary mt-2" id="history-filter-scope">只筛选当前页已加载的记录，多个关键词以空格分隔并同时匹配。{% if movement_page.paginator.num_pages > 1 %}当前第 {{ movement_page.number }} / {{ movement_page.paginator.num_pages }} 页，可在下方翻页查阅其他历史。{% endif %}</div>
+    <div class="small mt-1" data-history-count role="status" aria-live="polite" aria-atomic="true"></div>
+  </div>
+  <div class="table-responsive" data-scroll-table role="region" aria-label="生命周期历史"><table class="table table-sm align-middle mb-0"><thead><tr><th>生效时间</th><th>类型</th><th>状态</th><th>责任归属</th><th>原因</th></tr></thead><tbody>
+    {% for movement in movements %}<tr data-history-row data-history-type="{{ movement.movement_type }}" data-history-label="{{ movement.get_movement_type_display }}"><td>{{ movement.effective_at|date:"Y-m-d H:i" }}</td><td>{{ movement.get_movement_type_display }}</td><td>{{ movement.from_status_display }} → {{ movement.to_status_display }}</td><td>{{ movement.from_department.name|default:"—" }} / {{ movement.from_employee.name|default:"—" }} / {{ movement.from_location.name|default:"—" }}<br><span class="text-secondary">→ {{ movement.to_department.name|default:"—" }} / {{ movement.to_employee.name|default:"—" }} / {{ movement.to_location.name|default:"—" }}</span></td><td>{{ movement.reason }}</td></tr>
+    {% empty %}<tr><td colspan="5" class="text-secondary">暂无生命周期变动。</td></tr>{% endfor %}
+    <tr data-history-no-match hidden><td colspan="5"><div class="app-empty-state"><strong>本页没有匹配的历史</strong><span>可调整事件类型或关键词，{% if movement_page.paginator.num_pages > 1 %}也可翻页查阅其他记录，{% endif %}或恢复本页全部记录。</span><button class="btn btn-sm btn-outline-primary mt-2" type="button" data-history-reset>恢复全部</button></div></td></tr>
+  </tbody></table></div>
+</div>
+{% include '_pagination.html' with page_obj=movement_page pagination_query=movement_query page_parameter='movement_page' page_anchor='movement-history' %}

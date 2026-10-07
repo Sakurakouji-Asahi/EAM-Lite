@@ -1,0 +1,7 @@
+{% extends 'base.html' %}
+{% block title %}附件打包下载{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3">附件打包下载</h1><p>{{ asset.asset_code|default:'草稿' }} · {{ asset.asset_name }}</p></div></header>
+<div class="alert alert-warning" role="alert">{{ bundle_error }}</div>
+<a class="btn btn-primary" href="{% url 'assets:asset-detail' asset.pk %}#attachments-title">返回附件重新选择</a>
+{% endblock %}

@@ -1,0 +1,60 @@
+{% load static %}
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>{{ asset.asset_code|default:asset.draft_number }} · 资产资料卡</title>
+  <link rel="stylesheet" href="{% static 'css/asset-information-card.css' %}?v=20261004">
+  <script src="{% static 'js/asset-information-card.js' %}?v=20261004" defer></script>
+</head>
+<body>
+  <nav class="asset-card-controls" aria-label="资料卡操作">
+    <div><strong>资产资料卡 · A4 预览</strong><p>使用浏览器打印，纸张选 A4。资料按当前记录生成；实物标签打印和贴标请从资产详情办理。</p></div>
+    <div class="asset-card-control-buttons"><button type="button" data-print-information-card hidden>打印资料卡</button><a href="{% url 'assets:asset-detail' asset.pk %}">返回资产详情</a></div>
+    <noscript><p>可使用浏览器菜单或 Ctrl+P 打印此页。</p></noscript>
+  </nav>
+  <main class="asset-information-card">
+    <header class="asset-card-header">
+      <div class="asset-card-heading">
+        <div class="asset-card-company">{{ company_name }} · 逐件资产资料卡</div>
+        <h1>{{ asset.asset_name }}</h1>
+        <div class="asset-card-code"><span>{% if asset.asset_code %}正式资产编号{% else %}临时草稿号{% endif %}</span><strong>{{ asset.asset_code|default:asset.draft_number }}</strong></div>
+        <p class="asset-card-category">分类：{{ category_path }}</p>
+        <p class="asset-card-status">{{ asset.get_asset_status_display }}{% if asset.record_status == 'archived' %} · 已归档{% endif %}{% if current_qr %} · {{ current_qr.get_label_status_display }}{% endif %}</p>
+      </div>
+      <aside class="asset-card-qr" aria-label="二维码资料">
+        {% if card_show_qr %}
+          <img src="{% url 'assets:asset-current-qr' asset.pk %}" width="160" height="160" alt="{{ asset.asset_code }} 的当前二维码">
+          <p>当前二维码<br>在系统“扫码资产”入口识别</p>
+        {% elif not asset.asset_code %}<div class="asset-card-qr-empty">尚未正式建档<br>未生成二维码</div>
+        {% elif not current_qr %}<div class="asset-card-qr-empty">暂无有效二维码</div>
+        {% else %}<div class="asset-card-qr-empty">当前视图未提供二维码</div>{% endif %}
+      </aside>
+    </header>
+    {% if not asset.asset_code %}<p class="asset-card-draft-note">草稿资料：编号及资料以正式建立后的记录为准。</p>{% endif %}
+    {% if assignment_rows %}
+      <section class="asset-card-section" aria-labelledby="card-assignment-title">
+        <h2 id="card-assignment-title">当前责任与位置</h2>
+        <dl class="asset-card-assignment">{% for label, value in assignment_rows %}<div class="asset-card-pair"><dt>{{ label }}</dt><dd>{{ value }}</dd></div>{% endfor %}</dl>
+      </section>
+    {% endif %}
+    {% if physical_rows %}
+      <section class="asset-card-section" aria-labelledby="card-physical-title">
+        <h2 id="card-physical-title">实物资料</h2>
+        <dl class="asset-card-physical">{% for label, value in physical_rows %}<div class="asset-card-pair"><dt>{{ label }}</dt><dd>{{ value }}</dd></div>{% endfor %}</dl>
+      </section>
+    {% endif %}
+    {% if card_can_p1 and asset.description or card_can_p1 and asset.notes %}
+      <section class="asset-card-section asset-card-text" aria-labelledby="card-description-title">
+        <h2 id="card-description-title">说明与备注</h2>
+        {% if asset.description %}<h3>说明</h3><p>{{ asset.description }}</p>{% endif %}
+        {% if asset.notes %}<h3>备注</h3><p>{{ asset.notes }}</p>{% endif %}
+      </section>
+    {% endif %}
+    <section class="asset-card-section asset-card-handwritten" aria-labelledby="card-check-note-title"><h2 id="card-check-note-title">现场补记（选填）</h2><div class="asset-card-writing-lines" aria-label="手写补记区域"></div></section>
+    <footer class="asset-card-footer"><span>资料生成：{{ generated_at|date:'Y-m-d H:i' }}</span><span>{{ asset.asset_code|default:asset.draft_number }} · EAM-Lite</span></footer>
+  </main>
+</body>
+</html>

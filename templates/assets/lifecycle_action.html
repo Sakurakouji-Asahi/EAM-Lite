@@ -1,14 +1,18 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}{{ title }} - EAM-Lite{% endblock %}
+{% block extra_head %}{% if transfer_review %}<link rel="stylesheet" href="{% static 'css/asset-transfer-review.css' %}?v=20261004"><script src="{% static 'js/asset-transfer-review.js' %}?v=20261004" defer></script>{% endif %}{% if repair_context %}<link rel="stylesheet" href="{% static 'css/asset-repair-workspace.css' %}?v=20261004">{% endif %}{% endblock %}
 {% block content %}
   <div class="d-flex flex-wrap align-items-start justify-content-between gap-2 mb-3">
     <div><h1 class="h3 mb-1">{{ title }}</h1><div class="text-secondary">{{ asset.asset_code|default:asset.draft_number }} · {{ asset.asset_name }}</div></div>
     <a class="btn btn-outline-secondary" href="{{ cancel_url }}">返回</a>
   </div>
   <div class="alert alert-info">{{ description }}</div>
+  {% if transfer_review %}{% include "assets/_transfer_review.html" %}{% endif %}
+  {% if repair_context %}{% include "assets/_repair_context.html" %}{% endif %}
   <div class="card shadow-sm"><div class="card-body">
     {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
-    <form method="post"{% if multipart %} enctype="multipart/form-data"{% endif %} novalidate>
+    <form method="post"{% if multipart %} enctype="multipart/form-data"{% endif %} novalidate data-unsaved-guard="{% if form.is_bound %}true{% else %}false{% endif %}"{% if transfer_review %} data-transfer-review{% endif %}>
       {% csrf_token %}
       {% for field in form %}{% include "assets/_field.html" with field=field %}{% endfor %}
       <button class="btn btn-{{ button_class }}" type="submit">{{ button_label }}</button>

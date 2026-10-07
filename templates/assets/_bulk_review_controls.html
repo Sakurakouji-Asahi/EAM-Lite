@@ -1,0 +1,9 @@
+<div class="card-body border-bottom" data-bulk-review-controls hidden>
+  <div class="row g-2 align-items-end">
+    <div class="col-12 col-md-4"><label class="form-label" for="{{ review_id }}-state">核对结果</label><select id="{{ review_id }}-state" class="form-select" data-bulk-review-state><option value="all">全部</option><option value="error">需处理</option><option value="ready">通过核对</option></select></div>
+    <div class="col-12 col-md-5"><label class="form-label" for="{{ review_id }}-search">查找本批明细</label><input id="{{ review_id }}-search" class="form-control" type="search" placeholder="{{ review_placeholder|default:'草稿号、名称或核对说明，可用空格分隔' }}" data-bulk-review-search></div>
+    <div class="col-12 col-md-3"><button class="btn btn-outline-secondary" type="button" data-bulk-review-reset>恢复全部显示</button></div>
+  </div>
+  <p class="small text-secondary mt-2 mb-1">确认仍按本批核对结果办理；此处筛选只影响下方显示。</p>
+  <p class="small mb-0" data-bulk-review-summary role="status" aria-live="polite"></p>
+</div>

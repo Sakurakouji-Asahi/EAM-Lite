@@ -1,0 +1,13 @@
+{% if custom_value_forms %}
+  <div class="row">
+    {% for custom_form in custom_value_forms %}
+      <div class="col-12 col-lg-6">
+        {% include "assets/_field.html" with field=custom_form.value %}
+      </div>
+    {% endfor %}
+  </div>
+{% elif selected_category %}
+  <p class="text-secondary mb-0">该分类没有需要补充的扩展资料。</p>
+{% else %}
+  <p class="text-secondary mb-0">选择实物分类后显示该分类的扩展字段。</p>
+{% endif %}

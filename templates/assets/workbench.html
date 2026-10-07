@@ -1,8 +1,43 @@
-{% extends 'base.html' %}{% load workflow_navigation %}
-{% block title %}{{ title }}{% endblock %}{% block content %}
-<header class="app-page-header"><h1 class="h3">{{ title }}</h1><a href="{% url 'task-center' %}" class="btn btn-outline-secondary">返回任务中心</a></header>
-<p>当前权限范围：{% if kind == 'loans' %}未归还 {{ summary.loans.active }} 笔，逾期 {{ summary.loans.overdue }} 笔，未来 7 天内到期 {{ summary.loans.due }} 笔。{% else %}待补实际结果 {{ summary.disposals.actual }} 笔，待财务核对 {{ summary.disposals.finance }} 笔，待完成处置 {{ summary.disposals.complete }} 笔。{% endif %}</p>
-<form method="get" class="card card-body mb-3"><div class="row g-2">{% for field in form %}<div class="col-md-5">{{ field.label_tag }}{{ field }}{{ field.errors }}</div>{% endfor %}<div class="col-md-2 align-self-end"><button type="submit" class="btn btn-primary">查询</button></div></div></form>
-<div class="table-responsive card"><table class="table mb-0"><thead><tr><th>资产</th><th>部门</th>{% if kind == 'loans' %}<th>借用方</th><th>借出日期</th><th>预计归还</th>{% else %}<th>处置类型</th><th>拟处置日期</th>{% endif %}<th>状态 / 阶段</th><th>办理</th></tr></thead><tbody>
-{% for row in page_obj %}<tr><td><a href="{% url 'assets:asset-detail' row.asset_id %}">{{ row.asset.asset_code }}</a><div>{{ row.asset.asset_name }}</div></td><td>{{ row.asset.department.name }}</td>{% if kind == 'loans' %}<td>{{ row.borrower_name_snapshot|default:row.borrower_name }} {{ row.borrower_organization }}</td><td>{{ row.loan_date|date:'Y-m-d' }}</td><td>{{ row.expected_return_date|date:'Y-m-d' }}</td><td>{% if row.overdue %}<span class="badge text-bg-danger">逾期未归还</span>{% else %}{{ row.get_status_display }}{% endif %}</td><td>{% if row.can_return %}<a href="{% url 'assets:lifecycle-loan-return' row.asset_id %}?{% workflow_query %}">办理归还</a>{% endif %}</td>{% else %}<td>{{ row.get_disposal_type_display }}</td><td>{{ row.planned_disposal_date|date:'Y-m-d' }}</td><td>{{ row.work_step }}</td><td><a href="{% url 'assets:disposal-detail' row.pk %}?{% workflow_query %}">查看并办理</a></td>{% endif %}</tr>{% empty %}<tr><td colspan="7" class="text-center py-4">没有符合条件的记录。</td></tr>{% endfor %}</tbody></table></div>
-{% include '_pagination.html' %}{% endblock %}
+{% extends 'base.html' %}
+{% load workflow_navigation %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3 mb-1">{{ title }}</h1><p class="text-secondary mb-0">{% if kind == 'loans' %}优先跟进未归还资产，按预计归还日期识别今日到期和逾期事项。{% else %}按处置阶段直接进入下一步，办理后返回当前查询范围继续处理。{% endif %}</p></div><a href="{% url 'task-center' %}" class="btn btn-outline-secondary">返回任务中心</a></header>
+<div class="row g-2 mb-2" aria-label="当前查询范围状态汇总">
+  {% if kind == 'loans' %}
+    <div class="col-6 col-md-3"><a class="btn btn-outline-primary w-100" href="{{ work_links.active }}">未归还：{{ work_counts.active }}</a></div>
+    <div class="col-6 col-md-3"><a class="btn btn-outline-danger w-100" href="{{ work_links.overdue }}">已逾期：{{ work_counts.overdue }}</a></div>
+    <div class="col-6 col-md-3"><a class="btn btn-outline-warning w-100" href="{{ work_links.due }}">7 天内到期：{{ work_counts.due }}</a></div>
+    <div class="col-6 col-md-3"><a class="btn btn-outline-success w-100" href="{{ work_links.returned }}">已归还：{{ work_counts.returned }}</a></div>
+  {% else %}
+    <div class="col-6 col-md-3"><a class="btn btn-outline-primary w-100" href="{{ work_links.actual }}">待补实际结果：{{ work_counts.actual }}</a></div>
+    <div class="col-6 col-md-3"><a class="btn btn-outline-warning w-100" href="{{ work_links.finance }}">待财务核对：{{ work_counts.finance }}</a></div>
+    <div class="col-6 col-md-3"><a class="btn btn-outline-danger w-100" href="{{ work_links.complete }}">待完成处置：{{ work_counts.complete }}</a></div>
+    <div class="col-6 col-md-3"><a class="btn btn-outline-secondary w-100" href="{{ work_links.closed }}">已结束：{{ work_counts.closed }}</a></div>
+  {% endif %}
+</div>
+<p class="small text-secondary">汇总按当前搜索范围统计，不受办理阶段选项限制。{% if kind == 'loans' %}7 天内到期包含今日。{% else %}拟处置日期仅用于计划，不触发财务或处置完成。{% endif %}</p>
+{% include '_list_filters.html' %}
+{% if active_filters %}<div class="d-flex flex-wrap gap-2 align-items-center mb-3" aria-label="已应用的筛选"><span class="small text-secondary">当前条件：</span>{% for filter in active_filters %}<a class="btn btn-sm btn-outline-secondary text-break text-start" href="{{ filter.url }}" aria-label="移除筛选：{{ filter.label }}：{{ filter.value }}">{{ filter.label }}：{{ filter.value }} <span aria-hidden="true">×</span></a>{% endfor %}</div>{% endif %}
+<div class="d-flex justify-content-between flex-wrap gap-2 small text-secondary mb-2"><span>匹配 {{ page_obj.paginator.count }} 笔记录</span><span>{% if order == 'priority' %}{% if kind == 'loans' %}未归还优先，再按预计归还日期；已归还按实际归还时间从近到远。{% else %}未完成优先，再按拟处置日期。{% endif %}{% endif %}</span></div>
+<div class="table-responsive card"><table class="table table-hover align-middle mb-0">
+<thead><tr><th>资产 / 设备编号</th><th>部门</th>{% if kind == 'loans' %}<th>借用方</th><th>借出日期</th><th>预计 / 实际归还</th>{% else %}<th>处置类型</th><th>拟 / 实际处置日期</th>{% endif %}<th>状态 / 阶段</th><th>办理</th></tr></thead>
+<tbody>{% for row in page_obj %}<tr>
+  <td><a href="{% url 'assets:asset-detail' row.asset_id %}">{{ row.asset.asset_code }}</a><div>{{ row.asset.asset_name }}</div>{% if row.asset.equipment_number %}<div class="small text-secondary">设备：{{ row.asset.equipment_number }}</div>{% endif %}</td>
+  <td>{{ row.asset.department.name }}</td>
+  {% if kind == 'loans' %}
+    <td>{{ row.borrower_name_snapshot|default:row.borrower_name }}{% if row.borrower_organization %}<div class="small text-secondary">{{ row.borrower_organization }}</div>{% endif %}<div class="small text-secondary">{{ row.get_borrower_type_display }}</div></td>
+    <td class="text-nowrap">{{ row.loan_date|date:'Y-m-d' }}</td>
+    <td class="text-nowrap"><span class="small text-secondary">预计：</span>{{ row.expected_return_date|date:'Y-m-d' }}{% if row.status == 'returned' %}<div><span class="small text-secondary">实际：</span>{{ row.returned_at|date:'Y-m-d H:i'|default:'—' }}</div><div class="small text-secondary">接收人：{{ row.received_by_employee.name|default:'—' }}</div>{% else %}<div class="small {% if row.overdue %}text-danger{% else %}text-secondary{% endif %}">{{ row.due_timing }}</div>{% endif %}</td>
+    <td>{% if row.overdue %}<span class="badge text-bg-danger">逾期未归还</span>{% elif row.status == 'returned' %}<span class="badge text-bg-success">{{ row.get_status_display }}</span>{% else %}<span class="badge text-bg-warning">{{ row.get_status_display }}</span>{% endif %}</td>
+    <td>{% if row.can_return %}<a class="btn btn-sm btn-outline-primary" href="{% url 'assets:lifecycle-loan-return' row.asset_id %}?{% workflow_query %}">办理归还</a>{% else %}<a class="btn btn-sm btn-outline-secondary" href="{% url 'assets:asset-detail' row.asset_id %}">查看资产</a>{% endif %}</td>
+  {% else %}
+    <td>{{ row.get_disposal_type_display }}</td>
+    <td class="text-nowrap"><span class="small text-secondary">拟：</span>{{ row.planned_disposal_date|date:'Y-m-d' }}{% if row.actual_disposal_date %}<div><span class="small text-secondary">实际：</span>{{ row.actual_disposal_date|date:'Y-m-d' }}</div>{% endif %}</td>
+    <td><span class="badge {% if row.status == 'confirmed' %}text-bg-success{% elif row.status == 'draft' or row.status == 'finance_locked' %}text-bg-warning{% else %}text-bg-secondary{% endif %}">{{ row.work_step }}</span></td>
+    <td><div class="d-flex flex-wrap gap-2">{% if row.work_action_url %}<a class="btn btn-sm btn-outline-primary" href="{{ row.work_action_url }}?{% workflow_query %}">{{ row.work_action_label }}</a>{% endif %}<a class="btn btn-sm btn-outline-secondary" href="{% url 'assets:disposal-detail' row.pk %}?{% workflow_query %}">查看记录</a></div></td>
+  {% endif %}
+</tr>{% empty %}<tr><td colspan="{% if kind == 'loans' %}7{% else %}6{% endif %}"><div class="app-empty-state"><strong>没有符合条件的记录</strong><span>可切换办理阶段，或调整{% if kind == 'loans' %}资产和借用方{% else %}资产{% endif %}搜索条件。</span></div></td></tr>{% endfor %}</tbody>
+</table></div>
+{% include '_pagination.html' %}
+{% endblock %}

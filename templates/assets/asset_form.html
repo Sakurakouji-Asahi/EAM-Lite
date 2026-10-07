@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% load static %}
 {% block title %}{% if asset %}编辑资产草稿{% elif individual_durable_hint %}新增低值耐用品（逐件）{% else %}新增逐件资产{% endif %} - EAM-Lite{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/asset-form-assistance.css' %}?v=20261004"><script src="{% static 'js/asset-form-assistance.js' %}?v=20261004" defer></script><link rel="stylesheet" href="{% static 'css/asset-choice-search.css' %}?v=20261004"><script src="{% static 'js/asset-choice-search.js' %}?v=20261004" defer></script><script src="{% static 'js/asset-input-navigation.js' %}?v=20261004" defer></script>{% endblock %}
 {% block content %}
   <header class="app-page-header">
     <div>
@@ -10,25 +11,57 @@
     <a class="btn btn-outline-secondary" href="{{ cancel_url }}">返回</a>
   </header>
 
+  {% if copy_source_asset %}
+    <div class="alert alert-info" role="note">
+      <strong>正在用现有资料填写新资产，尚未保存。</strong>
+      来源：<a class="alert-link" href="{{ copy_source_url }}">{{ copy_source_asset.asset_code|default:copy_source_asset.draft_number }} / {{ copy_source_asset.asset_name }}</a>。
+      已带入名称、分类、品牌型号、厂家、单位、说明、保养标记及可选的保管信息。请核对新资产的部门、责任人和位置。
+      <div class="small mt-1">管理属性、设备编号、序列/出厂号、历史参考号、组件关系、车牌/车架/校准号、日期、备注和分类扩展值未复制，请按新件填写。新编号和二维码由建立流程生成；照片附件、财务资料和历史记录留在来源资产。</div>
+    </div>
+    {% if copy_omitted_fields %}<div class="alert alert-warning">来源中的以下资料已不在当前可选范围，已留空，请重新选择：{{ copy_omitted_fields|join:'、' }}。</div>{% endif %}
+  {% endif %}
+
   {% if individual_durable_hint %}
     <div class="alert alert-info">
       <strong>低值耐用品（逐件）：</strong>每件单独建档，数量固定为 1，使用独立编号跟踪每一件。财务之后另行确认会计处理，原编号和二维码保持不变。
     </div>
   {% endif %}
 
-  {% if form.errors %}
-    <div class="alert alert-danger" role="alert">
+  {% if form.errors or custom_value_errors %}
+    <div class="alert alert-danger" role="alert" id="asset-form-errors">
       <strong>保存失败，请检查以下字段：</strong>
       <ul class="mb-0">
-        {% for field in form %}{% for error in field.errors %}<li><a href="#{{ field.id_for_label }}">{{ field.label }}：{{ error }}</a></li>{% endfor %}{% endfor %}
+        {% for field in form.hidden_fields %}{% for error in field.errors %}<li>{{ error }}</li>{% endfor %}{% endfor %}
+        {% for field in form.visible_fields %}{% for error in field.errors %}<li><a href="#{{ field.id_for_label }}">{{ field.label }}：{{ error }}</a></li>{% endfor %}{% endfor %}
         {% for error in form.non_field_errors %}<li>{{ error }}</li>{% endfor %}
+        {% for field in custom_value_errors %}{% for error in field.errors %}<li><a href="#{{ field.id_for_label }}">{{ field.label }}：{{ error }}</a></li>{% endfor %}{% endfor %}
       </ul>
     </div>
   {% endif %}
 
-  <form method="post" novalidate{% if form.identity_enabled %} data-asset-identity-preview="{% url 'assets:asset-code-preview' %}"{% endif %}>
+  {% if edit_revision_error %}
+    <p><a class="btn btn-outline-primary" href="{{ edit_url }}" data-reload-asset-edit>重新打开最新编辑页面</a></p>
+  {% endif %}
+
+  <form method="post" novalidate data-asset-form-assistance data-unsaved-guard="{% if form.is_bound %}true{% else %}false{% endif %}" data-asset-custom-fields="{% if asset %}{% url 'assets:asset-custom-fields' asset.pk %}{% else %}{% url 'assets:asset-custom-fields' %}{% endif %}"{% if form.identity_enabled %} data-asset-identity-preview="{% url 'assets:asset-code-preview' %}"{% endif %}>
     {% csrf_token %}
+    {% if copy_source_asset %}<input type="hidden" name="copy_from" value="{{ copy_source_asset.pk }}">{% endif %}
+    {% if return_to %}<input type="hidden" name="return_to" value="{{ return_to }}">{% endif %}
     {% for hidden in form.hidden_fields %}{{ hidden }}{% endfor %}
+    <div class="asset-form-assistance card mb-3" data-asset-input-overview hidden>
+      <div class="card-body">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+          <div><strong>填写导航</strong><span class="small text-secondary ms-2" data-asset-required-count role="status" aria-live="polite" aria-atomic="true"></span></div>
+          <button type="button" class="btn btn-sm btn-outline-primary" data-asset-next-empty>定位未填项</button>
+        </div>
+        <nav class="asset-form-section-links mt-2" aria-label="资产资料分区">
+          {% for section in form_sections %}<a href="#section-{{ forloop.counter }}">{{ section.title }}</a>{% endfor %}
+          <a href="#custom-fields-title">分类扩展资料</a>
+        </nav>
+        <p class="small text-secondary mb-0 mt-2" data-asset-required-message>先填写带星号的资料；保存时系统会继续核对资料。</p>
+        <p class="small text-secondary mb-0 mt-1" data-asset-input-navigation-help hidden>单行文本按回车到下一项；说明和备注可换行。填妥后使用下方按钮保存。</p>
+      </div>
+    </div>
     {% for section in form_sections %}
       <section class="card shadow-sm mb-3 app-form-section" aria-labelledby="section-{{ forloop.counter }}">
         {% if section.optional %}<details{% if section.expanded %} open{% endif %}><summary class="card-header" id="section-{{ forloop.counter }}">{{ section.title }}</summary>{% else %}<div class="card-header"><h2 class="h5 mb-0" id="section-{{ forloop.counter }}">{{ section.title }}</h2></div>{% endif %}
@@ -48,18 +81,8 @@
     {% if form.identity_enabled %}<div class="alert alert-light border" aria-live="polite" data-identity-preview-result><strong>编号预览：</strong><span data-identity-preview-code>选择管理属性和实物分类后显示。</span><div class="small text-secondary" data-identity-preview-message>预览不占号；管理属性与财务认定独立，后续财务确认不会改号。</div></div>{% endif %}
     <section class="card shadow-sm mb-3 app-form-section" aria-labelledby="custom-fields-title">
       <div class="card-header"><h2 class="h5 mb-0" id="custom-fields-title">分类扩展资料</h2></div>
-      <div class="card-body">
-        {% if custom_value_forms %}
-          <div class="row">
-            {% for custom_form in custom_value_forms %}
-              <div class="col-12 col-lg-6">
-                {% include "assets/_field.html" with field=custom_form.value %}
-              </div>
-            {% endfor %}
-          </div>
-        {% else %}
-          <p class="text-secondary mb-0">选择实物分类并保存后显示该分类的扩展字段。</p>
-        {% endif %}
+      <div class="card-body" data-custom-fields-container data-category="{{ selected_category.pk|default:'' }}" aria-live="polite">
+        {% include "assets/_custom_value_fields.html" %}
       </div>
     </section>
 
@@ -76,5 +99,6 @@
       <a class="btn btn-outline-secondary" href="{{ cancel_url }}">取消</a>
     </div>
   </form>
+  <script src="{% static 'js/asset-custom-fields.js' %}" defer></script>
   {% if form.identity_enabled %}<script src="{% static 'js/asset-identity.js' %}" defer></script>{% endif %}
 {% endblock %}
