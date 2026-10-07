@@ -14,7 +14,7 @@ from .models import SupplyStockBalance
 from .permissions import can_view_supply_cost
 
 
-def posting_blockers(document):
+def posting_blockers(document, *, persisted_lines=None):
     """Early feedback only; posting repeats all checks under database locks."""
     from .models import SupplyCountTask
     from .services import ACTIVE_SUPPLY_COUNT_STATUSES, _assert_custody_count_action_allowed
@@ -28,7 +28,8 @@ def posting_blockers(document):
         if SupplyCountTask.objects.filter(company=document.company, warehouse=warehouse,
                 count_domain='warehouse_stock', status__in=ACTIVE_SUPPLY_COUNT_STATUSES).exists():
             errors.append(f'仓库 {warehouse.name} 正在盘点，盘点关闭或取消后才能过账。')
-    for line in document.lines.select_related('item','source_custody'):
+    lines = persisted_lines if persisted_lines is not None else document.lines.select_related('item','source_custody')
+    for line in lines:
         if not line.item.is_active:
             errors.append(f'物品 {line.item.item_code} 已停用，不能过账。')
         if line.source_custody_id:
@@ -51,16 +52,18 @@ def preview_token(actor, document, preview):
     if not preview or preview['has_errors']:
         return ''
     return signing.dumps({'actor':actor.pk, 'document':str(document.pk),
-        'at':preview['as_of'].isoformat(), 'total':str(preview['total_amount']), 'contents':document_contents(document),
+        'at':preview['as_of'].isoformat(), 'total':str(preview['total_amount']), 'contents':preview['contents'],
         'rows':{str(row['line'].pk):str(row['amount']) for row in preview['rows']}},
         salt='supply-posting-preview', compress=True)
 
 
-def document_contents(document):
+def document_contents(document, *, persisted_lines=None):
     fields = ('document_type','business_date','source_warehouse_id','target_warehouse_id','department_id','employee_id')
     content = {key:str(getattr(document,key)) for key in fields}
+    lines = (document.lines.order_by('pk') if persisted_lines is None
+             else sorted(persisted_lines, key=lambda line: line.pk))
     content['lines'] = [[str(getattr(line,key)) for key in ('pk','item_id','quantity','entered_unit_cost','source_issue_line_id','source_custody_id')]
-                        for line in document.lines.order_by('pk')]
+                         for line in lines]
     return hashlib.sha256(json.dumps(content,sort_keys=True).encode()).hexdigest()
 
 
@@ -122,10 +125,11 @@ def consumable_return_amount(*, source, quantity, returned_quantity, returned_am
     return amount
 
 
-def document_posting_preview(*, actor, document):
+def document_posting_preview(*, actor, document, persisted_lines=None):
     if document.status != 'draft' or not can_view_supply_cost(actor):
         return None
-    lines = list(document.lines.select_related('item', 'source_issue_line__item', 'source_issue_line__document', 'source_custody'))
+    lines = (list(document.lines.select_related('item', 'source_issue_line__item', 'source_issue_line__document', 'source_custody'))
+             if persisted_lines is None else list(persisted_lines))
     balances = {row.item_id:(row.quantity_on_hand,row.amount_on_hand) for row in SupplyStockBalance.objects.filter(
         company=document.company, warehouse_id=document.source_warehouse_id, item_id__in=[line.item_id for line in lines])}
     result = []
@@ -167,4 +171,5 @@ def document_posting_preview(*, actor, document):
         if amount is not None:
             total += amount
     has_errors = any(row['error'] for row in result)
-    return {'rows':result, 'total_amount':None if has_errors else total, 'has_errors':has_errors, 'as_of':timezone.now()}
+    return {'rows':result, 'total_amount':None if has_errors else total, 'has_errors':has_errors,
+            'as_of':timezone.now(), 'contents':document_contents(document, persisted_lines=lines)}

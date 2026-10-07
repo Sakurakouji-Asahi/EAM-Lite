@@ -6,6 +6,7 @@ from apps.supplies import views
 app_name = "supplies"
 
 urlpatterns = [
+    path('counts/<uuid:pk>/print/', views.count_task_print, name='count-task-print'),
     path('counts/<uuid:pk>/sheet/', views.count_sheet, name='count-sheet'),
     path("", views.dashboard, name="dashboard"),
     path(
@@ -23,6 +24,7 @@ urlpatterns = [
     ),
     path("warehouses/", views.warehouse_list, name="warehouse-list"),
     path("warehouses/new/", views.warehouse_create, name="warehouse-create"),
+    path("warehouses/<uuid:pk>/", views.warehouse_detail, name="warehouse-detail"),
     path("warehouses/<uuid:pk>/edit/", views.warehouse_edit, name="warehouse-edit"),
     path(
         "warehouses/<uuid:pk>/deactivate/",
@@ -31,6 +33,7 @@ urlpatterns = [
     ),
     path("items/", views.item_list, name="item-list"),
     path("items/new/", views.item_create, name="item-create"),
+    path("items/<uuid:pk>/", views.item_detail, name="item-detail"),
     path("items/<uuid:pk>/edit/", views.item_edit, name="item-edit"),
     path(
         "items/<uuid:pk>/deactivate/",

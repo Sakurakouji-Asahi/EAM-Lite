@@ -376,10 +376,15 @@ def create_supply_warehouse(*, actor, company, data, request=None):
 @transaction.atomic
 def update_supply_warehouse(*, actor, warehouse, data, request=None):
     require_manage_supply_warehouse(actor)
-    _require_current_company(warehouse.company)
-    warehouse = SupplyWarehouse.objects.select_for_update().select_related(
-        "company"
-    ).get(pk=warehouse.pk)
+    company = _require_current_company(warehouse.company)
+    if connection.vendor == "postgresql":
+        from apps.masterdata.models import Company
+
+        company = Company.objects.select_for_update(no_key=True).get(pk=company.pk)
+        warehouse_query = SupplyWarehouse.objects.select_for_update(of=("self",))
+    else:
+        warehouse_query = SupplyWarehouse.objects.select_for_update()
+    warehouse = warehouse_query.select_related("company").get(company=company, pk=warehouse.pk)
     old = _snapshot(
         warehouse,
         (
@@ -1156,7 +1161,7 @@ def create_supply_document(
 
 
 @transaction.atomic
-def update_draft_document(*, actor, document, data, lines, request=None):
+def update_draft_document(*, actor, document, data, lines, expected_revision=None, request=None):
     _require_current_company(document.company)
     document = (
         SupplyDocument.objects.select_for_update(of=("self",))
@@ -1166,6 +1171,12 @@ def update_draft_document(*, actor, document, data, lines, request=None):
     require_create_supply_document(actor, document=document)
     if document.status != SupplyDocumentStatus.DRAFT:
         raise ValidationError("该单据已过账或取消，不能编辑。")
+    if expected_revision is not None:
+        from .draft_revision import supply_document_revision_snapshot
+
+        if supply_document_revision_snapshot(document, lock_lines=True) != expected_revision:
+            raise ValidationError({"expected_revision":
+                "这份草稿已被其他操作更新，本次没有保存。请重新打开最新草稿，核对后再提交。"})
     unknown = set(data).difference(DOCUMENT_DRAFT_FIELDS)
     if unknown:
         raise ValidationError({field: "不是可编辑的草稿字段。" for field in unknown})
@@ -1534,7 +1545,15 @@ def _lock_supply_warehouse(*, company, warehouse_id, require_active=False):
 def _lock_custody_item(custody):
     """Serialize custody actions with item freeze/deactivation operations."""
 
-    item = SupplyItem.objects.select_for_update().filter(
+    queryset = SupplyItem.objects.select_for_update()
+    if connection.vendor == "postgresql":
+        # Custody actions never change the item key.  Keep business updates
+        # and deletes mutually exclusive while allowing draft-line FK checks
+        # to take KEY SHARE;
+        # otherwise a draft creator holding Company can deadlock with this
+        # transaction when a return later requests the Company sequence lock.
+        queryset = queryset.select_for_update(no_key=True)
+    item = queryset.filter(
         pk=custody.item_id,
         company=custody.company,
     ).first()
@@ -1564,8 +1583,15 @@ def return_custody_to_warehouse(
         count_task, locked_count_line = _lock_supply_count_line(count_line)
         require_execute_supply_count_task(actor, count_task)
     locked_item = _lock_custody_item(custody)
+    custody_queryset = SupplyCustody.objects.select_for_update(of=("self",))
+    if connection.vendor == "postgresql":
+        # A normal return draft can also reference this custody by FK while
+        # holding Company.  Its KEY SHARE must coexist with this unchanged key.
+        custody_queryset = custody_queryset.select_for_update(
+            of=("self",), no_key=True
+        )
     custody = (
-        SupplyCustody.objects.select_for_update(of=("self",))
+        custody_queryset
         .select_related(
             "company",
             "item",
@@ -3684,7 +3710,9 @@ def create_supply_count_task(*, actor, company, data, request=None):
     if planned_end < planned_start:
         raise ValidationError({"planned_end": "计划结束日期不得早于计划开始日期。"})
     Company.objects.select_for_update().get(pk=company.pk)
-    existing = SupplyCountTask.objects.select_for_update().filter(
+    # Creation metadata is immutable; an existing-task replay only reads it.
+    # Keep Company serialization for first creates without waiting on Task transitions.
+    existing = SupplyCountTask.objects.filter(
         company=company, idempotency_key=key
     ).first()
     expected = {

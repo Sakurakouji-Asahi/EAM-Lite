@@ -11,13 +11,23 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import Paginator
 from django.core import signing
 from django.http import HttpResponseBadRequest, QueryDict
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from apps.supplies.count_workspace import CountResultFilterForm, BulkCountLineForm, visible_count_lines, count_summary, filter_count_lines, record_count_page
+from apps.supplies.count_task_workspace import count_navigation, count_status_summary, count_filter_chip, safe_count_list_url
+from apps.supplies.warehouse_workspace import annotate_warehouse_freeze, warehouse_business_rows, warehouse_list_return
 from apps.supplies.posting_preview import document_posting_preview, posting_blockers, preview_token, post_with_preview, posting_comparison
-from django.db.models import Q, Sum
+from apps.supplies.document_workspace import document_destination, document_filter_chip, document_navigation
+from apps.supplies.stock_navigation import attach_stock_archive_links, stock_return_context
+from apps.supplies.custody_workspace import attach_custody_query_links, custody_query_context, custody_query_return, personal_custody_lookup
+from apps.supplies.custody_history_workspace import attach_custody_history
+from apps.supplies.stock_draft_prefill import apply_stock_draft_prefill, attach_stock_draft_links
+from apps.supplies.stock_low_workspace import low_stock_balance_q, attach_stock_low_warnings, stock_low_navigation
+from apps.supplies.document_copy_workspace import document_copy_source, apply_document_copy_prefill, document_copy_url
+from django.db.models import Count, Q, Sum
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.views.decorators.http import require_safe
 
 from apps.assets.permissions import can_create_asset_draft
 from apps.core.query_forms import DateRangeQueryForm, date_query_errors
@@ -52,6 +62,7 @@ from .forms import (
     SupplyItemForm,
     SupplyWarehouseForm,
 )
+from .domain import quantize_quantity
 from .models import (
     SupplyCategory,
     SupplyCountDomain,
@@ -228,7 +239,9 @@ def _int_or_none(value):
         return None
 
 
-def _line_formset_initial(document):
+def _line_formset_initial(document, *, persisted_lines=None):
+    if persisted_lines is None:
+        persisted_lines = document.lines.all()
     return [
         {
             "item": line.item_id,
@@ -236,7 +249,7 @@ def _line_formset_initial(document):
             "entered_unit_cost": line.entered_unit_cost,
             "line_remark": line.line_remark,
         }
-        for line in document.lines.all()
+        for line in persisted_lines
     ]
 
 
@@ -427,16 +440,45 @@ def warehouse_list(request):
     if query:
         queryset = queryset.filter(Q(code__icontains=query) | Q(name__icontains=query))
     queryset, selected_status = _status_filter(queryset, request)
+    queryset = annotate_warehouse_freeze(queryset, company)
+    warehouse_summary = queryset.aggregate(total=Count("pk"), frozen=Count("pk", filter=Q(count_frozen=True)))
+    freeze = request.GET.get("freeze", "").strip()
+    if freeze in ("frozen", "unfrozen"):
+        queryset = queryset.filter(count_frozen=freeze == "frozen")
+    else:
+        freeze = ""
+    page = _page(queryset.order_by("normalized_code"), request)
     return render(
         request,
         "supplies/warehouse_list.html",
         {
-            "page_obj": _page(queryset.order_by("normalized_code"), request),
+            "page_obj": page,
+            "warehouse_rows": warehouse_business_rows(request.user, company, page, request.get_full_path()),
+            "warehouse_summary": warehouse_summary,
+            "selected_freeze": freeze,
+            "pagination_query": _pagination_query(request),
             "query": query,
             "selected_status": selected_status,
             "can_manage": can_manage_supply_warehouse(request.user),
         },
     )
+
+
+@login_required
+@require_safe
+def warehouse_detail(request, pk):
+    company = _company_or_404()
+    require_view_supply_master_data(request.user)
+    queryset = scoped_supply_warehouses(request.user, company, SupplyWarehouse.objects.select_related(
+        "location", "manager_employee", "manager_employee__department"))
+    warehouse = get_object_or_404(annotate_warehouse_freeze(queryset, company), pk=pk)
+    list_url = warehouse_list_return(request)
+    business = warehouse_business_rows(request.user, company, [warehouse], list_url)[0]
+    return render(request, "supplies/warehouse_detail.html", {
+        "warehouse": warehouse, "warehouse_list_url": list_url,
+        "warehouse_business": business, "can_manage": can_manage_supply_warehouse(request.user),
+        **stock_return_context(request),
+    })
 
 
 @login_required
@@ -570,6 +612,7 @@ def item_list(request):
                 request.user, item_type or SupplyItemType.DURABLE_QUANTITY
             ),
             "selected_status": selected_status,
+            "item_list_return_query": urlencode({"return_to": request.get_full_path()}),
             "categories": scoped_supply_categories(request.user, company).filter(
                 is_active=True
             ),
@@ -585,21 +628,49 @@ def item_list(request):
 
 
 @login_required
+@require_safe
+def item_detail(request, pk):
+    from .item_workspace import item_activity, item_list_return
+    from .item_copy_workspace import item_copy_url
+
+    company = _company_or_404()
+    require_view_supply_master_data(request.user)
+    item = get_object_or_404(scoped_supply_items(request.user, company), pk=pk)
+    return render(request, "supplies/item_detail.html", {
+        "item": item, "item_list_url": item_list_return(request),
+        "item_navigation_query": urlencode({"return_to": item_list_return(request)}),
+        "item_copy_url": item_copy_url(item, item_list_return(request)),
+        "can_manage_item": can_manage_supply_item(request.user, item.item_type),
+        **item_activity(request.user, item),
+        **stock_return_context(request),
+    })
+
+
+@login_required
 def item_create(request):
+    from .item_copy_workspace import item_copy_source, item_copy_initial, item_form_navigation, item_archive_url
+
     company = _company_or_404()
     require_manage_supply_item(request.user, SupplyItemType.DURABLE_QUANTITY)
-    selected_type = request.GET.get("item_type", "")
+    source = item_copy_source(request, request.user, company)
+    selected_type = source.item_type if source else request.GET.get("item_type", "")
     if selected_type not in SupplyItemType.values:
         selected_type = ""
     if selected_type:
         require_manage_supply_item(request.user, selected_type)
+    initial, copy_notices = item_copy_initial(request.user, source) if source else ({}, [])
+    if selected_type:
+        initial["item_type"] = selected_type
+    navigation = item_form_navigation(request)
     form = SupplyItemForm(
         request.POST or None, actor=request.user, company=company,
-        initial={"item_type": selected_type} if selected_type else None,
+        initial=initial,
     )
+    if source is not None:
+        form.fields["item_code"].widget.attrs["autofocus"] = True
     if request.method == "POST" and form.is_valid():
         try:
-            create_supply_item(
+            item = create_supply_item(
                 actor=request.user,
                 company=company,
                 data=form.cleaned_data,
@@ -609,19 +680,24 @@ def item_create(request):
             _service_error(form, exc)
         else:
             messages.success(request, "低值物品档案已新增。")
-            return redirect("supplies:item-list")
+            return redirect(item_archive_url(item, navigation["item_list_url"]) if source else navigation["item_list_url"])
     return render(
         request,
         "supplies/item_form.html",
-        {"form": form, "title": f"新增{ITEM_PAGE_LABELS.get(selected_type, '数量物品')}"},
+        {"form": form, "title": f"新增{ITEM_PAGE_LABELS.get(selected_type, '数量物品')}",
+         "copy_source": source, "copy_notices": copy_notices, **navigation,
+         "copy_source_url": item_archive_url(source, navigation["item_list_url"]) if source else ""},
     )
 
 
 @login_required
 def item_edit(request, pk):
+    from .item_copy_workspace import item_form_navigation
+
     company = _company_or_404()
     item = get_object_or_404(scoped_supply_items(request.user, company), pk=pk)
     require_manage_supply_item(request.user, item.item_type)
+    navigation = item_form_navigation(request)
     form = SupplyItemForm(
         request.POST or None,
         instance=item,
@@ -640,11 +716,11 @@ def item_edit(request, pk):
             _service_error(form, exc)
         else:
             messages.success(request, "低值物品档案已更新。")
-            return redirect("supplies:item-list")
+            return redirect(navigation["item_list_url"])
     return render(
         request,
         "supplies/item_form.html",
-        {"form": form, "title": f"编辑{ITEM_PAGE_LABELS[item.item_type]}", "object": item},
+        {"form": form, "title": f"编辑{ITEM_PAGE_LABELS[item.item_type]}", "object": item, **navigation},
     )
 
 
@@ -718,6 +794,9 @@ def document_list(request):
     date_from_value = request.GET.get("date_from", "").strip()
     date_to_value = request.GET.get("date_to", "").strip()
     return_intent = request.GET.get("intent", "").strip() == "consumable_return"
+    mine = request.GET.get("mine", "").strip() in {"on", "1", "true"}
+    if mine:
+        queryset = queryset.filter(created_by=request.user)
     if query:
         queryset = queryset.filter(
             Q(document_no__icontains=query)
@@ -738,9 +817,7 @@ def document_list(request):
         queryset = queryset.filter(document_type=document_type)
     else:
         document_type = ""
-    if status in SPRINT15_STATUSES:
-        queryset = queryset.filter(status=status)
-    else:
+    if status not in SPRINT15_STATUSES:
         status = ""
     warehouse_id = _uuid_or_none(warehouse_value)
     if warehouse_value:
@@ -763,6 +840,12 @@ def document_list(request):
         queryset = queryset.filter(business_date__gte=date_from) if date_from else queryset.none()
     if date_to_value:
         queryset = queryset.filter(business_date__lte=date_to) if date_to else queryset.none()
+    document_counts = queryset.aggregate(
+        total=Count("pk", distinct=True),
+        **{value: Count("pk", distinct=True, filter=Q(status=value)) for value in SPRINT15_STATUSES},
+    )
+    if status:
+        queryset = queryset.filter(status=status)
     queryset = queryset.distinct().order_by("-business_date", "-document_no")
     page_obj = _page(queryset, request)
     editable_types = {
@@ -784,12 +867,36 @@ def document_list(request):
             document.status == SupplyDocumentStatus.DRAFT
             and can_post_supply_document(request.user, document=document)
         )
+    warehouses = scoped_supply_warehouses(request.user, company).order_by("normalized_code")
+    selected_warehouse = warehouses.filter(pk=warehouse_id).first() if warehouse_id else None
+    active_filters = []
+    filter_values = [
+        ("q", "搜索", query), ("warehouse", "仓库", str(selected_warehouse) if selected_warehouse else warehouse_value),
+        ("item", "物品编码", item_value), ("date_from", "开始日期", date_from_value),
+        ("date_to", "结束日期", date_to_value), ("mine", "创建人", "仅我创建" if mine else ""),
+    ]
+    if not return_intent:
+        filter_values += [("document_type", "类型", dict(SPRINT15_DOCUMENT_TYPE_CHOICES).get(document_type, "")),
+                          ("status", "状态", dict(SPRINT15_STATUS_CHOICES).get(status, ""))]
+    for name, label, value in filter_values:
+        if value:
+            active_filters.append(document_filter_chip(request, name, label, value))
+    status_rows = []
+    status_tones = {"draft": "primary", "posted": "success", "cancelled": "secondary", "reversed": "warning"}
+    for value, label in SPRINT15_STATUS_CHOICES:
+        params = request.GET.copy()
+        params.pop("page", None)
+        params["status"] = value
+        status_rows.append({"value": value, "label": label, "count": document_counts[value],
+                            "url": "?" + params.urlencode(), "tone": status_tones[value], "active": status == value})
+    clear_url = reverse("supplies:document-list") + ("?intent=consumable_return" if return_intent else "")
     return render(
         request,
         "supplies/document_list.html",
         {
             "page_obj": page_obj,
             "pagination_query": _pagination_query(request),
+            "list_return_query": urlencode({"return_to": request.get_full_path()}),
             "query": query,
             "selected_document_type": document_type,
             "selected_status": status,
@@ -799,11 +906,14 @@ def document_list(request):
             "date_to": date_to_value,
             "filter_errors": filter_errors,
             "return_intent": return_intent,
+            "mine": mine,
+            "document_counts": document_counts,
+            "document_status_rows": status_rows,
+            "active_filters": active_filters,
+            "document_clear_url": clear_url,
             "document_types": SPRINT15_DOCUMENT_TYPE_CHOICES,
             "statuses": SPRINT15_STATUS_CHOICES,
-            "warehouses": scoped_supply_warehouses(request.user, company).order_by(
-                "normalized_code"
-            ),
+            "warehouses": warehouses,
             "can_manage": can_create_supply_document(request.user),
         },
         status=400 if filter_errors else 200,
@@ -815,6 +925,7 @@ def document_create(request, document_type):
     company = _company_or_404()
     document_type = _require_sprint15_manual_document_type(document_type)
     require_create_supply_document(request.user)
+    copy_source = document_copy_source(request, company, document_type)
     form = SupplyDocumentForm(
         request.POST or None,
         actor=request.user,
@@ -830,6 +941,8 @@ def document_create(request, document_type):
             "document_type": document_type,
         },
     )
+    formset, copy_notices = apply_document_copy_prefill(request, copy_source, form, formset)
+    stock_prefill = apply_stock_draft_prefill(request, company, document_type, form, formset) if copy_source is None else None
     if request.method == "POST" and form.is_valid() and formset.is_valid():
         try:
             document = create_supply_document(
@@ -848,8 +961,11 @@ def document_create(request, document_type):
                 request.POST.get("next_action") == "post"
                 and can_post_supply_document(request.user, document=document)
             ):
-                return redirect("supplies:document-post", pk=document.pk)
-            return redirect("supplies:document-detail", pk=document.pk)
+                return redirect(document_destination(request, document, "supplies:document-post"))
+            return redirect(document_destination(request, document))
+    navigation = document_navigation(request)
+    if copy_source is not None:
+        navigation["document_form_back_url"] = document_destination(request, copy_source)
     return render(
         request,
         "supplies/document_form.html",
@@ -857,6 +973,10 @@ def document_create(request, document_type):
             "form": form,
             "formset": formset,
             "document_type": document_type,
+            "stock_prefill": stock_prefill,
+            "copy_source": copy_source,
+            "copy_notices": copy_notices,
+            "copy_source_url": document_destination(request, copy_source) if copy_source else "",
             "show_entered_cost": document_type
             in {SupplyDocumentType.OPENING, SupplyDocumentType.RECEIPT},
             "title": {
@@ -874,12 +994,15 @@ def document_create(request, document_type):
             "has_active_items": formset.forms[0].fields[
                 "item"
             ].queryset.exists(),
+            **navigation,
         },
     )
 
 
 @login_required
 def document_edit(request, pk):
+    from .draft_revision import supply_edit_revision_token
+
     company = _company_or_404()
     require_create_supply_document(request.user)
     document = get_object_or_404(
@@ -888,8 +1011,6 @@ def document_edit(request, pk):
             company,
             SupplyDocument.objects.select_related(
                 "source_warehouse", "target_warehouse", "department", "employee"
-            ).prefetch_related(
-                "lines__item"
             ),
         ),
         pk=pk,
@@ -903,16 +1024,23 @@ def document_edit(request, pk):
         SupplyDocumentType.TRANSFER,
     }:
         raise PermissionDenied("该来源单据草稿不提供普通编辑入口；可取消后重新发起。")
+    initial = {}
+    persisted_lines = None
+    if request.method != "POST":
+        persisted_lines = list(SupplyDocumentLine.objects.filter(document_id=document.pk).order_by("line_no", "pk"))
+        initial["expected_revision"] = supply_edit_revision_token(
+            actor=request.user, document=document, persisted_lines=persisted_lines)
     form = SupplyDocumentForm(
-        request.POST or None,
+        request.POST if request.method == "POST" else None,
         actor=request.user,
         company=company,
         document_type=document.document_type,
         instance=document,
+        initial=initial,
     )
     formset = SupplyDocumentLineFormSet(
-        request.POST or None,
-        initial=None if request.method == "POST" else _line_formset_initial(document),
+        request.POST if request.method == "POST" else None,
+        initial=None if request.method == "POST" else _line_formset_initial(document, persisted_lines=persisted_lines),
         prefix="lines",
         form_kwargs={
             "actor": request.user,
@@ -923,12 +1051,14 @@ def document_edit(request, pk):
     if request.method == "POST" and form.is_valid() and formset.is_valid():
         data = dict(form.cleaned_data)
         data.pop("idempotency_key", None)
+        expected_revision = data.pop("expected_revision")
         try:
             update_draft_document(
                 actor=request.user,
                 document=document,
                 data=data,
                 lines=_cleaned_line_rows(formset),
+                expected_revision=expected_revision,
                 request=request,
             )
         except ValidationError as exc:
@@ -939,8 +1069,8 @@ def document_edit(request, pk):
                 request.POST.get("next_action") == "post"
                 and can_post_supply_document(request.user, document=document)
             ):
-                return redirect("supplies:document-post", pk=document.pk)
-            return redirect("supplies:document-detail", pk=document.pk)
+                return redirect(document_destination(request, document, "supplies:document-post"))
+            return redirect(document_destination(request, document))
     return render(
         request,
         "supplies/document_form.html",
@@ -957,6 +1087,7 @@ def document_edit(request, pk):
             ),
             "has_active_warehouses": True,
             "has_active_items": True,
+            **document_navigation(request, document),
         },
     )
 
@@ -1029,7 +1160,9 @@ def document_detail(request, pk):
             "posting_preview": document_posting_preview(actor=request.user, document=document),
             "posting_blockers": posting_blockers(document),
             "posting_comparison": posting_comparison(request.user, document),
-            "workflow_return_url": safe_return_url(request, ""),
+            "document_copy_url": document_copy_url(request.user, document,
+                document_navigation(request, document)["document_return_to"]),
+            **document_navigation(request, document),
             "show_cost": show_cost,
             "total_amount": total_amount if show_cost else None,
             "can_manage": can_create_supply_document(
@@ -1077,11 +1210,11 @@ def document_cancel(request, pk):
             _service_error(form, exc)
         else:
             messages.success(request, "库存单据草稿已取消，库存未发生变化。")
-            return redirect("supplies:document-detail", pk=document.pk)
+            return redirect(document_destination(request, document))
     return render(
         request,
         "supplies/document_cancel_confirm.html",
-        {"document": document, "form": form},
+        {"document": document, "form": form, **document_navigation(request, document)},
     )
 
 
@@ -1098,8 +1231,6 @@ def document_post(request, pk):
             company,
             SupplyDocument.objects.select_related(
                 "source_warehouse", "target_warehouse", "department", "employee"
-            ).prefetch_related(
-                "lines__item"
             ),
         ),
         pk=pk,
@@ -1112,8 +1243,11 @@ def document_post(request, pk):
         SupplyDocumentStatus.POSTED,
     }:
         raise PermissionDenied("该单据不能过账。")
-    preview = document_posting_preview(actor=request.user, document=document)
-    blockers = posting_blockers(document)
+    persisted_lines = list(document.lines.select_related(
+        "item", "source_issue_line__item", "source_issue_line__document", "source_custody"
+    ).order_by("line_no"))
+    preview = document_posting_preview(actor=request.user, document=document, persisted_lines=persisted_lines)
+    blockers = posting_blockers(document, persisted_lines=persisted_lines)
     form = SupplyDocumentPostForm(
         request.POST or None,
         document=document,
@@ -1142,10 +1276,11 @@ def document_post(request, pk):
         {
             "document": document,
             "form": form,
-            "lines": document.lines.all(),
+            "lines": persisted_lines,
             "posting_preview": preview,
             "posting_blockers": blockers,
             "show_cost": can_view_supply_cost(request.user),
+            **document_navigation(request, document),
         },
     )
 
@@ -1168,13 +1303,14 @@ def consumable_return_create(request, line_pk):
         document__document_type=SupplyDocumentType.RETURN,
         document__status=SupplyDocumentStatus.POSTED,
     ).aggregate(quantity=Sum("quantity"), amount=Sum("posted_amount"))
-    returned_quantity = returned["quantity"] or Decimal("0.0000")
-    returnable_quantity = source_line.quantity - returned_quantity
+    returned_quantity = quantize_quantity(returned["quantity"] or Decimal("0.0000"))
+    returnable_quantity = quantize_quantity(source_line.quantity - returned_quantity)
     form = SupplyConsumableReturnForm(
         request.POST or None,
         actor=request.user,
         company=company,
         source_issue_line=source_line,
+        returnable_quantity=returnable_quantity,
         initial={"quantity": returnable_quantity if returnable_quantity > 0 else None},
     )
     if request.method == "POST" and form.is_valid():
@@ -1216,6 +1352,8 @@ def consumable_return_create(request, line_pk):
             "source_line": source_line,
             "returned_quantity": returned_quantity,
             "returnable_quantity": returnable_quantity,
+            "quantity_remaining_label": "过账后预计可退",
+            "allow_fill_full_quantity": True,
             "show_cost": can_view_supply_cost(request.user),
         },
     )
@@ -1375,6 +1513,7 @@ def custody_list(request):
     else:
         source_type = ""
     page_obj = _page(queryset.order_by("-started_on", "-created_at"), request)
+    attach_custody_query_links(page_obj, request.get_full_path())
     for custody in page_obj.object_list:
         custody.ui_can_return = bool(
             custody.status == "open"
@@ -1446,12 +1585,16 @@ def custody_detail(request, pk):
         | custody.outgoing_movements.filter(company=company)
     ).select_related(
         "from_custody",
+        "from_custody__department",
+        "from_custody__employee",
         "to_custody",
+        "to_custody__department",
+        "to_custody__employee",
         "source_document_line__document",
         "created_by",
         "reverses_movement",
     )
-    movements = list(movement_queryset.order_by("created_at"))
+    movements = list(movement_queryset.order_by("created_at", "pk"))
     visible_custodies = scoped_supply_custodies(
         request.user,
         company,
@@ -1506,6 +1649,9 @@ def custody_detail(request, pk):
     ).select_related(
         "department", "employee", "item"
     ).order_by("started_on", "created_at")
+    attach_custody_query_links(ancestor_chain, custody_query_return(request))
+    attach_custody_query_links(child_custodies, custody_query_return(request))
+    attach_custody_history(movements, custody, custody_query_return(request))
     return render(
         request,
         "supplies/custody_detail.html",
@@ -1515,6 +1661,7 @@ def custody_detail(request, pk):
             "show_cost": can_view_supply_cost(request.user),
             "ancestor_chain": ancestor_chain,
             "child_custodies": child_custodies,
+            **custody_query_context(request),
             "direct_parent_visible": (
                 custody.parent_custody_id is None
                 or custody.parent_custody_id in visible_related_ids
@@ -1589,6 +1736,8 @@ def durable_return_create(request, pk):
             "form": form,
             "custody": custody,
             "title": "耐用品归还仓库",
+            "quantity_remaining_label": "过账后预计仍在管",
+            "allow_fill_full_quantity": True,
             "submit_label": "创建归还草稿",
             "warning": "归还将在库存单据过账时原子减少保管并增加目标仓库库存。",
             "show_cost": can_view_supply_cost(request.user),
@@ -1632,6 +1781,8 @@ def custody_transfer(request, pk):
             "form": form,
             "custody": custody,
             "title": "责任转交",
+            "quantity_remaining_label": "完成后预计仍在管",
+            "allow_fill_full_quantity": True,
             "submit_label": "确认转交",
             "warning": "每次转交新建目标保管，不与其他来源或成本批次自动合并。",
             "show_cost": can_view_supply_cost(request.user),
@@ -1679,6 +1830,8 @@ def custody_write_off(request, pk, action):
             "custody": custody,
             "title": title,
             "submit_label": f"确认{title[-2:]}",
+            "quantity_remaining_label": "完成后预计仍在管",
+            "allow_fill_full_quantity": False,
             "warning": "该动作会减少当前在管数量和管理金额，且本 Sprint 不提供撤销。",
             "show_cost": can_view_supply_cost(request.user),
             "button_class": "danger",
@@ -1693,15 +1846,18 @@ def my_custodies(request):
     queryset = SupplyCustody.objects.filter(
         company=company,
         employee__user=request.user,
-        status="open",
-    ).select_related("item", "department", "employee")
+    ).select_related("item", "department", "employee", "origin_issue_line__document")
+    queryset, lookup = personal_custody_lookup(queryset, request)
+    page_obj = _page(queryset.order_by("-started_on", "-created_at", "-pk"), request)
+    attach_custody_query_links(page_obj, request.get_full_path())
     return render(
         request,
         "supplies/my_custodies.html",
         {
-            "page_obj": _page(queryset.order_by("-started_on", "-created_at"), request),
+            "page_obj": page_obj,
             "pagination_query": _pagination_query(request),
             "show_cost": can_view_supply_cost(request.user),
+            **lookup,
         },
     )
 
@@ -1741,6 +1897,8 @@ def stock_balance_list(request):
     query = request.GET.get("q", "").strip()
     warehouse_value = request.GET.get("warehouse", "").strip()
     item_value = request.GET.get("item", "").strip()
+    item_type = request.GET.get("item_type", "").strip()
+    quantity_state = request.GET.get("quantity_state", "").strip()
     if query:
         queryset = queryset.filter(
             Q(item__item_code__icontains=query)
@@ -1755,26 +1913,76 @@ def stock_balance_list(request):
         queryset = queryset.filter(
             item__normalized_item_code=normalize_identifier(item_value)
         )
+    if item_type in SupplyItemType.values:
+        queryset = queryset.filter(item__item_type=item_type)
+    else:
+        item_type = ""
+    if quantity_state == "available":
+        queryset = queryset.filter(quantity_on_hand__gt=0)
+    elif quantity_state == "zero":
+        queryset = queryset.filter(quantity_on_hand=0)
+    elif quantity_state == "low":
+        queryset = queryset.filter(low_stock_balance_q())
+    else:
+        quantity_state = ""
+    show_cost = can_view_supply_cost(request.user)
+    aggregates = {
+        "balance_count": Count("pk"),
+        "item_count": Count("item_id", distinct=True),
+        "warehouse_count": Count("warehouse_id", distinct=True),
+        "zero_count": Count("pk", filter=Q(quantity_on_hand=0)),
+        "low_count": Count("pk", filter=low_stock_balance_q()),
+    }
+    if show_cost:
+        aggregates["amount"] = Sum("amount_on_hand", default=Decimal("0.00"))
+    summary = queryset.aggregate(**aggregates)
+    if not show_cost:
+        queryset = queryset.defer("average_unit_cost", "amount_on_hand")
+    page_obj = _page(
+        queryset.order_by("warehouse__normalized_code", "item__normalized_item_code", "pk"),
+        request,
+    )
+    for balance in page_obj:
+        balance.ledger_url = _stock_navigation_url(
+            "supplies:stock-ledger-list",
+            warehouse=str(balance.warehouse_id),
+            item=balance.item.item_code,
+            return_to=request.get_full_path(),
+        )
+    attach_stock_archive_links(request.user, page_obj, request.get_full_path())
+    attach_stock_draft_links(request.user, page_obj, request.get_full_path())
+    attach_stock_low_warnings(page_obj)
     return render(
         request,
         "supplies/stock_balance_list.html",
         {
-            "page_obj": _page(
-                queryset.order_by(
-                    "warehouse__normalized_code", "item__normalized_item_code"
-                ),
-                request,
-            ),
+            "page_obj": page_obj,
             "pagination_query": _pagination_query(request),
             "query": query,
             "selected_warehouse": warehouse_value,
             "selected_item": item_value,
+            "selected_item_type": item_type,
+            "selected_quantity_state": quantity_state,
+            "item_types": SupplyItemType.choices,
+            "stock_summary": summary,
+            "ledger_url": _stock_navigation_url(
+                "supplies:stock-ledger-list", q=query, warehouse=warehouse_value,
+                item=item_value, item_type=item_type,
+                return_to=request.get_full_path(),
+            ),
             "warehouses": scoped_supply_warehouses(request.user, company).order_by(
                 "normalized_code"
             ),
-            "show_cost": can_view_supply_cost(request.user),
+            "show_cost": show_cost,
+            **stock_low_navigation(request),
+            **stock_return_context(request),
         },
     )
+
+
+def _stock_navigation_url(route, **filters):
+    query = urlencode({key: value for key, value in filters.items() if value})
+    return f"{reverse(route)}?{query}" if query else reverse(route)
 
 
 @login_required
@@ -1793,6 +2001,8 @@ def stock_ledger_list(request):
     status = request.GET.get("status", "").strip()
     warehouse_value = request.GET.get("warehouse", "").strip()
     item_value = request.GET.get("item", "").strip()
+    item_type = request.GET.get("item_type", "").strip()
+    direction = request.GET.get("direction", "").strip()
     date_from_value = request.GET.get("date_from", "").strip()
     date_to_value = request.GET.get("date_to", "").strip()
     if query:
@@ -1800,6 +2010,8 @@ def stock_ledger_list(request):
             Q(document__document_no__icontains=query)
             | Q(item__item_code__icontains=query)
             | Q(item__name__icontains=query)
+            | Q(warehouse__code__icontains=query)
+            | Q(warehouse__name__icontains=query)
         )
     if document_type in SPRINT15_DOCUMENT_TYPES:
         queryset = queryset.filter(document__document_type=document_type)
@@ -1816,6 +2028,16 @@ def stock_ledger_list(request):
         queryset = queryset.filter(
             item__normalized_item_code=normalize_identifier(item_value)
         )
+    if item_type in SupplyItemType.values:
+        queryset = queryset.filter(item__item_type=item_type)
+    else:
+        item_type = ""
+    if direction == "incoming":
+        queryset = queryset.filter(quantity_delta__gt=0)
+    elif direction == "outgoing":
+        queryset = queryset.filter(quantity_delta__lt=0)
+    else:
+        direction = ""
     date_from, date_to, filter_errors = _date_filter_values(request)
     if filter_errors:
         queryset = queryset.none()
@@ -1823,17 +2045,26 @@ def stock_ledger_list(request):
         queryset = queryset.filter(document__business_date__gte=date_from) if date_from else queryset.none()
     if date_to_value:
         queryset = queryset.filter(document__business_date__lte=date_to) if date_to else queryset.none()
+    page_obj = _page(queryset.order_by("-occurred_at", "document_line__line_no", "-pk"), request)
+    attach_stock_archive_links(request.user, page_obj, request.get_full_path())
     return render(
         request,
         "supplies/stock_ledger_list.html",
         {
-            "page_obj": _page(queryset.order_by("-occurred_at", "document_line__line_no"), request),
+            "page_obj": page_obj,
             "pagination_query": _pagination_query(request),
             "query": query,
             "selected_document_type": document_type,
             "selected_status": status,
             "selected_warehouse": warehouse_value,
             "selected_item": item_value,
+            "selected_item_type": item_type,
+            "selected_direction": direction,
+            "item_types": SupplyItemType.choices,
+            "balance_url": _stock_navigation_url(
+                "supplies:stock-balance-list", q=query, warehouse=warehouse_value,
+                item=item_value, item_type=item_type,
+            ),
             "date_from": date_from_value,
             "date_to": date_to_value,
             "filter_errors": filter_errors,
@@ -1843,6 +2074,7 @@ def stock_ledger_list(request):
                 "normalized_code"
             ),
             "show_cost": can_view_supply_cost(request.user),
+            **stock_return_context(request),
         },
         status=400 if filter_errors else 200,
     )
@@ -1900,18 +2132,15 @@ def count_task_list(request):
     date_from_value = request.GET.get("date_from", "").strip()
     date_to_value = request.GET.get("date_to", "").strip()
     if query:
-        queryset = queryset.filter(Q(task_no__icontains=query) | Q(name__icontains=query))
+        queryset = queryset.filter(Q(task_no__icontains=query) | Q(name__icontains=query)
+            | Q(warehouse__code__icontains=query) | Q(warehouse__name__icontains=query)
+            | Q(department__code__icontains=query) | Q(department__name__icontains=query)
+            | Q(employee__employee_no__icontains=query) | Q(employee__name__icontains=query))
     if domain in SupplyCountDomain.values:
         queryset = queryset.filter(count_domain=domain)
     else:
         domain = ""
-    if status == "open":
-        queryset = queryset.exclude(
-            status__in=(SupplyCountStatus.CLOSED, SupplyCountStatus.CANCELLED)
-        )
-    elif status in SupplyCountStatus.values:
-        queryset = queryset.filter(status=status)
-    else:
+    if status != "open" and status not in SupplyCountStatus.values:
         status = ""
     warehouse_id = _uuid_or_none(warehouse_value)
     department_id = _int_or_none(department_value)
@@ -1929,6 +2158,26 @@ def count_task_list(request):
         queryset = queryset.filter(planned_start__gte=date_from) if date_from else queryset.none()
     if date_to_value:
         queryset = queryset.filter(planned_end__lte=date_to) if date_to else queryset.none()
+    task_summary, status_links = count_status_summary(queryset, request, status)
+    if status == "open":
+        queryset = queryset.exclude(status__in=(SupplyCountStatus.CLOSED, SupplyCountStatus.CANCELLED))
+    elif status:
+        queryset = queryset.filter(status=status)
+    warehouses = scoped_supply_warehouses(request.user, company).order_by("normalized_code")
+    departments = scoped_departments(request.user, company).order_by("normalized_code")
+    employees = scoped_employees(request.user, company).order_by("normalized_employee_no")
+    chips = []
+    for name, label, value in (("q", "查找", query), ("count_domain", "类型", dict(SupplyCountDomain.choices).get(domain)),
+            ("status", "状态", dict((("open", "未关闭"), *SupplyCountStatus.choices)).get(status)),
+            ("date_from", "计划开始", date_from_value), ("date_to", "计划结束", date_to_value)):
+        if value:
+            chips.append(count_filter_chip(request, name, label, value))
+    for name, label, value, pk, choices in (("warehouse", "仓库", warehouse_value, warehouse_id, warehouses),
+            ("department", "部门", department_value, department_id, departments),
+            ("employee", "员工", employee_value, employee_id, employees)):
+        if value:
+            selected = choices.filter(pk=pk).first() if pk else None
+            chips.append(count_filter_chip(request, name, label, str(selected) if selected else "未找到或不在当前范围"))
     return render(
         request,
         "supplies/count_task_list.html",
@@ -1944,13 +2193,15 @@ def count_task_list(request):
             "date_from": date_from_value,
             "date_to": date_to_value,
             "filter_errors": filter_errors,
+            "task_summary": task_summary,
+            "count_status_links": status_links,
+            "count_filter_chips": chips,
+            "count_list_navigation_query": urlencode({"return_to": request.get_full_path()}),
             "domains": SupplyCountDomain.choices,
             "statuses": (("open", "未关闭"), *SupplyCountStatus.choices),
-            "warehouses": scoped_supply_warehouses(
-                request.user, company
-            ).order_by("normalized_code"),
-            "departments": scoped_departments(request.user, company).order_by("normalized_code"),
-            "employees": scoped_employees(request.user, company).order_by("normalized_employee_no"),
+            "warehouses": warehouses,
+            "departments": departments,
+            "employees": employees,
             "can_create_warehouse": can_create_supply_count_task(
                 request.user, company=company, count_domain=SupplyCountDomain.WAREHOUSE_STOCK
             ),
@@ -1988,8 +2239,8 @@ def count_task_create(request):
             _service_error(form, exc)
         else:
             messages.success(request, "盘点任务草稿已创建；草稿尚不冻结业务。")
-            return redirect("supplies:count-task-detail", pk=task.pk)
-    return render(request, "supplies/count_task_form.html", {"form": form})
+            return redirect(count_navigation(request, task)["count_detail_url"])
+    return render(request, "supplies/count_task_form.html", {"form": form, **count_navigation(request)})
 
 
 def _count_page_context(request, task):
@@ -1999,10 +2250,16 @@ def _count_page_context(request, task):
     page = Paginator(lines,form.cleaned_data.get("page_size") or 25).get_page(request.GET.get("page"))
     params = request.GET.copy()
     params.pop("page",None)
+    query_links = {}
+    for scope in ("", "unrecorded", "different", "needs_cost"):
+        link_params = params.copy()
+        link_params["row_view"] = scope
+        query_links[scope or "all"] = "?" + link_params.urlencode()
     return {"task":task,"filter_form":form,"page_obj":page,"pagination_query":params.urlencode(),
             "count_summary":count_summary(base),"show_cost":can_view_supply_cost(request.user),
+            "count_query_links":query_links,
             "can_execute":can_execute_supply_count_task(request.user,task),
-            "return_query":request.GET.urlencode()}
+            "return_query":request.GET.urlencode(), **count_navigation(request, task)}
 
 
 @login_required
@@ -2013,6 +2270,21 @@ def count_task_detail(request, pk):
                             for line in context["page_obj"]]
     context["can_bulk_record"] = task.status == "in_progress" and any(row["can_record"] for row in context["line_rows"])
     return render(request,"supplies/count_task_detail.html",context,status=200 if context["filter_form"].is_valid() else 400)
+
+
+@login_required
+@require_safe
+def count_task_print(request, pk):
+    from django.utils import timezone
+
+    task = _count_task_or_404(request, _company_or_404(), pk)
+    context = _count_page_context(request, task)
+    form = context["filter_form"]
+    context["print_lines"] = list(filter_count_lines(visible_count_lines(request.user, task), form))
+    context["print_scope_label"] = dict(form.fields["row_view"].choices).get(
+        form.cleaned_data.get("row_view", ""), "全部明细")
+    context["printed_at"] = timezone.now()
+    return render(request, "supplies/count_print.html", context, status=200 if form.is_valid() else 400)
 
 
 @login_required
@@ -2041,8 +2313,8 @@ def count_sheet(request, pk):
                 form.add_error(None, message)
         else:
             messages.success(request, f'盘点表已保存 {changed} 行；空白和未变化的行未重复写入。')
-            return redirect('supplies:count-task-detail', pk=task.pk)
-    return render(request, 'supplies/count_sheet.html', {'task':task, 'form':form})
+            return redirect(count_navigation(request, task)["count_detail_url"])
+    return render(request, 'supplies/count_sheet.html', {'task':task, 'form':form, **count_navigation(request, task)})
 
 
 @login_required
@@ -2066,7 +2338,12 @@ def count_task_bulk_entry(request, pk):
             return HttpResponseBadRequest("本页录入范围已失效，请重新打开任务后录入。")
     else:
         rows = [line for line in context["page_obj"] if can_record_supply_count(request.user,line)]
-    if not rows or any(not can_record_supply_count(request.user,line) for line in rows):
+    if not rows:
+        if request.method == "GET" and any(can_record_supply_count(request.user, line)
+                for line in visible_count_lines(request.user, task)):
+            return render(request, "supplies/count_bulk_entry.html", context)
+        raise PermissionDenied("当前页没有可录入的盘点行。")
+    if any(not can_record_supply_count(request.user,line) for line in rows):
         raise PermissionDenied("当前页没有可录入的盘点行。")
     row_forms = [BulkCountLineForm(request.POST if request.method == "POST" else None,
                  prefix=f"line-{line.pk}",actor=request.user,line=line) for line in rows]
@@ -2088,6 +2365,7 @@ def count_task_bulk_entry(request, pk):
         else:
             messages.success(request,f"已保存 {changed} 行；空白和未变化的行未重复写入。")
             return redirect(reverse("supplies:count-task-detail",args=[task.pk])+("?"+request.GET.urlencode() if request.GET else ""))
+    context["entry_error_rows"] = [form for form in row_forms if form.errors]
     return render(request,"supplies/count_bulk_entry.html",context)
 
 
@@ -2104,11 +2382,13 @@ def _count_confirm_action(request, *, task, title, warning, service, success):
                 error = "；".join(getattr(exc, "messages", [str(exc)]))
             else:
                 messages.success(request, success)
-                return redirect("supplies:count-task-detail", pk=task.pk)
+                return redirect(count_navigation(request, task)["count_detail_url"])
     return render(
         request,
         "supplies/count_action_confirm.html",
-        {"task": task, "title": title, "warning": warning, "error": error},
+        {"task": task, "title": title, "warning": warning, "error": error,
+         "count_action_summary": count_summary(visible_count_lines(request.user, task)),
+         "show_cost": can_view_supply_cost(request.user), **count_navigation(request, task)},
     )
 
 
@@ -2172,11 +2452,11 @@ def count_task_cancel(request, pk):
             _service_error(form, exc)
         else:
             messages.success(request, "盘点任务已取消；快照和录入历史已保留。")
-            return redirect("supplies:count-task-detail", pk=task.pk)
+            return redirect(count_navigation(request, task)["count_detail_url"])
     return render(
         request,
         "supplies/count_cancel_form.html",
-        {"task": task, "form": form},
+        {"task": task, "form": form, **count_navigation(request, task)},
     )
 
 
@@ -2191,6 +2471,9 @@ def count_line_record(request, pk, line_pk):
     for key in ("q","row_view","page_size","page"):
         if key in values:
             params[key] = values[key]
+    list_return = safe_count_list_url(request.POST.get("return_to", request.GET.get("return_to", values.get("return_to", ""))))
+    if list_return:
+        params["return_to"] = list_return
     return_query = params.urlencode()
     form = SupplyCountRecordForm(request.POST or None,actor=request.user,line=line)
     if request.method == "POST" and form.is_valid():
@@ -2231,11 +2514,11 @@ def count_task_add_item(request, pk):
             _service_error(form, exc)
         else:
             messages.success(request, "零库存盘盈候选物品已加入本次快照。")
-            return redirect("supplies:count-task-detail", pk=task.pk)
+            return redirect(count_navigation(request, task)["count_detail_url"])
     return render(
         request,
         "supplies/count_add_item_form.html",
-        {"task": task, "form": form},
+        {"task": task, "form": form, **count_navigation(request, task)},
     )
 
 
@@ -2258,11 +2541,11 @@ def count_line_adjustment_cost(request, pk, line_pk):
             _service_error(form, exc)
         else:
             messages.success(request, "盘盈单位成本已保存。")
-            return redirect("supplies:count-task-detail", pk=task.pk)
+            return redirect(count_navigation(request, task)["count_detail_url"])
     return render(
         request,
         "supplies/count_cost_form.html",
-        {"task": task, "line": line, "form": form},
+        {"task": task, "line": line, "form": form, **count_navigation(request, task)},
     )
 
 
@@ -2320,10 +2603,11 @@ def count_line_resolve(request, pk, line_pk):
             _service_error(form, exc)
         else:
             messages.success(request, "保管盘点差异已关联真实解决流水。")
-            return redirect("supplies:count-task-detail", pk=task.pk)
+            return redirect(count_navigation(request, task)["count_detail_url"])
     return render(
         request,
         "supplies/count_resolution_form.html",
         {"task": task, "line": line, "form": form,
-         "resolution_quantity": abs(line.difference_quantity) if line.difference_quantity is not None else None},
+         "resolution_quantity": abs(line.difference_quantity) if line.difference_quantity is not None else None,
+         **count_navigation(request, task)},
     )
