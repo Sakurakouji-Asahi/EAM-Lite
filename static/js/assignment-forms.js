@@ -17,6 +17,7 @@
       update();
     });
     document.querySelectorAll("select[name='scope_type']").forEach((scope) => {
+      if (scope.form?.hasAttribute('data-inventory-scope-assistance')) return;
       if (scope.dataset.scopeLinked) return;
       const form = scope.form;
       const type = form.elements.namedItem("inventory_type");
