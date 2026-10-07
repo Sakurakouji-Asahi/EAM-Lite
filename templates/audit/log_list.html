@@ -1,12 +1,14 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block title %}操作日志 | EAM-Lite{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/audit-workspace.css' %}?v=20261004">{% endblock %}
 
 {% block content %}
 <header class="app-page-header">
   <div>
     <h1 class="h3 mb-1">操作日志</h1>
-    <p class="text-secondary mb-0">可从建档、资产初始化导入记录核对并撤销未投入使用的资产；原操作日志保留。时间按上海时区显示。</p>
+    <p class="text-secondary mb-0">按业务编号、名称或动作查找记录，核对资料变化和相关操作。时间按上海时区显示，完整记录可展开查看。</p>
   </div>
 </header>
 
@@ -17,14 +19,17 @@
         <div class="col-12"><div class="alert alert-danger mb-0">{{ form.non_field_errors }}</div></div>
       {% endif %}
       {% for field in form %}
+        {% if field.name != 'action' and field.name != 'object_id' and field.name != 'correlation_id' %}
         <div class="col-12 col-md-6 col-xl-3">
           <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
           {{ field }}
           {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
           {% for error in field.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
         </div>
+        {% endif %}
       {% endfor %}
-      <div class="col-12 d-flex gap-2">
+      <div class="col-12"><details class="audit-advanced"{% if form.action.value or form.object_id.value or form.correlation_id.value or form.action.errors or form.object_id.errors or form.correlation_id.errors %} open{% endif %}><summary>按精确动作或记录编号查找</summary><div class="row g-3 mt-1">{% for field in form %}{% if field.name == 'action' or field.name == 'object_id' or field.name == 'correlation_id' %}<div class="col-12 col-md-4"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}{% for error in field.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}</div>{% endif %}{% endfor %}</div></details></div>
+      <div class="col-12 d-flex flex-wrap gap-2">
         <button class="btn btn-primary" type="submit">查询</button>
         <a class="btn btn-outline-secondary" href="{% url 'audit:log-list' %}">恢复最近 7 天</a>
       </div>
@@ -32,7 +37,10 @@
   </div>
 </section>
 
-{% if page_obj %}
+{% if audit_time_shortcuts %}<nav class="d-flex flex-wrap align-items-center gap-2 mb-2" aria-label="操作日志时间范围"><span class="small text-secondary">时间范围：</span>{% for item in audit_time_shortcuts %}<a class="btn btn-sm btn-outline-primary" href="{{ item.url }}">{{ item.label }}</a>{% endfor %}</nav><p class="small text-secondary mb-3">{{ audit_time_start|date:'Y-m-d H:i' }} ～ {{ audit_time_end|date:'Y-m-d H:i' }}；时间入口保留其他查询条件。</p>{% endif %}
+{% if audit_filter_chips %}<nav class="audit-filter-chips mb-3" aria-label="已应用的操作日志筛选"><span class="small text-secondary">当前条件：</span>{% for item in audit_filter_chips %}<a class="btn btn-sm btn-outline-secondary" href="{{ item.url }}" aria-label="取消{{ item.label }}筛选：{{ item.value }}">{{ item.label }}：{{ item.value }} <span aria-hidden="true">×</span></a>{% endfor %}</nav>{% endif %}
+
+{% if page_obj.paginator %}
 <section class="card shadow-sm">
   <div class="card-header d-flex justify-content-between align-items-center">
     <span>查询结果</span>
@@ -44,11 +52,8 @@
         <tr>
           <th>时间</th>
           <th>操作者</th>
-          <th>动作</th>
-          <th>对象</th>
-          <th>变更前</th>
-          <th>变更后</th>
-          <th>关联 ID</th>
+          <th>动作 / 对象</th>
+          <th>变更摘要</th>
           <th>操作</th>
         </tr>
       </thead>
@@ -57,15 +62,12 @@
           <tr>
             <td class="text-nowrap">{{ log.created_at|date:"Y-m-d H:i:s" }}</td>
             <td>{{ log.actor }}</td>
-            <td><strong>{{ log.action_label }}</strong><details class="audit-technical"><summary>技术代码</summary><code>{{ log.action }}</code></details></td>
-            <td><span class="text-nowrap">{{ log.object_type_label }}</span><br><small class="text-secondary text-break">{{ log.object_id|default:"—" }}</small><details class="audit-technical"><summary>对象代码</summary><code>{{ log.object_type }}</code></details></td>
-            <td>{% if log.old_data == '{}' %}<span class="text-secondary">无变更前数据</span>{% else %}<pre class="audit-json mb-0">{{ log.old_data }}</pre><details class="audit-technical"><summary>原始字段</summary><pre class="audit-json mb-0">{{ log.old_data_technical }}</pre></details>{% endif %}</td>
-            <td>{% if log.new_data == '{}' %}<span class="text-secondary">无变更后数据</span>{% else %}<pre class="audit-json mb-0">{{ log.new_data }}</pre><details class="audit-technical"><summary>原始字段</summary><pre class="audit-json mb-0">{{ log.new_data_technical }}</pre></details>{% endif %}</td>
-            <td><code class="small">{{ log.correlation_id }}</code></td>
+            <td class="audit-history-object"><strong>{{ log.action_label }}</strong><div class="small text-secondary mt-1">{{ log.object_type_label }} · {{ log.object_id|default:"—" }}</div><div class="audit-history-links">{% if log.object_history_url %}<a class="btn btn-sm btn-outline-secondary" href="{{ log.object_history_url }}">同对象记录</a>{% endif %}{% if log.correlation_history_url %}<a class="btn btn-sm btn-outline-secondary" href="{{ log.correlation_history_url }}">同次操作</a>{% endif %}</div></td>
+            <td>{% if log.changes %}<ul class="audit-change-list">{% for item in log.changes %}<li><strong>{{ item.label }}</strong><div><span class="audit-change-value">{{ item.before }}</span> → {{ item.after }}</div></li>{% endfor %}</ul>{% if log.extra_change_count %}<div class="small text-secondary">还有 {{ log.extra_change_count }} 项变化，可展开查看。</div>{% endif %}{% else %}<span class="small text-secondary">本次没有可展示的字段变化。</span>{% endif %}<details class="audit-full-record"><summary>查看完整记录</summary><div class="mt-2"><h2 class="h6">变更前</h2>{% if log.old_data == '{}' %}<p class="small text-secondary">无变更前数据</p>{% else %}<pre class="audit-json">{{ log.old_data }}</pre>{% endif %}<h2 class="h6">变更后</h2>{% if log.new_data == '{}' %}<p class="small text-secondary">无变更后数据</p>{% else %}<pre class="audit-json">{{ log.new_data }}</pre>{% endif %}<details class="audit-technical"><summary>技术代码与原始字段</summary><div class="small mt-2">动作：<code>{{ log.action }}</code> · 对象：<code>{{ log.object_type }}</code></div><div class="small text-break">关联 ID：<code>{{ log.correlation_id }}</code></div><pre class="audit-json mt-2">{{ log.old_data_technical }}</pre><pre class="audit-json">{{ log.new_data_technical }}</pre></details></div></details></td>
             <td class="text-nowrap">{% if log.is_undone %}<span class="text-secondary">已撤销</span>{% elif log.can_preview_undo %}<a class="btn btn-sm btn-outline-danger" href="{% url 'audit:operation-undo' log.id %}">撤销</a>{% else %}<span class="text-secondary">—</span>{% endif %}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="8" class="text-center text-secondary py-4">当前条件下没有操作日志。</td></tr>
+          <tr><td colspan="5" class="text-center text-secondary py-4">当前条件下没有操作日志，可逐项取消上方条件或恢复最近 7 天。</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -80,5 +82,6 @@
     </div>
   {% endif %}
 </section>
+<p class="small text-secondary mt-2">同对象记录和同次操作沿用当前时间与操作者条件；结果按现有日志权限显示。符合条件的建档及初始化记录仍可核对撤销，原日志保留。</p>
 {% endif %}
 {% endblock %}
