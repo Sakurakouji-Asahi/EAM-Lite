@@ -1,0 +1,59 @@
+.supply-count-field-label {
+  display: none;
+}
+
+.supply-count-entry-table tr {
+  scroll-margin-top: 6rem;
+}
+
+@media screen and (max-width: 767.98px) {
+  .supply-count-entry-table {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .supply-count-entry-table table,
+  .supply-count-entry-table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .supply-count-entry-table thead {
+    display: none;
+  }
+
+  .supply-count-entry-table tr {
+    display: block;
+    margin-bottom: 1rem;
+    padding: .25rem .75rem;
+    border: 1px solid var(--bs-border-color);
+    border-radius: .5rem;
+    background: var(--bs-body-bg);
+  }
+
+  .supply-count-entry-table td {
+    display: block;
+    width: 100%;
+    padding: .6rem 0;
+    border: 0;
+    text-align: left !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+  }
+
+  .supply-count-entry-table td:first-child {
+    border-bottom: 1px solid var(--bs-border-color);
+  }
+
+  .supply-count-entry-table .supply-count-field-label {
+    display: block;
+    margin-bottom: .35rem;
+    font-size: .875rem;
+    font-weight: 600;
+  }
+
+  .supply-count-entry-table .supply-count-field-label:not(:first-child) {
+    margin-top: .75rem;
+  }
+}

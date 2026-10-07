@@ -1,0 +1,34 @@
+.supply-count-print-table { min-width: 850px; }
+.supply-count-print-quantity { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.supply-count-handwrite { min-height: 2.4rem; }
+.supply-count-print-signatures { margin-top: 1.5rem; }
+
+@media print {
+  @page { size: A4 landscape; margin: 12mm; }
+  html, body { margin: 0 !important; padding: 0 !important; background: white !important; color: #111 !important; }
+  .app-topbar, .app-sidebar, .app-mobile-nav, .skip-link, .app-breadcrumb,
+  [data-runtime-version], [data-development-environment-banner],
+  .app-content > :not(.supply-count-print-sheet), .supply-count-screen-only { display: none !important; }
+  .app-layout, .app-main, .app-content { display: block !important; width: 100% !important; max-width: none !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; }
+  .supply-count-print-sheet { font-size: 10pt; line-height: 1.4; }
+  .supply-count-print-sheet .app-page-header { display: block; margin: 0 0 4mm; padding: 0; border: 0; }
+  .supply-count-print-sheet h1 { font-size: 18pt; }
+  .supply-count-print-sheet .text-secondary { color: #333 !important; }
+  .supply-count-print-context { border: 0; padding: 0; }
+  .supply-count-print-context dl { display: grid; grid-template-columns: 22mm minmax(0, 1fr) 22mm minmax(0, 1fr); gap: 2mm; margin: 0 !important; }
+  .supply-count-print-context dl > * { width: auto !important; min-width: 0; margin: 0; padding: 0; overflow-wrap: anywhere; }
+  .supply-count-print-context dd.col-sm-10 { grid-column: span 3; }
+  .supply-count-print-note { margin: 4mm 0 !important; padding: 3mm; color: #111 !important; border: 1px solid #777; background: white !important; break-inside: avoid; }
+  .supply-count-print-table-wrap { overflow: visible !important; }
+  .supply-count-print-table { width: 100%; min-width: 0; border-collapse: collapse; font-size: 9pt; }
+  .supply-count-print-table thead { display: table-header-group; }
+  .supply-count-print-table th, .supply-count-print-table td { padding: 2mm; border: 1px solid #777 !important; color: #111 !important; vertical-align: top; overflow-wrap: anywhere; }
+  .supply-count-print-table tr { break-inside: avoid; }
+  .supply-count-print-table th:first-child { width: 8mm; }
+  .supply-count-print-table th:nth-child(2) { width: 50mm; }
+  .supply-count-print-table th:last-child { width: 50mm; }
+  .supply-count-handwrite { min-height: 12mm; min-width: 22mm; }
+  .supply-count-print-signatures { margin-top: 6mm; break-inside: avoid; }
+  .supply-count-print-sheet a { color: #111 !important; text-decoration: none !important; }
+  .supply-count-print-sheet a::after { content: none !important; }
+}

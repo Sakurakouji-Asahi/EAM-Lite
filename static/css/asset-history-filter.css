@@ -1,0 +1,7 @@
+[data-asset-history-controls][hidden], [data-history-row][hidden], [data-history-no-match][hidden] { display: none !important; }
+.asset-history-controls { background: var(--bs-tertiary-bg, #f8f9fa); }
+.asset-history-controls .form-label { margin-bottom: .35rem; }
+[data-history-count] { overflow-wrap: anywhere; }
+[data-asset-history] table { min-width: 42rem; }
+[data-asset-history] th, [data-history-row] td:nth-child(-n+3) { white-space: nowrap; }
+@media print { .asset-history-controls { display: none !important; } }

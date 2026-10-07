@@ -1,0 +1,7 @@
+.asset-transfer-review-row + .asset-transfer-review-row {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--eam-line, #dfe5ee);
+}
+.asset-transfer-review-row [data-transfer-target] { font-weight: 600; }
+.asset-transfer-review [data-transfer-message] { color: var(--eam-ink, #16324f); }

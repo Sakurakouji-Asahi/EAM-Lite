@@ -1,0 +1,9 @@
+.btn.import-filter-chip {
+  max-width: 100%;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
+}
+.import-file-name { max-width: 22rem; overflow-wrap: anywhere; }
+.import-source-name { overflow-wrap: anywhere; }

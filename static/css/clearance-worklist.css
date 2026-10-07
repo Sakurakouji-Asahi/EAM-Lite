@@ -1,0 +1,5 @@
+.clearance-worklist th { white-space: nowrap; }
+.clearance-worklist td:first-child { min-width: 12rem; }
+.clearance-worklist td:last-child { min-width: 15rem; }
+.clearance-worklist .btn { white-space: nowrap; }
+[id^="clearance-item-"], [id^="clearance-supply-item-"] { scroll-margin-top: 5rem; }

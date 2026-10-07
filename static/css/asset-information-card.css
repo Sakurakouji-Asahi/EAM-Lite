@@ -1,0 +1,54 @@
+* { box-sizing: border-box; }
+body { margin: 0; padding: 1.25rem; color: #172c40; background: #edf2f6; font: 14px/1.5 "Microsoft YaHei", "PingFang SC", sans-serif; }
+.asset-card-controls { max-width: 190mm; margin: 0 auto 1rem; display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; justify-content: space-between; }
+.asset-card-controls p { margin: .4rem 0 0; }
+.asset-card-control-buttons { display: flex; flex-wrap: wrap; gap: .6rem; }
+.asset-card-controls button, .asset-card-controls a { padding: .5rem .8rem; border: 1px solid #37698c; border-radius: .35rem; color: #17476c; background: white; font: inherit; text-decoration: none; cursor: pointer; }
+.asset-card-controls button { background: #17476c; color: white; }
+.asset-information-card { width: 100%; max-width: 190mm; margin: auto; padding: 9mm; background: white; border: 1px solid #d0dbe5; box-shadow: 0 .3rem 1rem #17365314; overflow-wrap: anywhere; }
+.asset-card-header { display: grid; grid-template-columns: minmax(0, 1fr) 42mm; gap: 6mm; align-items: start; border-bottom: 2px solid #244c68; padding-bottom: 5mm; }
+.asset-card-heading { min-width: 0; }
+.asset-card-company { font-size: 12px; color: #53697b; }
+h1 { font-size: 21px; line-height: 1.4; margin: 3mm 0 4mm; }
+.asset-card-code span { display: block; font-size: 12px; color: #53697b; }
+.asset-card-code strong { display: block; font-size: 18px; }
+.asset-card-category, .asset-card-status { margin: 3mm 0 0; }
+.asset-card-qr { text-align: center; }
+.asset-card-qr img { width: 38mm; height: 38mm; max-width: 100%; }
+.asset-card-qr p { margin: 1mm 0 0; font-size: 11px; }
+.asset-card-qr-empty { min-height: 38mm; border: 1px dashed #8397a5; display: flex; align-items: center; justify-content: center; padding: 3mm; color: #53697b; }
+.asset-card-draft-note { border: 1px dashed #71879a; padding: 2mm 3mm; font-size: 12px; }
+.asset-card-section { margin-top: 5mm; }
+h2 { margin: 0 0 3mm; padding-bottom: 1.5mm; border-bottom: 1px solid #93a9b9; font-size: 15px; line-height: 1.4; }
+dl { margin: 0; }
+.asset-card-physical { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 6mm; }
+.asset-card-pair { margin: 0 0 2.5mm; min-width: 0; }
+dt { font-size: 11px; color: #53697b; }
+dd { margin: .5mm 0 0; }
+.asset-card-assignment .asset-card-pair { display: grid; grid-template-columns: 23mm minmax(0, 1fr); gap: 3mm; }
+.asset-card-assignment dd { margin-top: 0; }
+.asset-card-text h3 { margin: 2mm 0 1mm; font-size: 12px; }
+.asset-card-text p { white-space: pre-wrap; margin: 0 0 3mm; }
+.asset-card-writing-lines { height: 16mm; background: repeating-linear-gradient(to bottom, transparent 0, transparent 7.8mm, #aab8c3 7.8mm, #aab8c3 8mm); }
+.asset-card-footer { display: flex; flex-wrap: wrap; gap: 3mm; justify-content: space-between; border-top: 1px solid #93a9b9; padding-top: 3mm; margin-top: 5mm; font-size: 10px; color: #53697b; }
+@media screen and (max-width: 575px) {
+  body { padding: .75rem; }
+  .asset-information-card { padding: 5mm; }
+  .asset-card-header { grid-template-columns: minmax(0, 1fr); }
+  .asset-card-qr { justify-self: start; }
+  .asset-card-qr-empty { width: 42mm; }
+  .asset-card-physical { grid-template-columns: minmax(0, 1fr); }
+}
+@page { size: A4; margin: 14mm; }
+@media print {
+  body { padding: 0; background: white; color: black; font-size: 10pt; }
+  .asset-card-controls { display: none !important; }
+  .asset-information-card { max-width: none; padding: 0; border: 0; box-shadow: none; }
+  .asset-card-header { break-inside: avoid; }
+  h1 { font-size: 16pt; }
+  h2 { break-after: avoid; }
+  h3 { break-after: avoid; }
+  .asset-card-pair, .asset-card-handwritten, .asset-card-footer { break-inside: avoid; }
+  .asset-card-text p { orphans: 3; widows: 3; }
+  a { color: inherit; text-decoration: none; }
+}

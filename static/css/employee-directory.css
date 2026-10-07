@@ -1,0 +1,10 @@
+.employee-filter-summary { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
+.employee-filter-chip { display: inline-flex; align-items: center; gap: .6rem; max-width: 100%; padding: .35rem .65rem; border: 1px solid var(--bs-border-color); border-radius: .5rem; color: var(--bs-body-color); text-decoration: none; background: var(--bs-tertiary-bg); font-size: .85rem; }
+.employee-filter-chip span:first-child { overflow-wrap: anywhere; }
+.employee-filter-chip:hover { border-color: var(--bs-primary); color: var(--bs-primary); }
+.employee-directory-table th { white-space: nowrap; }
+.employee-directory-table td:nth-child(2) { min-width: 10rem; }
+.employee-directory-table td:nth-child(3) { min-width: 12rem; }
+.employee-profile-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+.employee-profile-fields dd { margin-top: .35rem; overflow-wrap: anywhere; }
+@media (max-width: 575.98px) { .employee-profile-fields { grid-template-columns: 1fr; gap: .25rem; } }

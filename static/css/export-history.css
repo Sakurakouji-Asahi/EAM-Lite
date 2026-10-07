@@ -1,0 +1,16 @@
+.export-status-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .75rem; }
+.export-status-card { color: var(--bs-body-color); text-decoration: none; padding: .85rem 1rem; }
+.export-status-card:hover { border-color: var(--bs-primary); color: var(--bs-primary); }
+.export-status-selected { border-color: var(--bs-primary); background: var(--bs-primary-bg-subtle, #e9f1ff); }
+.export-history-table th { white-space: nowrap; }
+.export-history-table td:first-child { min-width: 17rem; max-width: 24rem; }
+.export-filename, .export-record-id, .export-result-note { overflow-wrap: anywhere; }
+.export-record-id { display: inline-block; max-width: 100%; font-variant-numeric: tabular-nums; }
+.export-result-note { min-width: 12rem; max-width: 22rem; }
+.export-history-actions { min-width: 12rem; }
+.export-filter-chip { max-width: 100%; min-width: 0; white-space: normal; overflow-wrap: anywhere; text-align: start; }
+.export-receipt-text { max-width: 100%; min-width: 0; resize: vertical; font-family: inherit; line-height: 1.55; }
+@media (max-width: 575.98px) {
+  .export-status-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
+  .export-status-card:first-child { grid-column: 1 / -1; }
+}

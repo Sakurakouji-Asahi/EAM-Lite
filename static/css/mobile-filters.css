@@ -1,0 +1,18 @@
+.mobile-filter-controls { display: none; }
+.mobile-filter-fields[hidden] { display: none !important; }
+.mobile-filter-summary { overflow-wrap: anywhere; }
+@media (max-width: 767.98px) {
+  .mobile-filter-controls { display: block; }
+  .mobile-filter-controls + .mobile-filter-fields:not([hidden]) { margin-top: 1rem; }
+  .mobile-filter-collapsed { padding-block: 1rem; }
+  .mobile-filter-summary {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+}
+@media print {
+  .mobile-filter-controls { display: none; }
+  .mobile-filter-fields[hidden] { display: block !important; }
+}

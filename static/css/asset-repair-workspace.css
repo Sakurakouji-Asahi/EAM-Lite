@@ -1,0 +1,10 @@
+.repair-work-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) auto; gap: 1rem; align-items: start; }
+.repair-work-row > * { min-width: 0; }
+.repair-work-actions { max-width: 12rem; }
+.repair-preserve { white-space: pre-wrap; overflow-wrap: anywhere; }
+.repair-context dd { overflow-wrap: anywhere; }
+@media (max-width: 767.98px) {
+  .repair-work-row { grid-template-columns: minmax(0, 1fr); gap: .75rem; }
+  .repair-work-history { border-top: 1px solid var(--bs-border-color); padding-top: .75rem; }
+  .repair-work-actions { max-width: none; }
+}

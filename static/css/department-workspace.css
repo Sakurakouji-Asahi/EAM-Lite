@@ -1,0 +1,4 @@
+.department-business-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem; }
+.department-business-grid > article { min-width: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
+.department-business-grid a { align-self: flex-start; margin-top: auto; max-width: 100%; white-space: normal; }
+@media (max-width: 767.98px) { .department-business-grid { grid-template-columns: 1fr; } }

@@ -1,0 +1,51 @@
+.finance-policy-workspace,
+.finance-policy-workspace .app-page-header > div,
+.finance-policy-workspace .card-body {
+  min-width: 0;
+}
+
+.finance-policy-workspace h1,
+.finance-policy-workspace dd,
+.finance-policy-workspace .app-page-header p,
+.finance-policy-filter-summary a {
+  overflow-wrap: anywhere;
+}
+
+.finance-policy-filter-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+}
+
+.finance-policy-filter-summary a {
+  max-width: 100%;
+  text-align: start;
+  white-space: normal;
+}
+
+.finance-policy-status-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: .75rem;
+}
+
+.finance-policy-workspace .finance-policy-table {
+  min-width: 52rem;
+}
+
+.finance-policy-table td:nth-child(1),
+.finance-policy-table td:nth-child(3) {
+  max-width: 18rem;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+@media (max-width: 575.98px) {
+  .finance-policy-status-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .5rem;
+  }
+  .finance-policy-status-cards .card-body {
+    padding: .75rem;
+  }
+}
