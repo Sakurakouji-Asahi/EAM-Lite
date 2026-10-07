@@ -164,14 +164,33 @@ def create_registered_asset(
     *, actor, company, data, custom_values=None, idempotency_key, request=None,
 ):
     company = lock_registration_company(company)
+    _require_current_company(company)
     normalized_key = _key(idempotency_key)
-    _reject_reversed_key(company, normalized_key)
     fingerprint = _fingerprint({"operation": "create", "data": data, "custom_values": custom_values or {}})
     existing = AssetRegistration.objects.select_related("asset__company", "asset__department").filter(
         company=company, idempotency_key=normalized_key,
     ).first()
     if existing is not None:
+        require_asset_registration(actor, existing.asset)
+        _reject_reversed_key(company, normalized_key)
         return _replay(existing, actor=actor, fingerprint=fingerprint)
+    # Keep successful registration replays unchanged. Only first creation
+    # checks requested scope and whether this page already saved a draft.
+    if not can_create_asset_draft(actor, company, data.get("department")):
+        raise PermissionDenied("您没有在此范围新建资产的权限。")
+    _reject_reversed_key(company, normalized_key)
+    from apps.audit.models import AuditLog
+    draft_request = AuditLog.objects.filter(
+        company=company, action="asset_draft_create", object_type="Asset",
+        new_data_json__idempotency_key=normalized_key,
+    ).order_by("created_at", "pk").first()
+    if draft_request is not None:
+        try:
+            original = Asset.objects.get(pk=draft_request.object_id, company=company)
+        except (Asset.DoesNotExist, TypeError, ValueError) as exc:
+            raise ValidationError("原新建页面的草稿结果记录已不存在，请重新打开新建页面后核对。") from exc
+        require_asset_registration(actor, original)
+        raise ValidationError("此新建页面已用于暂存草稿，请从原资产详情办理建立资产。当前输入已保留。")
     asset = create_asset_draft(
         actor=actor, company=company, data=data, custom_values=custom_values, request=request,
     )

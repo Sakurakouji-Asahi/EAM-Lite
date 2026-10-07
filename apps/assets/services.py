@@ -344,15 +344,84 @@ def create_asset_draft(
     custom_values=None,
     initialization_source="manual",
     request=None,
+    idempotency_key=None,
 ):
     from apps.assets.models import Asset
 
     company = _require_current_company(company)
+    if idempotency_key is not None:
+        from apps.masterdata.models import Company
+
+        # Serialize browser create requests before reading their audit result.
+        # Revalidate after waiting: the active company may have changed meanwhile.
+        company = Company.objects.select_for_update().get(pk=company.pk)
+        _require_current_company(company)
     _require_initialization_completed(company)
     if initialization_source not in {"manual", "excel_import"}:
         raise ValidationError(
             {"initialization_source": "初始化来源只能是手工录入或受控 Excel 导入。"}
         )
+    idempotency_metadata = {}
+    if idempotency_key is not None:
+        from apps.assets.models import AssetRegistration
+        from apps.assets.registration import (
+            _fingerprint, _key, _reject_reversed_key, require_asset_registration,
+        )
+        from apps.audit.models import AuditLog, OperationUndo
+
+        if not can_create_asset_draft(actor, company, data.get("department")):
+            raise PermissionDenied("您没有在此范围新建资产草稿的权限。")
+        key = _key(idempotency_key)
+        digest = _fingerprint({
+            "operation": "create_asset_draft", "data": data,
+            "custom_values": custom_values or {},
+            "initialization_source": initialization_source,
+        })
+        existing = AuditLog.objects.filter(
+            company=company, action="asset_draft_create", object_type="Asset",
+            new_data_json__idempotency_key=key,
+        ).order_by("created_at", "pk").first()
+        if existing is not None:
+            # The original target may have been edited, registered or removed.
+            # A retry returns it under its current scope; it never recreates it.
+            try:
+                # Replays only read: do not add an Asset lock to the company
+                # serialization lock or join existing update/delete lock chains.
+                asset = Asset.objects.get(
+                    pk=existing.object_id, company=company
+                )
+            except (Asset.DoesNotExist, TypeError, ValueError) as exc:
+                raise ValidationError("原草稿请求的结果记录已不存在，请重新打开新建页面后核对。") from exc
+            require_view_asset(actor, asset)
+            if not can_create_asset_draft(actor, company, asset.department):
+                raise PermissionDenied("您没有在原资产当前范围保存草稿的权限。")
+            if existing.new_data_json.get("request_hash") != digest:
+                raise ValidationError("同一草稿请求已用于不同资料，请重新打开新建页面后核对。当前输入已保留。")
+            return asset
+        # A create-page key is consumed by its first successful action. The
+        # company lock makes this check atomic with either action's first save.
+        registered = AssetRegistration.objects.select_related(
+            "asset__company", "asset__department",
+        ).filter(company=company, idempotency_key=key).first()
+        if registered is not None:
+            require_asset_registration(actor, registered.asset)
+            raise ValidationError("此新建页面已用于建立资产，请从原资产详情查看或补充资料。当前输入已保留。")
+        # Undo removes AssetRegistration but preserves the immutable old key.
+        # Recheck any surviving original target before revealing this refusal.
+        try:
+            _reject_reversed_key(company, key)
+        except ValidationError:
+            plans = OperationUndo.objects.filter(original_log__company=company).exclude(
+                plan_json={},
+            ).values_list("plan_json", flat=True)
+            for plan in plans:
+                if key in plan.get("registration_keys", []):
+                    for saved in plan.get("assets", []):
+                        original = Asset.objects.filter(pk=saved["id"], company=company).first()
+                        if original is not None:
+                            require_asset_registration(actor, original)
+            raise
+        idempotency_metadata = {"idempotency_key": key, "request_hash": digest}
     _validate_create_scope(actor, company, data)
     asset = _apply_asset_data(Asset(company=company), data)
     asset.asset_status = Asset.AssetStatus.DRAFT
@@ -376,6 +445,7 @@ def create_asset_draft(
             "asset_status": "draft",
             "initialization_source": initialization_source,
             "custom_values": _custom_values_snapshot(asset),
+            **idempotency_metadata,
         },
         request=request,
     )
@@ -414,13 +484,19 @@ def update_asset_equipment_number(
 
 @transaction.atomic
 def update_asset_draft(
-    *, actor, asset, data, custom_values=None, request=None
+    *, actor, asset, data, custom_values=None, expected_revision=None, request=None
 ):
     from apps.assets.models import Asset
 
     asset = _lock_current_asset(asset)
     _require_initialization_completed(asset.company)
     require_edit_asset_draft(actor, asset)
+    if expected_revision is not None:
+        from apps.assets.draft_revision import asset_draft_revision_snapshot
+
+        if asset_draft_revision_snapshot(asset) != expected_revision:
+            raise ValidationError({"expected_revision":
+                "这份草稿已被其他操作更新，本次没有保存。请重新打开最新编辑页面，核对后再提交。"})
     old = _snapshot(asset)
     old["custom_values"] = _custom_values_snapshot(asset)
     old_scope = (

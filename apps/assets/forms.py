@@ -32,6 +32,9 @@ from apps.masterdata.models import (
     Location,
 )
 from apps.masterdata.permissions import resolve_department_ids, role_names_for
+from apps.assets.draft_revision import (
+    ASSET_EDIT_REVISION_SALT, asset_edit_revision_token, decode_asset_edit_revision,
+)
 
 
 def _bootstrap_widgets(form):
@@ -47,6 +50,10 @@ def _bootstrap_widgets(form):
 
 
 class AssetDraftForm(forms.ModelForm):
+    expected_revision = forms.CharField(
+        widget=forms.HiddenInput, required=False, label="编辑页面版本",
+        error_messages={"required": "编辑页面版本缺失，请重新打开最新编辑页面后核对。"},
+    )
     idempotency_key = forms.CharField(
         widget=forms.HiddenInput, initial=uuid.uuid4, required=False, max_length=200,
         label="页面校验信息",
@@ -116,13 +123,19 @@ class AssetDraftForm(forms.ModelForm):
             "equipment_number": "填写设备已有编号；系统自动生成的资产编号单独保留。",
         }
 
-    def __init__(self, *args, actor=None, company=None, registration_requested=False, **kwargs):
+    def __init__(self, *args, actor=None, company=None, registration_requested=False,
+                 require_edit_revision=False, require_create_key=False, **kwargs):
         if actor is None or company is None:
             raise PermissionDenied("资产表单必须绑定当前操作用户和公司。")
         self.actor = actor
         self.company = company
+        self.require_edit_revision = require_edit_revision
+        self.registration_requested = registration_requested
         super().__init__(*args, **kwargs)
-        self.fields["idempotency_key"].required = registration_requested
+        self.fields["expected_revision"].required = require_edit_revision
+        if not require_edit_revision:
+            self.fields.pop("expected_revision")
+        self.fields["idempotency_key"].required = registration_requested or require_create_key
         # ModelForm runs ``Asset.clean()`` before the Service executes; bind
         # the immutable company boundary now so cross-company validation is
         # accurate for a new unsaved draft.
@@ -202,6 +215,14 @@ class AssetDraftForm(forms.ModelForm):
         else:
             self._forbidden_post_fields = []
 
+    def clean_expected_revision(self):
+        if not self.require_edit_revision:
+            return None
+        return decode_asset_edit_revision(
+            token=self.cleaned_data["expected_revision"], actor=self.actor,
+            company=self.company, asset=self.instance,
+        )
+
     def clean_quantity(self):
         if self.cleaned_data.get("quantity") != 1:
             raise ValidationError("V1 每条资产记录数量必须为 1。")
@@ -249,10 +270,10 @@ class AssetDraftForm(forms.ModelForm):
                 requested_coding_scheme=self.instance.requested_coding_scheme)
             try:
                 scheme = _resolve_coding_scheme(asset=candidate, effective_date=timezone.localdate(), lock=False)
-                if is_standard_segments(validate_scheme_structure(scheme)) and self.fields["idempotency_key"].required:
+                if is_standard_segments(validate_scheme_structure(scheme)) and self.registration_requested:
                     _prepare_identity_parts(actor=self.actor, asset=candidate, lock_parent=False)
             except ValidationError as exc:
-                if self.fields["idempotency_key"].required:
+                if self.registration_requested:
                     if hasattr(exc, "message_dict"):
                         for field, errors in exc.message_dict.items():
                             self.add_error(field if field in self.fields else None, errors)
@@ -308,8 +329,12 @@ class RequestedCodingSchemeForm(forms.Form):
         _bootstrap_widgets(self)
 
 
-def _build_custom_value_field(custom_field):
-    common = {"label": custom_field.name, "required": custom_field.required}
+def _build_custom_value_field(custom_field, *, enforce_required=True):
+    common = {
+        "label": custom_field.name,
+        "required": custom_field.required and enforce_required,
+        "help_text": "建立资产时必填；暂存草稿时可以后补。" if custom_field.required else "",
+    }
     field_type = custom_field.field_type
     if field_type == AssetCustomField.FieldType.TEXT:
         return forms.CharField(**common)
@@ -338,12 +363,17 @@ def _build_custom_value_field(custom_field):
 class AssetCustomValueForm(forms.Form):
     """One typed value form bound to a concrete approved custom field."""
 
-    def __init__(self, *args, custom_field=None, **kwargs):
+    def __init__(self, *args, custom_field=None, enforce_required=True, **kwargs):
         if custom_field is None or not custom_field.is_active:
             raise ValidationError("动态字段不存在或已停用。")
         self.custom_field = custom_field
         super().__init__(*args, **kwargs)
-        self.fields["value"] = _build_custom_value_field(custom_field)
+        initial_value = self.initial.get("value")
+        if custom_field.field_type == AssetCustomField.FieldType.BOOLEAN and isinstance(initial_value, bool):
+            self.initial["value"] = "true" if initial_value else "false"
+        self.fields["value"] = _build_custom_value_field(
+            custom_field, enforce_required=enforce_required
+        )
         _bootstrap_widgets(self)
 
 

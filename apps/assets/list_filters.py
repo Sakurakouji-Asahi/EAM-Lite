@@ -8,6 +8,7 @@ from django.db.models.functions import Cast, Coalesce
 
 from apps.assets.models import Asset, AssetQrIdentity, AttachmentLink
 from apps.assets.classification import individual_durable_filter
+from apps.assets.code_lookup import filter_lookup_codes, normalize_lookup_codes
 from apps.assets.permissions import ASSET_GLOBAL_P1_VIEW_ROLES, can_view_financial_fields, scoped_assets, scoped_assets_p1
 from apps.masterdata.models import AssetCategory, Department, Employee, FixedAssetCategory, Location
 from apps.masterdata.location_tree import LocationTree
@@ -15,7 +16,7 @@ from apps.masterdata.hierarchy import descendant_ids
 from apps.masterdata.permissions import role_names_for, scoped_departments, scoped_employees
 
 FILTER_LABELS = {
-    "q": "搜索", "category": "实物分类", "department": "部门",
+    "q": "搜索", "codes": "批量编号", "category": "实物分类", "department": "部门",
     "employee": "责任人", "location": "位置", "asset_status": "资产状态",
     "record_status": "显示范围", "accounting_treatment": "会计认定",
     "fixed_asset_category": "固定资产类别", "view": "资产视图",
@@ -48,6 +49,7 @@ def normalize_list_filters(data, *, actor, company):
             raise ValidationError({key: f"{FILTER_LABELS[key]}无效。"})
     if len(clean["q"]) > 200:
         raise ValidationError({"q": "搜索内容不能超过 200 个字符。"})
+    clean["codes"] = normalize_lookup_codes(clean["codes"])
     for key, (model, _) in MODEL_FILTERS.items():
         if clean[key]:
             candidates = model.objects.filter(company=company)
@@ -99,6 +101,8 @@ def filter_asset_list(queryset, filters, *, actor, company):
     qs = queryset.filter(company=company, record_status=filters.get("record_status") or "active")
     p1_ids = scoped_assets_p1(actor, company).values("pk")
     all_p1 = not qs.exclude(pk__in=p1_ids).exists()
+    if filters.get("codes"):
+        qs = filter_lookup_codes(qs, filters["codes"], include_equipment=all_p1)
     query = filters.get("q", "")
     if query:
         search = Q(asset_code__icontains=query) | Q(asset_name__icontains=query) | Q(responsible_employee__name__icontains=query)
@@ -160,6 +164,8 @@ def describe_list_filters(filters, *, company):
         if not value or key not in FILTER_LABELS:
             continue
         label = CHOICES.get(key, {}).get(value, value)
+        if key == "codes":
+            label = "、".join(value.splitlines())
         if key in MODEL_FILTERS:
             item = MODEL_FILTERS[key][0].objects.filter(company=company, pk=value).first()
             label = LocationTree(company).path(item.pk) if item and key == "location" else str(item) if item else value

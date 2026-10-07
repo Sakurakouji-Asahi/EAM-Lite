@@ -34,6 +34,18 @@ class LabelQueueFilterForm(forms.Form):
             )
 
 
+class LabelBatchFilterForm(forms.Form):
+    q = forms.CharField(
+        label="查找本批次资产", max_length=200, required=False,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "编号、设备编号、名称或部门快照"}),
+    )
+    work = forms.ChoiceField(
+        label="贴标范围", required=False,
+        choices=(("", "全部标签"), ("pending", "待确认贴标"), ("attached", "已确认贴标"), ("inactive", "已失效标签")),
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+
 class LabelPrintForm(forms.Form):
     asset_ids = forms.MultipleChoiceField(
         label="资产", widget=forms.CheckboxSelectMultiple,
@@ -98,6 +110,16 @@ class TokenRotationForm(forms.Form):
     )
     reason = forms.ChoiceField(label="换标原因", choices=REASONS)
     explanation = forms.CharField(label="说明", widget=forms.Textarea)
+    expected_qr_identity_id = forms.UUIDField(
+        label="本次确认的标签", widget=forms.HiddenInput,
+        error_messages={"required": "换标页面缺少标签确认信息，请重新打开页面。",
+                        "invalid": "标签确认信息无效，请重新打开换标页面。"},
+    )
+
+    def __init__(self, *args, expected_qr_identity_id=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not self.is_bound and expected_qr_identity_id is not None:
+            self.initial["expected_qr_identity_id"] = expected_qr_identity_id
 
     def clean_explanation(self):
         value = (self.cleaned_data.get("explanation") or "").strip()

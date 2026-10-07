@@ -22,6 +22,10 @@ from django.views.decorators.debug import sensitive_post_parameters
 from django.views.decorators.http import require_http_methods, require_POST
 
 from apps.assets.bulk_support import MAX_BULK_ASSETS
+from apps.assets.label_batch_workspace import (
+    LabelBatchListFilterForm, annotate_label_progress, filter_label_progress,
+    label_batch_detail_url, label_batch_navigation, label_list_query,
+)
 from apps.assets.models import (
     Asset,
     AssetLabelPrintBatch,
@@ -37,6 +41,7 @@ from apps.assets.permissions import (
 )
 from apps.assets.qr_forms import (
     LabelAttachmentForm,
+    LabelBatchFilterForm,
     LabelPrintForm,
     LabelQueueFilterForm,
     PrintResultForm,
@@ -368,8 +373,11 @@ def label_batch_list(request):
         )
         .filter(forbidden_item_count=0)
     )
-    query = request.GET.get("q", "").strip()
-    status = request.GET.get("status", "").strip()
+    form = LabelBatchListFilterForm(request.GET)
+    valid = form.is_valid()
+    query = form.cleaned_data.get("q", "") if valid else ""
+    status = form.cleaned_data.get("status", "") if valid else ""
+    batches = annotate_label_progress(batches)
     if query:
         matched = AssetLabelPrintItem.objects.filter(
             Q(qr_identity__asset__asset_code__icontains=query) | Q(qr_identity__asset__equipment_number__icontains=query)
@@ -377,9 +385,15 @@ def label_batch_list(request):
         batches = batches.filter(Q(batch_code__icontains=query) | Q(pk__in=matched))
     if status:
         batches = batches.filter(status=status) if status in AssetLabelPrintBatch.Status.values else batches.none()
+    batches = filter_label_progress(batches, form.cleaned_data["progress"]) if valid else batches.none()
     page, pagination_query = paginate_query(request,batches.order_by("-created_at","pk"))
+    list_query = label_list_query(request.GET.urlencode())
+    for batch in page:
+        batch.detail_url = label_batch_detail_url(batch, list_query)
+        batch.pending_url = label_batch_detail_url(batch, list_query, pending=True)
     return render(request,"assets/qr_batch_list.html",{"batches":page,"page_obj":page,"pagination_query":pagination_query,
-        "query":query,"selected_status":status,"status_choices":AssetLabelPrintBatch.Status.choices})
+        "filter_form": form, "query":query,"selected_status":status,"status_choices":AssetLabelPrintBatch.Status.choices},
+        status=200 if valid else 400)
 
 
 @require_http_methods(["GET"])
@@ -394,10 +408,53 @@ def label_batch_detail(request, pk):
             "page_no", "position_no"
         )
     )
+    counts = {"total": len(items), "pending": 0, "attached": 0, "inactive": 0, "waiting": 0}
+    state_labels = {"pending": "待确认贴标", "attached": "已确认贴标", "inactive": "已失效", "waiting": "尚不可贴标"}
+    for item in items:
+        if item.qr_identity.status != "active":
+            state = "inactive"
+        elif item.qr_identity.label_status == "attached":
+            state = "attached"
+        elif batch.status == "printed" and item.qr_identity.label_status == "printed":
+            state = "pending"
+        else:
+            state = "waiting"
+        item.label_work_state = state
+        item.label_work_label = state_labels[state]
+        counts[state] += 1
+    can_open_print_view = batch.status == "printed" and bool(items) and all(
+        item.qr_identity.status == "active" and item.qr_identity.label_status in {"ready_to_print", "printed"}
+        for item in items
+    )
+    form = LabelBatchFilterForm(request.GET)
+    valid = form.is_valid()
+    if valid:
+        query = form.cleaned_data["q"].casefold()
+        work = form.cleaned_data["work"]
+        if query:
+            items = [item for item in items if any(query in str(value or "").casefold() for value in (
+                item.label_snapshot_json.get("asset_code"), item.label_snapshot_json.get("asset_name"),
+                item.label_snapshot_json.get("department"), item.qr_identity.asset.equipment_number,
+            ))]
+        if work:
+            items = [item for item in items if item.label_work_state == work]
+    else:
+        items = []
+    links = {}
+    summary_params = request.GET.copy()
+    summary_params.pop("page", None)
+    for work in ("", "pending", "attached", "inactive"):
+        summary_params["work"] = work
+        links[work or "total"] = "?" + summary_params.urlencode()
+    navigation = label_batch_navigation(request.GET.get("list_query", ""))
     return render(
         request,
         "assets/qr_batch_detail.html",
-        {"batch": batch, "items": items, "result_form": PrintResultForm()},
+        {"batch": batch, "items": items, "result_form": PrintResultForm(), "filter_form": form,
+         **navigation, "filter_hidden_fields": {"list_query": navigation["label_list_query"]},
+         "filter_reset_url": label_batch_detail_url(batch, navigation["label_list_query"]),
+         "label_counts": counts, "label_links": links, "can_open_print_view": can_open_print_view},
+        status=200 if valid else 400,
     )
 
 
@@ -918,7 +975,19 @@ def qr_web_attach(request, pk):
         status=AssetQrIdentity.Status.ACTIVE,
     )
     first_attachment = asset.asset_status == Asset.AssetStatus.PENDING_LABEL
+    return_batch = None
+    batch_value = (request.POST if request.method == "POST" else request.GET).get("return_batch", "")
+    if batch_value:
+        try:
+            batch_id = UUID(batch_value)
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise Http404("打印批次无效。") from exc
+        return_batch = _batch_for_user(request.user, company, batch_id)
+        if return_batch.status != "printed" or not return_batch.items.filter(qr_identity=qr_identity).exists():
+            raise Http404("当前标签不属于此打印批次。")
     can_confirm = qr_identity.label_status == AssetQrIdentity.LabelStatus.PRINTED
+    navigation = label_batch_navigation((request.POST if request.method == "POST" else request.GET).get("list_query", ""))
+    return_batch_url = label_batch_detail_url(return_batch, navigation["label_list_query"], pending=True) if return_batch else ""
     form = WebLabelAttachmentForm(
         request.POST or None,
         first_attachment=first_attachment,
@@ -962,6 +1031,8 @@ def qr_web_attach(request, pk):
                 _service_error(form, exc)
             else:
                 messages.success(request, "Web 端贴标确认已完成，并已记录操作方式和审计。")
+                if return_batch:
+                    return redirect(return_batch_url)
                 return redirect("assets:asset-detail", pk=asset.pk)
     response = render(
         request,
@@ -973,6 +1044,9 @@ def qr_web_attach(request, pk):
             "first_attachment": first_attachment,
             "can_confirm": can_confirm,
             "location_path": _location_path(asset.location),
+            "return_batch": return_batch,
+            **navigation,
+            "return_batch_url": return_batch_url,
         },
         status=400 if request.method == "POST" and form.errors else 200,
     )
@@ -992,7 +1066,10 @@ def qr_rotate(request, pk):
     current_identity = get_object_or_404(
         AssetQrIdentity, asset=asset, status=AssetQrIdentity.Status.ACTIVE
     )
-    form = TokenRotationForm(request.POST or None)
+    form = TokenRotationForm(
+        request.POST if request.method == "POST" else None,
+        expected_qr_identity_id=current_identity.pk,
+    )
     if request.method == "POST" and form.is_valid():
         reason = f"{form.cleaned_data['reason']}：{form.cleaned_data['explanation']}"
         try:
@@ -1001,6 +1078,7 @@ def qr_rotate(request, pk):
                 asset=asset,
                 reason=reason,
                 request=request,
+                expected_qr_identity_id=form.cleaned_data["expected_qr_identity_id"],
             )
         except (PermissionDenied, ValidationError) as exc:
             _service_error(form, exc)
