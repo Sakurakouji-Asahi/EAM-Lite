@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% load static %}
 {% block title %}财务确认 - EAM-Lite{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/pending-finance.css' %}?v=20261004">{% endblock %}
 {% block content %}
 <header class="app-page-header">
   <div><h1 class="h3 mb-1">财务待确认</h1><p class="text-secondary mb-0">实物资产可以先建立和使用。资料齐备后确认会计认定及折旧设置。</p></div>
@@ -10,13 +11,16 @@
     {% for field in filter_form %}
     <div class="col-12 col-md-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% for error in field.errors %}<div class="text-danger small" role="alert">{{ error }}</div>{% endfor %}</div>
     {% endfor %}
-    <div class="col-12 col-md-3 d-flex gap-2"><button class="btn btn-primary" type="submit">查询</button><a class="btn btn-outline-secondary" href="{% url 'finance:pending-list' %}">清除筛选</a></div>
+    <div class="col-12 col-md-3 d-flex flex-wrap gap-2"><button class="btn btn-primary" type="submit">查询</button><a class="btn btn-outline-secondary" href="{% url 'finance:pending-list' %}">清除筛选</a></div>
   </div>
 </form>
+{% if pending_filter_summary %}<div class="d-flex flex-wrap align-items-center gap-2 mb-3" aria-label="已应用筛选"><span class="small text-secondary">已应用：</span>{% for filter in pending_filter_summary %}<a class="btn btn-sm btn-outline-secondary pending-filter-chip" href="{{ filter.remove_url }}" aria-label="取消{{ filter.label }}">{{ filter.label }} <span aria-hidden="true">×</span></a>{% endfor %}</div>{% endif %}
+{% if pending_status_cards %}<nav class="pending-status-cards mb-2" aria-label="按财务资料状态查找">{% for card in pending_status_cards %}<a href="{{ card.url }}" class="pending-status-card{% if card.active %} is-active{% endif %}"{% if card.active %} aria-current="page"{% endif %}><span>{{ card.label }}</span><strong>{{ card.count }}</strong></a>{% endfor %}</nav><p class="small text-secondary mb-3">数量沿用当前搜索、部门和导入批次条件。“已保存”表示已有财务草稿，确认前仍需核对金额与折旧参数。</p>{% endif %}
 {% if can_manage %}
 <div id="bulk-workspace" data-selection-key="{{ selection_key }}">
 <form method="post" action="{% url 'finance:bulk-confirmation' %}" id="bulk-selection-form" data-filtered-selection="true">{% csrf_token %}
 <input type="hidden" name="action" value="preview">
+<input type="hidden" name="pending_query" value="{{ pending_query }}">
 {% for key,value in bulk_filters.items %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
 <div class="card card-body mb-3">
 <strong class="mb-2">批量财务确认</strong>
@@ -35,10 +39,10 @@
         <td>{{ asset.asset_code|default:asset.draft_number }}</td><td>{{ asset.asset_name }}</td><td>{{ asset.category }}</td><td>{{ asset.department|default:"—" }}</td><td>{{ asset.responsible_employee|default:"—" }}</td><td>{{ asset.acquisition_date|date:"Y-m-d"|default:"—" }}</td>
         <td>{% if asset.registration %}{{ asset.registration.registered_at|date:"Y-m-d H:i" }}{% else %}尚未正式建档{% endif %}</td>
         <td>{% if asset.finance_missing_fields %}<span class="text-warning-emphasis">{{ asset.finance_missing_fields|join:"、" }}</span>{% else %}待财务复核{% endif %}</td>
-        <td>{% if can_manage %}<a class="btn btn-sm btn-primary text-nowrap" href="{% url 'finance:finance-confirm' asset.pk %}">确认财务与折旧</a>{% else %}<a class="btn btn-sm btn-outline-primary text-nowrap" href="{% url 'assets:asset-detail' asset.pk %}">查看实物资料</a>{% endif %}</td>
+        <td>{% if can_manage %}<a class="btn btn-sm btn-primary text-nowrap" href="{{ asset.finance_confirm_url }}">确认财务与折旧</a>{% else %}<a class="btn btn-sm btn-outline-primary text-nowrap" href="{% url 'assets:asset-detail' asset.pk %}">查看实物资料</a>{% endif %}</td>
       </tr>
       {% empty %}
-      <tr><td colspan="{% if can_manage %}10{% else %}9{% endif %}"><div class="app-empty-state"><strong>{% if pagination_query or filter_form.errors %}没有符合条件的待确认资产{% else %}当前没有财务待确认{% endif %}</strong><span>已建立但尚未确认折旧的资产会出现在这里。</span><a class="btn btn-sm btn-outline-primary" href="{% url 'assets:asset-list' %}">查看资产总账</a></div></td></tr>
+      <tr><td colspan="{% if can_manage %}10{% else %}9{% endif %}"><div class="app-empty-state"><strong>{% if has_pending_filters or filter_form.errors %}没有符合条件的待确认资产{% else %}当前没有财务待确认{% endif %}</strong><span>已建立但尚未确认折旧的资产会出现在这里。</span>{% if has_pending_filters or filter_form.errors %}<a class="btn btn-sm btn-outline-primary" href="{% url 'finance:pending-list' %}">清除筛选，查看全部待确认</a>{% endif %}<a class="btn btn-sm btn-outline-primary" href="{% url 'assets:asset-list' %}">查看资产总账</a></div></td></tr>
       {% endfor %}
     </tbody>
   </table>

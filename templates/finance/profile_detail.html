@@ -1,0 +1,17 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}折旧参数 v{{ profile.version }} - EAM-Lite{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/finance-profile-history.css' %}?v=20261004">{% endblock %}
+{% block content %}
+  <div class="finance-profile-history">
+    <header class="app-page-header"><div><h1 class="h3 mb-1">折旧参数 v{{ profile.version }}</h1><p class="text-secondary mb-0">{{ asset.asset_code }} / {{ asset.asset_name }}</p></div><a class="btn btn-outline-secondary" href="{{ profile_return_url }}">返回财务资料与原查询</a></header>
+    <nav class="d-flex flex-wrap gap-2 mb-3" aria-label="相邻存档参数版本">{% if previous_profile %}<a class="btn btn-outline-primary" href="{{ previous_profile_url }}">上一存档版本 v{{ previous_profile.version }}</a>{% endif %}{% if next_profile %}<a class="btn btn-outline-primary" href="{{ next_profile_url }}">下一存档版本 v{{ next_profile.version }}</a>{% endif %}</nav>
+    <section class="card shadow-sm mb-3" aria-labelledby="profile-source-title"><div class="card-body"><h2 class="h5" id="profile-source-title">版本记录</h2><dl class="row mb-0"><dt class="col-sm-4">状态</dt><dd class="col-sm-8">{{ profile.get_status_display }}</dd><dt class="col-sm-4">生效区间</dt><dd class="col-sm-8">{{ profile.effective_from|date:'Y-m-d' }} 至 {{ profile.effective_to|date:'Y-m-d'|default:'未设截止日' }}</dd><dt class="col-sm-4">记录时间</dt><dd class="col-sm-8">{{ profile.created_at|date:'Y-m-d H:i' }}</dd><dt class="col-sm-4">记录人</dt><dd class="col-sm-8">{{ profile.created_by|default:'未记录' }}</dd><dt class="col-sm-4">变更原因</dt><dd class="col-sm-8">{% if profile.change_reason %}{{ profile.change_reason|linebreaksbr }}{% else %}未记录变更原因{% endif %}</dd></dl></div></section>
+    {% if previous_profile %}
+      <section class="card shadow-sm mb-3" aria-labelledby="profile-changes-title"><div class="card-body"><h2 class="h5" id="profile-changes-title">与上一存档版本 v{{ previous_profile.version }} 对照</h2><p class="small text-secondary">上一版本生效区间：{{ previous_profile.effective_from|date:'Y-m-d' }} 至 {{ previous_profile.effective_to|date:'Y-m-d'|default:'未设截止日' }}，状态：{{ previous_profile.get_status_display }}。</p><p class="text-secondary">以下核对已保存的 {{ parameter_rows|length }} 项参数，其中 {{ changed_rows|length }} 项变化。版本状态和生效区间单独展示，不计入参数变化数量。</p>{% if changed_rows %}{% include 'finance/_profile_parameter_rows.html' with rows=changed_rows %}{% else %}<p class="mb-0">参数值与上一存档版本一致；可在版本记录中核对生效区间和变更原因。</p>{% endif %}</div></section>
+      {% if unchanged_rows %}<details class="card shadow-sm"><summary class="card-body fw-semibold">展开未变化的 {{ unchanged_rows|length }} 项参数</summary><div class="card-body pt-0">{% include 'finance/_profile_parameter_rows.html' with rows=unchanged_rows %}</div></details>{% endif %}
+    {% else %}
+      <section class="card shadow-sm" aria-labelledby="profile-parameters-title"><div class="card-body"><h2 class="h5" id="profile-parameters-title">已保存参数</h2><p class="text-secondary">这是当前可查的首个存档版本，没有上一存档版本可对照。</p>{% include 'finance/_profile_parameter_rows.html' with rows=parameter_rows %}</div></section>
+    {% endif %}
+  </div>
+{% endblock %}

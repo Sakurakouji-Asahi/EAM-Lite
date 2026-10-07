@@ -1,9 +1,18 @@
-{% extends "base.html" %}
+{% extends 'base.html' %}
+{% load static %}
 {% block title %}理论历史折旧参考 - EAM-Lite{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/finance-theoretical.css' %}?v=20261004">{% endblock %}
 {% block content %}
-  <nav aria-label="面包屑"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="{% url 'finance:asset-finance-detail' asset.pk %}">{{ asset }}</a></li><li class="breadcrumb-item active">理论历史试算</li></ol></nav>
-  <h1 class="h3 mb-3">理论历史折旧参考</h1>
-  <div class="alert alert-warning">该结果只作财务参考，永不覆盖期初实际累计折旧或已确认分录。</div>
-  <dl class="row"><dt class="col-sm-3">截至日期</dt><dd class="col-sm-9">{{ run.as_of_date }}</dd><dt class="col-sm-3">状态</dt><dd class="col-sm-9">{{ run.get_status_display }}</dd><dt class="col-sm-3">请求时间</dt><dd class="col-sm-9">{{ run.requested_at|date:"Y-m-d H:i" }}</dd></dl>
-  <div class="table-responsive shadow-sm"><table class="table table-sm mb-0"><thead><tr><th>期间</th><th>理论折旧</th><th>理论累计</th><th>理论净值</th></tr></thead><tbody>{% for line in lines %}<tr><td>{{ line.period_start|date:"Y-m-d" }} 至 {{ line.period_end_inclusive|date:"Y-m-d" }}</td><td>{{ line.theoretical_amount }}</td><td>{{ line.theoretical_accumulated }}</td><td>{{ line.theoretical_book_value }}</td></tr>{% empty %}<tr><td colspan="4" class="text-center text-secondary">截至该日期没有理论期间。</td></tr>{% endfor %}</tbody></table></div>
+<header class="app-page-header"><div><h1 class="h3 mb-1">理论历史折旧参考</h1><p class="mb-0">{{ asset.asset_code }} · {{ asset.asset_name }}</p></div><div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-primary" href="{{ theory_return_url }}">返回试算记录</a><a class="btn btn-outline-secondary" href="{% url 'finance:asset-finance-detail' asset.pk %}">财务资料</a></div></header>
+<div class="alert alert-warning">该结果只作财务参考，永不覆盖期初实际累计折旧或已确认分录。</div>
+<section class="card card-body mb-3 theory-record-identity" aria-labelledby="theory-result-heading">
+  <h2 class="h5" id="theory-result-heading">已保存的试算结果</h2>
+  <dl class="row mb-0"><dt class="col-sm-3">试算截止日期</dt><dd class="col-sm-9">{{ run.as_of_date|date:'Y-m-d' }}</dd><dt class="col-sm-3">状态</dt><dd class="col-sm-9">{{ run.get_status_display }}</dd><dt class="col-sm-3">生成时间 / 人员</dt><dd class="col-sm-9">{{ run.requested_at|date:'Y-m-d H:i:s' }} · {{ run.requested_by|default:'历史账号' }}</dd><dt class="col-sm-3">记录编号</dt><dd class="col-sm-9">{{ run.pk }}</dd>
+  <dt class="col-sm-3">已保存期间数</dt><dd class="col-sm-9">{{ theory_result.period_count }}</dd>
+  {% if theory_result.completed %}<dt class="col-sm-3">本次试算折旧合计</dt><dd class="col-sm-9">{{ theory_result.amount }}</dd>
+  {% if theory_result.through %}<dt class="col-sm-3">末期截至日期</dt><dd class="col-sm-9">{{ theory_result.through|date:'Y-m-d' }}</dd><dt class="col-sm-3">末期理论累计折旧</dt><dd class="col-sm-9">{{ theory_result.accumulated }}</dd><dt class="col-sm-3">末期理论净值</dt><dd class="col-sm-9">{{ theory_result.book_value }}</dd>{% else %}<dt class="col-sm-3">末期余额</dt><dd class="col-sm-9">无期间记录，未推算余额。</dd>{% endif %}
+  {% else %}<dt class="col-sm-3">结果说明</dt><dd class="col-sm-9">该记录未完成，暂无完整试算结果。</dd>{% endif %}</dl>
+</section>
+<details class="card card-body mb-3"><summary class="fw-semibold">查看本次保存的参数</summary><dl class="row mt-3 mb-0 theory-record-identity">{% for row in theory_parameters %}<dt class="col-sm-4">{{ row.label }}</dt><dd class="col-sm-8">{{ row.value }}</dd>{% empty %}<dd class="col-12">没有保存参数。</dd>{% endfor %}</dl></details>
+<section class="card shadow-sm"><div class="card-header"><h2 class="h5 mb-0">逐期明细</h2></div><div class="table-responsive" data-scroll-table role="region" aria-label="试算逐期明细"><table class="table mb-0 theory-lines-table"><thead><tr><th>期间</th><th class="text-end">理论折旧</th><th class="text-end">理论累计</th><th class="text-end">理论净值</th></tr></thead><tbody>{% for line in lines %}<tr><td>{{ line.period_start|date:'Y-m-d' }} 至 {{ line.period_end_inclusive|date:'Y-m-d' }}</td><td class="text-end">{{ line.theoretical_amount }}</td><td class="text-end">{{ line.theoretical_accumulated }}</td><td class="text-end">{{ line.theoretical_book_value }}</td></tr>{% empty %}<tr><td colspan="4" class="text-center text-secondary py-4">该记录没有保存期间明细。</td></tr>{% endfor %}</tbody></table></div></section>
 {% endblock %}

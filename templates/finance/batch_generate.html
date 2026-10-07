@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% block title %}生成折旧批次试算{% endblock %}
 {% block content %}
-<header class="app-page-header"><div><h1 class="h3 mb-1">生成折旧批次试算</h1><p class="text-secondary mb-0">期间填写月初至月末，包含结束当天。生成试算后核对明细，再确认过账。</p></div><a class="btn btn-outline-secondary" href="{% url 'finance:batch-list' %}">返回折旧批次</a></header>
+<header class="app-page-header"><div><h1 class="h3 mb-1">生成折旧批次试算</h1><p class="text-secondary mb-0">期间填写月初至月末，包含结束当天。生成试算后核对明细，再确认过账。</p></div><a class="btn btn-outline-secondary" href="{{ batch_return_url }}">返回折旧批次{% if batch_query %}（保留筛选）{% endif %}</a></header>
 <form method="post" novalidate data-unsaved-guard="{% if request.method == 'POST' %}true{% else %}false{% endif %}">{% csrf_token %}
+<input type="hidden" name="batch_query" value="{{ batch_query }}">
 <section class="card card-body mb-3">
 {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
 <div class="row g-3">{% for field in form %}{% if field.is_hidden %}{{ field }}{% else %}<div class="col-md-6"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% for error in field.errors %}<div class="text-danger">{{ error }}</div>{% endfor %}</div>{% endif %}{% endfor %}</div>

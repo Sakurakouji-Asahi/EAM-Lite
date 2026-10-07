@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}折旧分录来源 - EAM-Lite{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/finance-entry-history.css' %}?v=20261004">{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3 mb-1">折旧分录来源</h1><p class="text-secondary mb-0">{{ asset.asset_code }} · {{ asset.asset_name }}{% if asset.equipment_number %} · 设备编号 {{ asset.equipment_number }}{% endif %}</p></div><a class="btn btn-outline-secondary" href="{{ entry_return_url }}">返回原分录查询</a></header>
+{% if entry.reversal_of_id %}<div class="alert alert-warning">这是一笔冲销分录，原分录继续保留。下方金额与余额按该笔记账记录展示。</div>{% elif entry_relations %}<div class="alert alert-secondary">该分录已有对应冲销记录，两笔历史均保留，可在下方相互查看。</div>{% endif %}
+<div class="row g-3 finance-entry-details"><section class="col-12 col-lg-6"><div class="card h-100"><div class="card-header"><h2 class="h6 mb-0">该笔记账记录</h2></div><div class="card-body"><dl class="row mb-0">
+  <dt class="col-sm-5">记账日期</dt><dd class="col-sm-7">{{ entry.entry_date|date:'Y-m-d' }}</dd>
+  <dt class="col-sm-5">所属期间</dt><dd class="col-sm-7">{{ entry.period_start|date:'Y-m-d' }} 至 {{ entry.period_end_inclusive|date:'Y-m-d' }}</dd>
+  <dt class="col-sm-5">分录金额（元）</dt><dd class="col-sm-7 fw-semibold">{{ entry.amount|floatformat:2 }}</dd>
+  <dt class="col-sm-5">记账后累计折旧（元）</dt><dd class="col-sm-7">{{ entry.accumulated_depreciation_after|floatformat:2 }}</dd>
+  <dt class="col-sm-5">记账后净值（元）</dt><dd class="col-sm-7">{{ entry.book_value_after|floatformat:2 }}</dd>
+  <dt class="col-sm-5">办理人</dt><dd class="col-sm-7">{% if entry.posted_by %}{{ entry.posted_by.display_name|default:entry.posted_by.username }}{% else %}历史账号{% endif %}</dd>
+  <dt class="col-sm-5">实际记账时间</dt><dd class="col-sm-7">{{ entry.posted_at|date:'Y-m-d H:i:s' }}</dd>
+  <dt class="col-sm-5">采用的折旧配置</dt><dd class="col-sm-7">版本 v{{ entry.depreciation_profile.version }} · {{ entry.depreciation_profile.get_method_display }}</dd>
+</dl><p class="small text-secondary mb-0">这里的累计折旧和净值为该笔记账后的历史余额；最新账面金额请返回资产财务页查看。</p></div></div></section>
+<section class="col-12 col-lg-6"><div class="card h-100"><div class="card-header"><h2 class="h6 mb-0">来源记录</h2></div><div class="card-body">
+{% if source_batch %}<dl class="row mb-0"><dt class="col-sm-4">来源</dt><dd class="col-sm-8">{{ source_batch.get_batch_type_display }} · 第 {{ source_batch.generation_no }} 代</dd><dt class="col-sm-4">批次期间</dt><dd class="col-sm-8">{{ source_batch.period_start|date:'Y-m-d' }} 至 {{ source_batch.period_end_inclusive|date:'Y-m-d' }}</dd><dt class="col-sm-4">当前批次状态</dt><dd class="col-sm-8">{{ source_batch.get_status_display }}</dd>{% if source_batch.reversal_reason %}<dt class="col-sm-4">冲销原因</dt><dd class="col-sm-8">{{ source_batch.reversal_reason|linebreaksbr }}</dd>{% endif %}</dl><a class="btn btn-outline-primary" href="{{ source_batch_url }}">查看来源批次</a>
+{% elif source_adjustment %}<dl class="row mb-0"><dt class="col-sm-4">来源</dt><dd class="col-sm-8">{{ source_adjustment.get_adjustment_type_display }}</dd><dt class="col-sm-4">生效日期</dt><dd class="col-sm-8">{{ source_adjustment.effective_date|date:'Y-m-d' }}</dd><dt class="col-sm-4">当前调整状态</dt><dd class="col-sm-8">{{ source_adjustment.get_status_display }}</dd><dt class="col-sm-4">调整原因</dt><dd class="col-sm-8">{{ source_adjustment.reason|linebreaksbr }}</dd></dl>
+{% else %}<p>期初累计折旧记录，来自该资产的折旧配置版本 v{{ entry.depreciation_profile.version }}。</p><p class="small text-secondary mb-0">期初数与后续计提分别留痕，可在分录查询中按来源筛选。</p>{% endif %}
+</div></div></section></div>
+{% if entry_relations %}<section class="card mt-3"><div class="card-header"><h2 class="h6 mb-0">原分录与冲销关系</h2></div><div class="list-group list-group-flush">{% for item in entry_relations %}<a class="list-group-item list-group-item-action" href="{{ item.url }}"><strong>{{ item.label }}</strong><span class="d-block mt-1">{{ item.entry.entry_date|date:'Y-m-d' }} · {{ item.entry.amount|floatformat:2 }} 元</span></a>{% endfor %}</div></section>{% endif %}
+<details class="mt-3 small text-secondary"><summary>分录记录编号</summary><code class="d-block mt-2 text-break">{{ entry.pk }}</code></details>
+{% endblock %}

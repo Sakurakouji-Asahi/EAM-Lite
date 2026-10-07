@@ -1,3 +1,27 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}折旧批次 - EAM-Lite{% endblock %}
-{% block content %}<header class="app-page-header"><div><h1 class="h3 mb-1">折旧批次</h1><p class="text-secondary mb-0">流程：生成试算 → 核对明细 → 确认计提；已确认金额通过冲销更正。</p></div>{% if can_manage %}<a class="btn btn-primary" href="{% url 'finance:batch-generate' %}">生成批次试算</a>{% endif %}{% if can_manage %}<a class="btn btn-outline-primary" href="{% url 'finance:monthly-usage' %}">月度工作量录入</a>{% endif %}</header>{% include '_list_filters.html' %}<div class="table-responsive shadow-sm"><table class="table mb-0"><thead><tr><th>期间</th><th>代次</th><th>类型</th><th>状态</th><th>明细数</th></tr></thead><tbody>{% for batch in batches %}<tr><td><a href="{% url 'finance:batch-detail' batch.pk %}">{{ batch.period_start|date:"Y-m-d" }} 至 {{ batch.period_end_inclusive|date:"Y-m-d" }}</a></td><td>{{ batch.generation_no }}</td><td>{{ batch.get_batch_type_display }}</td><td>{{ batch.get_status_display }}</td><td>{{ batch.item_count }}</td></tr>{% empty %}<tr><td colspan="5"><div class="app-empty-state"><strong>当前条件下没有折旧批次</strong><span>生成试算后，批次会在这里按期间保留。</span>{% if can_manage %}<a class="btn btn-sm btn-primary" href="{% url 'finance:batch-generate' %}">生成批次试算</a>{% endif %}</div></td></tr>{% endfor %}</tbody></table></div>{% include "_pagination.html" %}{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/finance-batches.css' %}?v=20261004-mobile">{% endblock %}
+{% block content %}
+<header class="app-page-header">
+  <div><h1 class="h3 mb-1">折旧批次</h1><p class="text-secondary mb-0">流程：生成试算 → 核对明细 → 确认计提；已确认金额通过冲销更正。</p></div>
+  {% if can_manage %}<div class="d-flex flex-wrap gap-2"><a class="btn btn-primary" href="{{ batch_generate_url }}">生成批次试算</a><a class="btn btn-outline-primary" href="{% url 'finance:monthly-usage' %}">月度工作量录入</a></div>{% endif %}
+</header>
+{% include '_list_filters.html' %}
+{% include 'finance/_batch_filter_summary.html' %}
+{% if batch_status_cards %}<nav class="row row-cols-1 row-cols-sm-2 row-cols-xl-5 g-2 mb-3" aria-label="按批次状态查找">
+  {% for card in batch_status_cards %}<div class="col"><a class="card card-body h-100 text-decoration-none{% if card.active %} border-primary bg-primary-subtle text-primary-emphasis{% else %} text-body{% endif %}" href="{{ card.url }}"{% if card.active %} aria-current="page"{% endif %}><span>{{ card.label }}</span><strong class="h4 mb-0 mt-1">{{ card.count }}</strong></a></div>{% endfor %}
+</nav><p class="small text-secondary">状态数量沿用当前月份、批次类型和资产搜索条件。</p>{% endif %}
+<div class="table-responsive shadow-sm app-work-table" role="region" aria-label="折旧批次清单" tabindex="0">
+  <table class="table align-middle mb-0"><thead><tr><th>期间</th><th>代次 / 批次编号</th><th>类型</th><th>状态</th><th>整批核对结果</th><th>生成时间 / 办理人</th></tr></thead><tbody>
+  {% for batch in batches %}<tr>
+    <td class="text-nowrap"><a href="{{ batch.detail_url }}">{{ batch.period_start|date:"Y-m-d" }} 至 {{ batch.period_end_inclusive|date:"Y-m-d" }}</a></td>
+    <td>第 {{ batch.generation_no }} 代<details class="small mt-1"><summary>批次编号</summary><code class="text-break">{{ batch.pk }}</code></details></td>
+    <td class="text-nowrap">{{ batch.get_batch_type_display }}</td><td class="text-nowrap">{{ batch.get_status_display }}</td>
+    <td><strong>共 {{ batch.item_count }} 项</strong><div class="small text-nowrap">通过 {{ batch.ready_count }} · 跳过 {{ batch.skipped_count }}</div>{% if batch.error_count %}<a class="small text-danger" href="{{ batch.errors_url }}">查看 {{ batch.error_count }} 项错误</a>{% else %}<span class="small text-secondary">错误 0</span>{% endif %}</td>
+    <td class="small text-nowrap">{{ batch.generated_at|date:"Y-m-d H:i" }}<br>{{ batch.generated_by|default:"—" }}</td>
+  </tr>{% empty %}<tr><td colspan="6"><div class="app-empty-state"><strong>当前条件下没有折旧批次</strong><span>生成试算后，批次会在这里按期间保留。</span>{% if has_batch_filters or filter_form.errors %}<a class="btn btn-sm btn-outline-primary" href="{% url 'finance:batch-list' %}">清除筛选，查看全部批次</a>{% endif %}{% if can_manage %}<a class="btn btn-sm btn-primary" href="{{ batch_generate_url }}">生成批次试算</a>{% endif %}</div></td></tr>{% endfor %}
+  </tbody></table>
+</div>
+{% include "_pagination.html" %}
+{% endblock %}
