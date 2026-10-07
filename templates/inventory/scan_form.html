@@ -1,11 +1,22 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}{% if supplemental %}受控补盘{% else %}扫码盘点{% endif %} - {{ task.name }}{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/inventory-progress.css' %}"><link rel="stylesheet" href="{% static 'css/inventory-scan-mobile.css' %}">{% endblock %}
 {% block content %}
   <article class="app-narrow-page inventory-scan-page">
     <header class="mb-3">
       <div class="text-secondary">{{ row.expected_code_snapshot }}</div>
       <h1 class="h3">{% if supplemental %}受控补盘{% else %}现场盘点{% endif %} · {{ row.expected_name_snapshot }}</h1>
     </header>
+    {% include "inventory/_scan_task_context.html" %}
+    {% if previous_scan and not supplemental %}
+      <section class="alert alert-warning" aria-label="此前有效现场记录">
+        <strong>此资产已盘过，本次为复核。</strong>
+        <p class="small mb-2">保存会替代此前的有效现场结果，历史记录保留；已盘数量不会增加。下方仍按任务发布快照预填，请重新核对现场。</p>
+        <div class="small">{{ previous_scan.scanned_at|date:'Y-m-d H:i' }} · {{ previous_scan.scanned_by.display_name|default:previous_scan.scanned_by.username }} · {{ previous_scan.get_result_display }}</div>
+        <div class="small">此前现场：{{ previous_scan.actual_location.name }} / {{ previous_scan.actual_employee.name }} / {{ previous_status_label }}</div>
+      </section>
+    {% endif %}
     <section class="card mb-3">
       <div class="card-header">任务发布时信息</div>
       <div class="card-body">
@@ -18,9 +29,10 @@
         </dl>
       </div>
     </section>
-    <form method="post" class="card shadow-sm inventory-scan-form">
+    <form method="post" data-unsaved-guard="{% if form.is_bound %}true{% else %}false{% endif %}" class="card shadow-sm inventory-scan-form" data-inventory-scan-result>
       <div class="card-body">
         {% csrf_token %}
+        <input type="hidden" name="opaque_origin_bridge" value="{{ opaque_origin_bridge }}">
         {% if supplemental %}
           <div class="mb-3">
             <label class="form-label" for="public_token">重新扫描当前二维码</label>
@@ -29,12 +41,15 @@
           </div>
         {% endif %}
         {% include "inventory/_form_fields.html" %}
+        <p class="small text-danger" data-inventory-note-required role="status" aria-live="polite" hidden>已选择其他异常，请填写异常说明后保存。</p>
         <div class="alert alert-info mb-0">结果由后端逐维比较位置、责任人和状态后自动派生；保存不会修改资产主档。</div>
       </div>
       <div class="card-footer d-grid gap-2 inventory-scan-actions">
-        <button class="btn btn-success btn-lg inventory-mobile-action" type="submit">{% if supplemental %}保存补盘结果{% else %}保存现场结果{% endif %}</button>
+        <button class="btn btn-success btn-lg inventory-mobile-action" type="submit">{% if supplemental %}保存补盘结果{% elif previous_scan %}保存本次复核结果{% else %}保存现场结果{% endif %}</button>
+        {% if not supplemental %}<a class="btn btn-outline-primary inventory-mobile-action" href="{% url 'inventory:task-scan' task.pk %}">跳过此资产，继续扫码</a>{% endif %}
         <a class="btn btn-outline-secondary inventory-mobile-action" href="{% url 'inventory:task-detail' task.pk %}">返回任务</a>
       </div>
     </form>
   </article>
+  <script src="{% static 'js/inventory-scan-assistance.js' %}" defer></script>
 {% endblock %}

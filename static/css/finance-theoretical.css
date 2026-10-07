@@ -1,0 +1,11 @@
+#theory-comparison { scroll-margin-top: 5rem; }
+.theory-record-identity { overflow-wrap: anywhere; }
+.theory-history-table { min-width: 52rem; }
+.theory-history-table td:last-child { min-width: 17rem; }
+.theory-lines-table { min-width: 43rem; }
+.theory-lines-table th, .theory-lines-table td { white-space: nowrap; }
+.theory-comparison-table { min-width: 35rem; table-layout: fixed; }
+.theory-comparison-table th, .theory-comparison-table td { overflow-wrap: anywhere; }
+.theory-comparison-table th:first-child { width: 38%; }
+[aria-label="试算结果对照"] .theory-comparison-table { min-width: 20rem; }
+@media print { .theory-history-table, .theory-lines-table, .theory-comparison-table { min-width: 0; } }

@@ -1,0 +1,10 @@
+.supply-count-task-table { min-width: 960px; }
+.supply-count-result-table { min-width: 1000px; }
+.supply-count-task-table th,
+.supply-count-result-table th,
+.supply-count-task-table td:last-child,
+.supply-count-result-table td.text-end { white-space: nowrap; }
+.supply-count-task-table td:nth-child(2),
+.supply-count-task-table td:nth-child(4),
+.supply-count-result-table td:first-child { min-width: 180px; }
+.supply-count-result-table td:last-child { min-width: 110px; }

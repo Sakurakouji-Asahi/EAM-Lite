@@ -1,0 +1,9 @@
+<section class="card shadow-sm mb-3" aria-labelledby="repair-context-title">
+  <div class="card-header"><h2 class="h5 mb-0" id="repair-context-title">本次送修情况</h2></div>
+  <div class="card-body repair-context">
+    {% if repair_context.start %}
+      <div class="d-flex flex-wrap gap-3 mb-2"><span>送修时间：<strong>{{ repair_context.start.effective_at|date:'Y-m-d H:i' }}</strong></span><span>{% if repair_context.elapsed_days %}送修已 {{ repair_context.elapsed_days }} 天{% else %}今日送修{% endif %}</span></div>
+      <dl class="mb-0"><dt class="text-secondary">送修原因</dt><dd class="repair-preserve text-break">{{ repair_context.start.reason }}</dd>{% if repair_context.start.remark %}<dt class="text-secondary">送修补充说明</dt><dd class="repair-preserve text-break">{{ repair_context.start.remark }}</dd>{% endif %}<dt class="text-secondary">维修完成后恢复</dt><dd class="mb-0"><strong>{{ repair_context.restore_status }}</strong><span class="small text-secondary ms-2">沿用本次送修前状态。</span></dd></dl>
+    {% else %}<p class="text-secondary mb-0">未找到可配对的送修记录，请核对资产的生命周期历史。</p>{% endif %}
+  </div>
+</section>

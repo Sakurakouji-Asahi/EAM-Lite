@@ -1,5 +1,30 @@
-{% extends 'base.html' %}{% block title %}历史折旧试算{% endblock %}{% block content %}
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}历史折旧试算{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/finance-theoretical.css' %}?v=20261004">{% endblock %}
+{% block content %}
 <header class="app-page-header"><div><h1 class="h3">历史折旧试算</h1><p>{{ asset.asset_code }} · {{ asset.asset_name }}</p></div><a class="btn btn-outline-secondary" href="{% url 'finance:asset-finance-detail' asset.pk %}">返回财务资料</a></header>
+<p class="text-secondary">选择记录 A、B 查看已保存的结果和参数差异，也可在记录行直接设为 A 或 B。试算仅作参考，不改变实际账面。</p>
 {% include '_list_filters.html' %}
-{% if comparison %}<section class="card mb-3"><div class="card-header">参数对照</div><div class="table-responsive"><table class="table mb-0"><thead><tr><th>参数</th><th>记录 A</th><th>记录 B</th></tr></thead><tbody>{% for row in comparison %}<tr{% if row.changed %} class="table-warning"{% endif %}><th>{{ row.label }}</th><td>{{ row.a|default_if_none:'未设置' }}</td><td>{{ row.b|default_if_none:'未设置' }}</td></tr>{% endfor %}</tbody></table></div></section>{% endif %}
-<div class="table-responsive card"><table class="table mb-0"><thead><tr><th>生成时间</th><th>试算截止日期</th><th>状态</th><th>生成人</th><th></th></tr></thead><tbody>{% for run in page_obj %}<tr><td>{{ run.requested_at|date:'Y-m-d H:i:s' }}</td><td>{{ run.as_of_date|date:'Y-m-d' }}</td><td>{{ run.get_status_display }}</td><td>{{ run.requested_by|default:'历史账号' }}</td><td><a href="{% url 'finance:theoretical-detail' asset.pk run.pk %}">查看完整试算</a></td></tr>{% empty %}<tr><td colspan="5" class="text-center py-4">没有符合条件的试算记录。</td></tr>{% endfor %}</tbody></table></div>{% include '_pagination.html' %}{% endblock %}
+<section class="card mb-3" id="theory-comparison" aria-labelledby="theory-comparison-heading">
+  <div class="card-header"><h2 class="h5 mb-0" id="theory-comparison-heading">试算对照</h2></div>
+  {% if compared_runs %}
+  <div class="card-body">
+    <div class="row g-3 mb-3">{% for run in compared_runs %}<div class="col-md-6"><article class="border rounded p-3 h-100 theory-record-identity">
+      <h3 class="h6">记录 {% cycle 'A' 'B' %} · {{ run.get_status_display }}</h3>
+      <p class="mb-1">{{ run.requested_at|date:'Y-m-d H:i:s' }} · {{ run.requested_by|default:'历史账号' }}</p>
+      <p class="small text-secondary mb-2">截止 {{ run.as_of_date|date:'Y-m-d' }} · {{ run.pk|stringformat:'s'|slice:':8' }}</p>
+      <a href="{{ run.ui_detail_url }}">查看完整试算</a>
+    </article></div>{% endfor %}</div>
+    <p class="small text-secondary mb-0">高亮表示两个记录的值不同。金额来自保存的期间明细；截止日期不同时，结果覆盖的期间可能不同。没有期间记录时不推算末期余额。</p>
+  </div>
+  <div class="table-responsive" data-scroll-table role="region" aria-label="试算结果对照"><table class="table mb-0 theory-comparison-table"><thead><tr><th>结果</th><th>记录 A</th><th>记录 B</th></tr></thead><tbody>{% for row in result_comparison %}<tr{% if row.changed %} class="table-warning"{% endif %}><th>{{ row.label }}</th><td>{{ row.a }}</td><td>{{ row.b }}</td></tr>{% endfor %}</tbody></table></div>
+  <details class="card-body"><summary class="fw-semibold">查看参数对照</summary><div class="table-responsive mt-3" data-scroll-table role="region" aria-label="试算参数对照"><table class="table mb-0 theory-comparison-table"><thead><tr><th>保存的参数</th><th>记录 A</th><th>记录 B</th></tr></thead><tbody>{% for row in comparison %}<tr{% if row.changed %} class="table-warning"{% endif %}><th>{{ row.label }}</th><td>{{ row.a }}</td><td>{{ row.b }}</td></tr>{% endfor %}</tbody></table></div></details>
+  {% else %}<div class="card-body text-secondary">选好两条对照记录后，这里会展示结果；下方清单仍沿用当前截止日期和状态条件。</div>{% endif %}
+</section>
+<div class="table-responsive card" data-scroll-table role="region" aria-label="历史试算记录"><table class="table align-middle mb-0 theory-history-table"><thead><tr><th>生成时间 / 记录</th><th>试算截止日期</th><th>状态</th><th>生成人</th><th>查阅与对照</th></tr></thead><tbody>{% for run in page_obj %}<tr>
+  <td class="text-nowrap">{{ run.requested_at|date:'Y-m-d H:i:s' }}<small class="d-block text-secondary">{{ run.pk|stringformat:'s'|slice:':8' }}</small></td><td class="text-nowrap">{{ run.as_of_date|date:'Y-m-d' }}</td><td>{{ run.get_status_display }}</td><td>{{ run.requested_by|default:'历史账号' }}</td>
+  <td><div class="d-flex flex-wrap gap-2"><a href="{{ run.ui_detail_url }}">查看完整试算</a><a class="btn btn-sm btn-outline-secondary" href="{{ run.ui_compare_a }}">设为 A</a><a class="btn btn-sm btn-outline-secondary" href="{{ run.ui_compare_b }}">设为 B</a></div></td>
+</tr>{% empty %}<tr><td colspan="5" class="text-center py-4">没有符合条件的试算记录。</td></tr>{% endfor %}</tbody></table></div>
+{% include '_pagination.html' %}
+{% endblock %}

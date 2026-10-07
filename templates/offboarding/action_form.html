@@ -4,6 +4,7 @@
   <div class="app-narrow-page">
       <header class="app-page-header"><div><h1 class="h3 mb-1">{{ title }}</h1><p class="text-secondary mb-0">请核对人员、资产和处理结果后提交。</p></div></header>
       {% if description %}<div class="alert alert-warning" role="status">{{ description }}</div>{% endif %}
+      {% if item_context %}{% include "offboarding/_item_action_context.html" with action_info=item_context %}{% endif %}
       <form method="post"{% if multipart %} enctype="multipart/form-data"{% endif %} class="card shadow-sm"><div class="card-body">
         {% include "offboarding/_form_fields.html" %}</div>
         <div class="card-footer d-flex flex-wrap gap-2">

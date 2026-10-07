@@ -1,9 +1,56 @@
 """Business-facing import rows and live, permission-scoped next steps."""
+import uuid
+from django.urls import reverse
 from apps.assets.models import Asset
 from apps.assets.permissions import scoped_assets_p1
 from apps.finance.permissions import can_view_finance, can_manage_finance
 from apps.finance.readiness import pending_finance_assets
 from apps.imports.identifiers import opening_stock_document_key
+
+
+def created_results_context(*, actor, batch, rows):
+    """Link live created results only after the existing object scope accepts them."""
+    if batch.status != "confirmed":
+        return {}
+    from apps.masterdata.models import Department, Employee
+    from apps.masterdata.permissions import can_view_masterdata, scoped_departments, scoped_employees
+    from apps.supplies.models import SupplyItem, SupplyCustody
+    from apps.supplies.permissions import (can_view_supply_master_data, can_view_supply_custodies,
+        scoped_supply_items, scoped_supply_custodies)
+
+    options = {
+        "department": ("Department", Department, can_view_masterdata(actor, "department"), scoped_departments,
+            "masterdata:department-detail", "masterdata:department-list", "查看部门档案", False),
+        "employee": ("Employee", Employee, can_view_masterdata(actor, "employee"), scoped_employees,
+            "masterdata:employee-detail", "masterdata:employee-list", "查看人员目录", False),
+        "item_master": ("SupplyItem", SupplyItem, can_view_supply_master_data(actor), scoped_supply_items,
+            "supplies:item-detail", "supplies:item-list", "查看物品档案", True),
+        "opening_custody": ("SupplyCustody", SupplyCustody, can_view_supply_custodies(actor), scoped_supply_custodies,
+            "supplies:custody-detail", "supplies:custody-list", "查看保管记录", True),
+    }
+    option = options.get(batch.import_type)
+    if option is None or not option[2]:
+        return {}
+    object_type, model, _, scope, detail_name, list_name, label, uuid_key = option
+    ids = []
+    for row in rows:
+        if row.validation_status != "created" or row.created_object_type != object_type:
+            continue
+        try:
+            key = uuid.UUID(row.created_object_id) if uuid_key else int(row.created_object_id)
+        except (ValueError, TypeError, AttributeError):
+            continue
+        if uuid_key or 0 < key <= 9223372036854775807:
+            ids.append(key)
+    objects = scope(actor, batch.company, model.objects.filter(pk__in=ids))
+    if batch.import_type == "opening_custody":
+        objects = objects.select_related("item", "employee", "department")
+    lookup = {str(obj.pk): obj for obj in objects}
+    for row in rows:
+        obj = lookup.get(row.created_object_id) if row.created_object_type == object_type else None
+        if obj is not None:
+            row.created_result = {"label": str(obj), "url": reverse(detail_name, kwargs={"pk": obj.pk})}
+    return {"created_results_directory": {"label": label, "url": reverse(list_name)}}
 
 
 def opening_stock_import_context(*, actor, batch, rows=()):

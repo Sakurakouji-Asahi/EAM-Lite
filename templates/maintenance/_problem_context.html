@@ -1,0 +1,13 @@
+<section class="card shadow-sm mb-3" aria-label="当前办理的问题">
+  <div class="card-body">
+    <h2 class="h5 mb-3">{{ problem.asset.asset_name }}</h2>
+    <dl class="row mb-0">
+      <dt class="col-sm-4 text-secondary">资产 / 设备编号</dt><dd class="col-sm-8">{{ problem.asset.asset_code }}{% if problem.asset.equipment_number %} · {{ problem.asset.equipment_number }}{% endif %}</dd>
+      <dt class="col-sm-4 text-secondary">发现日期 / 保养计划</dt><dd class="col-sm-8">{{ problem.maintenance_record.completed_date|date:'Y-m-d' }} · {{ problem.maintenance_record.maintenance_plan.name }}</dd>
+      <dt class="col-sm-4 text-secondary">问题说明</dt><dd class="col-sm-8">{{ problem.description|linebreaksbr }}</dd>
+      <dt class="col-sm-4 text-secondary">当前跟进负责人</dt><dd class="col-sm-8">{% if problem.owner_employee %}{{ problem.owner_employee.employee_no }} / {{ problem.owner_employee.name }}{% else %}未分派{% endif %}</dd>
+      <dt class="col-sm-4 text-secondary">当前目标日期</dt><dd class="col-sm-8">{{ problem.target_date|date:'Y-m-d'|default:'未设期限' }} <span class="badge text-bg-{{ problem_timing.tone }}">{{ problem_timing.label }}</span></dd>
+    </dl>
+    <a class="btn btn-sm btn-outline-secondary mt-2" href="{{ problem_record_url }}">查看来源保养记录</a>
+  </div>
+</section>

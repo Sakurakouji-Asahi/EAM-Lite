@@ -1,0 +1,9 @@
+<details class="report-column-controls" data-report-columns data-report-key="{{ dataset.definition.key }}" data-report-owner="{{ request.user.pk }}" data-report-company="{{ current_company.pk }}" hidden>
+  <summary>显示列 <span class="text-secondary fw-normal" data-report-column-count>（{{ columns|length }}/{{ columns|length }}）</span></summary>
+  <div class="report-column-body">
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-2"><p class="small text-secondary flex-grow-1 mb-0">按报表记住本浏览器的列选择；导出仍包含全部列。</p><button type="button" class="btn btn-sm btn-outline-secondary" data-report-columns-reset>显示全部列</button></div>
+    <fieldset><legend class="visually-hidden">选择要显示的明细列，首列始终显示</legend><div class="report-column-options">
+      {% for column in columns %}<label class="form-check mb-0"><input type="checkbox" class="form-check-input" value="{{ column.key }}" checked {% if forloop.first %}disabled{% endif %} data-report-column-toggle aria-controls="report-detail-table"><span class="form-check-label">{{ column.label }}{% if forloop.first %}<small class="text-secondary">（固定）</small>{% endif %}</span></label>{% endfor %}
+    </div></fieldset>
+  </div>
+</details>

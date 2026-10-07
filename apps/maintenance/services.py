@@ -298,7 +298,7 @@ def create_maintenance_plan(
 def update_maintenance_plan(
     *, actor, plan, name, cycle_value, cycle_unit, responsible_employee,
     advance_notice_days, standard_content, first_due_date, request=None,
-    asset=None,
+    asset=None, expected_revision=None,
 ):
     plan = _lock_plan(plan)
     require_manage_maintenance_plan(actor, plan)
@@ -306,6 +306,12 @@ def update_maintenance_plan(
         raise ValidationError({"asset": "已建立计划不得更换资产。"})
     if plan.status == "ended":
         raise ValidationError("已终止计划不能普通修改。")
+    if expected_revision is not None:
+        from apps.maintenance.plan_revision import maintenance_plan_revision_snapshot
+
+        if maintenance_plan_revision_snapshot(plan) != expected_revision:
+            raise ValidationError({"expected_revision":
+                "这份保养计划已被其他操作更新，本次没有保存。请重新打开最新编辑页面，核对计划和保养完成情况后再提交。"})
     responsible_employee.refresh_from_db()
     _validate_plan_inputs(
         company=plan.company, asset=plan.asset,
@@ -397,6 +403,7 @@ def set_maintenance_plan_status(
 def complete_maintenance(
     *, actor, plan, scheduled_date, completed_date, actual_content, result,
     problem_description="", remark="", idempotency_key, request=None,
+    expected_instance_date=None, return_created=False,
 ):
     from apps.maintenance.models import MaintenancePlan, MaintenanceProblem, MaintenanceRecord
 
@@ -429,7 +436,15 @@ def complete_maintenance(
         model=MaintenanceRecord,
     )
     if existing is not None:
-        return existing
+        return (existing, False) if return_created else existing
+    # A successful identical request may replay after the plan advances. Compare
+    # the browser's captured date only after the existing idempotency result.
+    if expected_instance_date is not None:
+        captured = business_date(expected_instance_date)
+        if scheduled != captured or plan.next_maintenance_date != captured:
+            raise ValidationError(
+                "保养计划日期已变化，请重新打开完成页面核对后再提交。当前输入已保留。"
+            )
     if MaintenanceRecord._base_manager.select_for_update().filter(
         maintenance_plan=plan, scheduled_date=scheduled, status="confirmed"
     ).exists():
@@ -525,7 +540,7 @@ def complete_maintenance(
         payload=payload,
         request=request,
     )
-    return record
+    return (record, True) if return_created else record
 
 
 @transaction.atomic

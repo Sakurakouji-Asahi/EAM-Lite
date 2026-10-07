@@ -1,6 +1,7 @@
 from django.urls import path
 
 from apps.maintenance import views
+from apps.maintenance.print_views import record_print
 
 
 app_name = "maintenance"
@@ -16,6 +17,7 @@ urlpatterns = [
     path("plans/<uuid:pk>/status/", views.plan_status, name="plan-status"),
     path("plans/<uuid:pk>/complete/", views.plan_complete, name="plan-complete"),
     path("records/<uuid:pk>/", views.record_detail, name="record-detail"),
+    path("records/<uuid:pk>/print/", record_print, name="record-print"),
     path("records/<uuid:pk>/void/", views.record_void, name="record-void"),
     path("records/<uuid:pk>/redo/", views.record_redo, name="record-redo"),
     path("problems/<uuid:pk>/assign/", views.problem_assign, name="problem-assign"),

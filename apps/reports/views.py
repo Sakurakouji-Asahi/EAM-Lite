@@ -25,6 +25,7 @@ from apps.assets.models import Asset, AssetExternalReference
 from django.db.models import Exists, OuterRef
 from apps.core.pagination import paginate_query
 from apps.reports.history_forms import ExportHistoryFilterForm
+from apps.reports.export_history import export_file_context, export_history_return_url
 from apps.assets.permissions import scoped_assets
 from apps.masterdata.models import (
     AssetCategory,
@@ -185,9 +186,13 @@ def _display_filters(filters, company):
     for key, value in filters.items():
         if key in labels:
             if key in _MODEL_FILTERS:
-                instance = _MODEL_FILTERS[key].objects.filter(
-                    company=company, pk=value
-                ).first()
+                try:
+                    instance = _MODEL_FILTERS[key].objects.filter(
+                        company=company, pk=value
+                    ).first()
+                except (ValidationError, ValueError, TypeError):
+                    # Failed export requests may retain an invalid original identifier.
+                    instance = None
                 value = str(instance) if instance is not None else value
             elif key in ReportFilterForm.base_fields and hasattr(ReportFilterForm.base_fields[key], "choices"):
                 value = dict(ReportFilterForm.base_fields[key].choices).get(value, value)
@@ -274,6 +279,9 @@ def _dataset_context(dataset, company, request, form=None):
     summary_links = _summary_detail_links(dataset.definition.key, summary_page.object_list, form, query)
     actor = getattr(request, 'user', None)
     source_links = page_source_links(actor, company, page_rows) if actor and company else [{} for _ in page_rows]
+    from .drilldown import issue_detail_links
+    drilldown_links = issue_detail_links(actor=actor, report_key=dataset.definition.key, rows=page_rows,
+        form=form, query=query, page_number=page_obj.number) if actor and form else [None for _ in page_rows]
     return {
         "dataset": dataset,
         **(preset_context(actor, company, dataset.definition.key, query) if actor and company else {}),
@@ -281,7 +289,9 @@ def _dataset_context(dataset, company, request, form=None):
         "preview_rows": preview_rows,
         "table_rows": preview_rows,
         "detail_rows": [{"cells": [(column,value,links.get(column.key)) for column,value in cells],
-                         "asset_url":links.get("asset_code")} for cells,links in zip(preview_rows,source_links)],
+                         "asset_url":links.get("asset_code"), "drilldown_url":drilldown}
+                        for cells,links,drilldown in zip(preview_rows,source_links,drilldown_links)],
+        "has_drilldown_links": any(drilldown_links),
         "page_obj": page_obj,
         "page_size": page_size,
         "page_sizes": REPORT_PAGE_SIZES,
@@ -313,12 +323,27 @@ def _supply_display_filters(form):
     return result
 
 
+def _export_return_url(export_log):
+    key = export_log.export_type
+    filters = {name: value for name, value in export_log.filters_json.items() if not name.startswith("_")}
+    if isinstance(filters.get("asset_list_filters"), dict):
+        return reverse("assets:asset-list") + "?" + urlencode(filters["asset_list_filters"], doseq=True)
+    if key in SUPPLY_REPORT_KEYS:
+        from apps.reports.supply_forms import FILTERS_BY_REPORT
+        filters = {name: value for name, value in filters.items() if name in FILTERS_BY_REPORT[key]}
+    else:
+        allowed = _TPLUS_FILTER_KEYS - {"idempotency_key"} if key == "tplus_reconciliation" else _REPORT_FILTER_KEYS
+        filters = {name: value for name, value in filters.items() if name in allowed}
+    url = report_url(key)
+    return url + (("&" if "?" in url else "?") + urlencode(filters) if filters else "")
+
+
 def _export_filter_context(export_log, actor, company):
     key = export_log.export_type
     filters = {name: value for name, value in export_log.filters_json.items() if not name.startswith("_")}
     if isinstance(filters.get("asset_list_filters"), dict):
         return {"display_filters": dict(_display_filters(filters, company)),
-                "return_report_url": reverse("assets:asset-list") + "?" + urlencode(filters["asset_list_filters"], doseq=True)}
+                "return_report_url": _export_return_url(export_log)}
     if key in SUPPLY_REPORT_KEYS:
         from apps.reports.supply_forms import FILTERS_BY_REPORT, SupplyReportFilterForm
         filters = {name: value for name, value in filters.items() if name in FILTERS_BY_REPORT[key]}
@@ -334,10 +359,7 @@ def _export_filter_context(export_log, actor, company):
     else:
         display = dict(_display_filters(filters, company))
         filters = {name: value for name, value in filters.items() if name in _REPORT_FILTER_KEYS}
-    url = report_url(key)
-    if filters:
-        url += ("&" if "?" in url else "?") + urlencode(filters)
-    return {"display_filters": display, "return_report_url": url}
+    return {"display_filters": display, "return_report_url": _export_return_url(export_log)}
 
 
 def _filter_layout(form, report_key):
@@ -541,19 +563,21 @@ def supply_report_index(request):
 @require_GET
 def supply_report_detail(request, report_key):
     from apps.reports.supply_forms import FILTERS_BY_REPORT, SupplyReportFilterForm
+    from .drilldown import ORIGIN_FIELDS, issue_origin_context, preserve_origin_pagination
 
     definition = _supply_definition_or_404(report_key)
     denied = _require_no_store(require_view_report, request.user, report_key)
     if denied:
         return denied
-    unexpected = set(request.GET) - FILTERS_BY_REPORT[report_key] - _PRESENTATION_KEYS
+    navigation_fields = ORIGIN_FIELDS if report_key == "supply_issue_detail" else set()
+    unexpected = set(request.GET) - FILTERS_BY_REPORT[report_key] - _PRESENTATION_KEYS - navigation_fields
     if unexpected:
         return _no_store(HttpResponseBadRequest("包含不支持的低值物品报表筛选参数。"))
     if request.GET.get("page_size", "50") not in {str(size) for size in REPORT_PAGE_SIZES}:
         return _no_store(HttpResponseBadRequest("每页条数请选择 25、50 或 100。"))
     company = _company_or_400()
     bound_data = request.GET.copy()
-    for name in _PRESENTATION_KEYS:
+    for name in _PRESENTATION_KEYS | navigation_fields:
         bound_data.pop(name, None)
     if not bound_data:
         if report_key == "supply_stock_movement":
@@ -574,7 +598,10 @@ def supply_report_detail(request, report_key):
         "reset_url": report_url(report_key),
         **_filter_layout(form, report_key),
         **_report_center_navigation(request.user, report_key),
+        **issue_origin_context(actor=request.user, company=company, report_key=report_key, values=request.GET),
     }
+    if context.get("report_origin_fields"):
+        context["reset_url"] = report_url(report_key) + "?" + urlencode(context["report_origin_fields"])
     should_query = True
     if should_query and form.is_valid():
         try:
@@ -595,6 +622,7 @@ def supply_report_detail(request, report_key):
                 export_idempotency_key=uuid.uuid4().hex,
                 display_filters=_supply_display_filters(form),
             )
+            preserve_origin_pagination(context)
     status = 400 if should_query and not form.is_valid() else 200
     return _render_sensitive(
         request, "reports/supply_report.html", context, status=status
@@ -810,7 +838,8 @@ def export_detail(request, pk):
         {
             "export_log": export_log,
             "definition": get_report_definition(export_log.export_type),
-            "can_download": can_download_export(request.user, export_log),
+            **export_file_context(request.user, export_log),
+            "history_return_url": export_history_return_url(request),
             **_export_filter_context(export_log, request.user, company),
             "display_totals": [{"label": _TPLUS_TOTAL_LABELS.get(total.metric_key, total.metric_key),
                                 "amount": total.amount, "currency": total.currency} for total in export_log.totals.all()],

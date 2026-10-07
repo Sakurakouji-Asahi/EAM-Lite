@@ -1,0 +1,15 @@
+[data-bulk-review-controls][hidden], [data-bulk-review-row][hidden], [data-bulk-review-empty][hidden] { display: none !important; }
+[data-bulk-review] td { overflow-wrap: anywhere; vertical-align: top; }
+@media screen {
+  [data-bulk-review="registration"] .table { min-width: 69rem; }
+  [data-bulk-review="assignment"] .table { min-width: 50rem; }
+  [data-bulk-review="finance"] .table { min-width: 100rem; }
+  [data-bulk-review="finance"] th:nth-child(2) { min-width: 20rem; }
+  [data-bulk-review] th:first-child, [data-bulk-review] td:first-child { min-width: 14rem; }
+  [data-bulk-review="registration"] th:nth-child(2), [data-bulk-review="registration"] td:nth-child(2) { min-width: 12rem; }
+  [data-bulk-review="registration"] th:nth-child(3), [data-bulk-review="registration"] td:nth-child(3) { min-width: 13rem; }
+  [data-bulk-review="registration"] th:nth-child(4), [data-bulk-review="registration"] td:nth-child(4) { min-width: 12rem; }
+  [data-bulk-review="registration"] th:nth-child(5), [data-bulk-review="registration"] td:nth-child(5) { min-width: 18rem; }
+  [data-bulk-review="assignment"] th:nth-child(2), [data-bulk-review="assignment"] td:nth-child(2) { min-width: 24rem; }
+  [data-bulk-review="assignment"] th:nth-child(3), [data-bulk-review="assignment"] td:nth-child(3) { min-width: 12rem; }
+}

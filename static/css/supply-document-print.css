@@ -1,0 +1,39 @@
+.supply-document-print-only { display: none; }
+.supply-document-quantity { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.supply-document-lines td:nth-child(2) { min-width: 11rem; }
+
+@media print {
+  @page { size: A4 portrait; margin: 12mm; }
+  html, body { margin: 0 !important; padding: 0 !important; background: white !important; color: #111 !important; }
+  .app-topbar, .app-sidebar, .app-mobile-nav, .skip-link, .app-breadcrumb,
+  [data-runtime-version], [data-development-environment-banner],
+  .app-content > :not(.supply-document-sheet), .supply-document-screen-only { display: none !important; }
+  .app-layout, .app-main, .app-content { display: block !important; width: 100% !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; max-width: none !important; }
+  .supply-document-sheet { font-size: 10pt; line-height: 1.45; }
+  .supply-document-print-only { display: block; }
+  .supply-document-print-heading { display: flex; justify-content: space-between; gap: 1rem; border-bottom: 1px solid #555; padding-bottom: 3mm; margin-bottom: 4mm; }
+  .supply-document-sheet .app-page-header { display: block; margin: 0 0 3mm; padding: 0; border: 0; }
+  .supply-document-sheet h1 { font-size: 18pt; margin: 0 0 2mm !important; }
+  .supply-document-sheet h2 { font-size: 12pt; }
+  .supply-document-sheet a { color: #111 !important; text-decoration: none !important; }
+  .supply-document-sheet a::after { content: none !important; }
+  .supply-document-sheet .text-secondary { color: #333 !important; }
+  .supply-document-print-status { border: 2px solid #333; padding: 3mm; font-weight: 700; }
+  .supply-document-sheet .alert { background: white !important; color: #111 !important; border-color: #888; padding: 3mm; break-inside: avoid; }
+  .supply-document-sheet .card { border: 0; box-shadow: none !important; margin-bottom: 5mm !important; }
+  .supply-document-sheet .card-body { padding: 0; }
+  .supply-document-sheet dl { display: grid; grid-template-columns: 24mm minmax(0, 1fr) 24mm minmax(0, 1fr); margin: 0 !important; gap: 2mm; }
+  .supply-document-sheet dl > * { width: auto !important; padding: 0; margin: 0; min-width: 0; overflow-wrap: anywhere; }
+  .supply-document-sheet dl > dd:last-child { grid-column: span 3; }
+  .supply-document-sheet .table-responsive { overflow: visible !important; }
+  .supply-document-lines { width: 100%; table-layout: auto; font-size: 9pt; border-collapse: collapse; }
+  .supply-document-lines thead { display: table-header-group; }
+  .supply-document-lines tfoot { display: table-row-group; }
+  .supply-document-lines tr { break-inside: avoid; }
+  .supply-document-lines th, .supply-document-lines td { padding: 2mm; border: 1px solid #777 !important; color: #111; vertical-align: top; overflow-wrap: anywhere; }
+  .supply-document-lines td:nth-child(2) { min-width: 0; }
+  .supply-document-lines .small { font-size: 8pt; }
+  .supply-document-signatures { margin-top: 7mm; break-inside: avoid; }
+  .supply-document-signatures div { margin-bottom: 6mm; }
+  .supply-document-signatures p { font-size: 9pt; margin: 0; }
+}

@@ -353,10 +353,14 @@ def cancel_print_batch(*, actor, batch, reason="", request=None):
 
 
 @transaction.atomic
-def rotate_qr_identity(*, actor, asset, reason, request=None):
+def rotate_qr_identity(*, actor, asset, reason, request=None, expected_qr_identity_id=None):
     from apps.assets.models import Asset, AssetLabelPrintItem, AssetQrIdentity
     company = _company()
     asset = Asset.objects.select_for_update().get(pk=asset.pk, company=company)
+    from django.contrib.auth import get_user_model
+    actor = get_user_model().objects.filter(pk=getattr(actor, "pk", None)).first()
+    if actor is None:
+        raise PermissionDenied("您没有对此资产执行标签操作的权限。")
     require_label_action(actor, asset)
     explanation = str(reason or "").strip()
     if not explanation:
@@ -364,6 +368,13 @@ def rotate_qr_identity(*, actor, asset, reason, request=None):
     if asset.asset_status not in {"in_use", "idle"}:
         raise ValidationError("只有在用或闲置资产可执行换标。")
     old = AssetQrIdentity.objects.select_for_update().filter(asset=asset, status="active").first()
+    if expected_qr_identity_id is not None:
+        try:
+            expected_identity_id = uuid.UUID(str(expected_qr_identity_id))
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ValidationError("标签确认信息无效，请重新打开换标页面。") from exc
+        if old is None or old.pk != expected_identity_id:
+            raise ValidationError("标签版本已变化或原标签已失效，请重新打开换标页面核对。")
     if old is None or old.label_status != "attached":
         raise ValidationError("只有已贴标资产可执行换标。")
     if AssetLabelPrintItem.objects.filter(

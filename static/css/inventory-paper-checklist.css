@@ -1,0 +1,47 @@
+* { box-sizing: border-box; }
+body { margin: 0; padding: 1.25rem; background: #edf2f6; color: #172c40; font: 14px/1.5 "Microsoft YaHei", "PingFang SC", sans-serif; }
+.paper-controls { max-width: 273mm; margin: 0 auto 1rem; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; }
+.paper-controls p { margin: .35rem 0 0; }
+.paper-control-actions { display: flex; flex-wrap: wrap; gap: .6rem; }
+.paper-controls button, .paper-controls a { padding: .55rem .8rem; border: 1px solid #37698c; border-radius: .35rem; color: #17476c; background: white; font: inherit; text-decoration: none; cursor: pointer; }
+.paper-controls button { background: #17476c; color: white; }
+.paper-checklist { width: 100%; max-width: 273mm; margin: auto; background: white; border: 1px solid #d0dbe5; padding: 7mm; box-shadow: 0 .3rem 1rem #17365314; overflow-wrap: anywhere; }
+.paper-company { font-size: 12px; color: #53697b; }
+h1 { margin: 2mm 0; font-size: 23px; }
+h2 { margin: 0 0 3mm; font-size: 17px; font-weight: 600; line-height: 1.45; }
+.paper-task-meta { display: flex; flex-wrap: wrap; gap: 1mm 5mm; font-size: 12px; }
+.paper-scope { margin: 3mm 0 2mm; border: 1px solid #93a9b9; padding: 2mm 3mm; }
+.paper-instructions { margin: 0 0 4mm; font-size: 12px; }
+.paper-table-scroll { overflow-x: auto; }
+.paper-table { border-collapse: collapse; width: 100%; min-width: 240mm; table-layout: fixed; }
+.paper-number-col { width: 5%; }.paper-asset-col { width: 19%; }.paper-snapshot-col { width: 25%; }.paper-result-col { width: 26%; }.paper-writing-col { width: 25%; }
+.paper-table th, .paper-table td { border: 1px solid #71879a; padding: 2mm; text-align: left; vertical-align: top; }
+.paper-table th { background: #f0f3f6; font-size: 12px; }
+.paper-number { text-align: center !important; }
+.paper-asset-name { font-weight: 600; margin: 1mm 0; }
+.paper-secondary, .paper-label { color: #53697b; font-size: 12px; }
+.paper-preserve { white-space: pre-wrap; margin: 1mm 0; }
+.paper-conclusion { border-top: 1px dashed #aab8c3; margin-top: 2mm; padding-top: 2mm; }
+.paper-writing div { min-height: 7mm; border-bottom: 1px solid #b1bdc6; font-size: 11px; color: #53697b; }
+.paper-writing div:last-child { margin-top: 1mm; border: 0; }
+.paper-writing span { margin-left: 12mm; }
+.paper-empty { padding: 8mm; text-align: center; border: 1px dashed #71879a; }
+.paper-footer { margin-top: 4mm; padding-top: 2mm; border-top: 1px solid #93a9b9; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1mm 5mm; font-size: 11px; color: #53697b; }
+@media screen and (max-width: 575px) { body { padding: .75rem; }.paper-checklist { padding: 4mm; } }
+@page { size: A4 landscape; margin: 12mm; }
+@media print {
+  body { padding: 0; background: white; color: black; font-size: 9pt; }
+  .paper-controls { display: none !important; }
+  .paper-checklist { padding: 0; border: 0; box-shadow: none; max-width: none; }
+  .paper-heading { break-inside: avoid; }
+  h1 { font-size: 16pt; }h2 { font-size: 12pt; }
+  .paper-task-meta, .paper-scope, .paper-instructions { font-size: 9pt; }
+  .paper-table-scroll { overflow: visible; }
+  .paper-table { min-width: 0; }
+  .paper-table thead { display: table-header-group; }
+  .paper-table tr { break-inside: avoid; }
+  .paper-table th, .paper-secondary, .paper-label { font-size: 8pt; color: black; }
+  .paper-table th { background: white; }
+  .paper-writing div { color: black; font-size: 8pt; }
+  .paper-footer { color: black; font-size: 8pt; break-inside: avoid; }
+}

@@ -1,10 +1,17 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}{{ title }} - EAM-Lite{% endblock %}
+{% block extra_head %}
+  <link rel="stylesheet" href="{% static 'css/asset-choice-search.css' %}?v=20261004">
+  <script src="{% static 'js/asset-choice-search.js' %}?v=20261004-masterdata" defer></script>
+{% endblock %}
 {% block content %}
   <header class="app-page-header">
     <h1 class="h3 mb-0">{{ title }}</h1>
     <a class="btn btn-outline-secondary" href="{{ cancel_url }}">返回</a>
   </header>
+  {% if masterdata_context_warning %}<div class="alert alert-warning" role="alert">{{ masterdata_context_warning }}</div>{% endif %}
+  {% if masterdata_can_continue %}<p class="small text-secondary">可以保存后继续新增；下一条仅沿用所属部门或上级，姓名、编码和其他资料重新填写。</p>{% endif %}
   <div class="card shadow-sm app-form-section">
     <div class="card-body">
       {% if form.non_field_errors %}
@@ -13,8 +20,9 @@
           {{ form.non_field_errors }}
         </div>
       {% endif %}
-      <form method="post" novalidate>
+      <form method="post" novalidate data-choice-search data-unsaved-guard="{% if form.is_bound %}true{% else %}false{% endif %}">
         {% csrf_token %}
+        {% if masterdata_return_to %}<input type="hidden" name="return_to" value="{{ masterdata_return_to }}">{% endif %}
         {% if department_scope_impact %}
           <input type="hidden" name="scope_impact_token" value="{{ department_scope_impact.confirmation_token }}">
           <div class="alert alert-warning" role="alert">
@@ -62,6 +70,7 @@
         {% endfor %}
         <div class="app-form-actions app-form-actions-contained">
           <button class="btn btn-primary" type="submit">{% if department_scope_impact %}确认改挂并保存{% else %}保存{% endif %}</button>
+          {% if masterdata_can_continue %}<button class="btn btn-outline-primary" type="submit" name="action" value="continue">保存并继续新增</button>{% endif %}
           <a class="btn btn-outline-secondary" href="{{ cancel_url }}">取消</a>
         </div>
       </form>

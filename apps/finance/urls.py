@@ -4,11 +4,15 @@ from apps.finance import views
 from apps.finance.usage_workspace import monthly_usage
 from apps.finance.history_workspace import theoretical_history
 from apps.finance.bulk_views import bulk_finance_confirmation
+from apps.finance.entry_detail import depreciation_entry_detail
+from apps.finance.profile_history import depreciation_profile_detail
 
 
 app_name = "finance"
 
 urlpatterns = [
+    path("profiles/<uuid:profile_pk>/", depreciation_profile_detail, name="profile-detail"),
+    path("entries/<uuid:pk>/", depreciation_entry_detail, name="entry-detail"),
     path("usage/", monthly_usage, name="monthly-usage"),
     path("assets/<uuid:pk>/theoretical-history/", theoretical_history, name="theoretical-history"),
     path("pending/", views.pending_finance_list, name="pending-list"),

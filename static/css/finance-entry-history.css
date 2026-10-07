@@ -1,0 +1,4 @@
+.finance-entry-history-table { min-width: 52rem; }
+.finance-entry-history-table td, .finance-entry-history-table th { white-space: nowrap; }
+.finance-entry-details dd { overflow-wrap: anywhere; }
+#depreciation-entries { scroll-margin-top: 5rem; }

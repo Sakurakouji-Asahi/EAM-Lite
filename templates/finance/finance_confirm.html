@@ -1,13 +1,15 @@
 {% extends "base.html" %}{% load static %}
 {% block title %}财务确认 {{ asset }} - EAM-Lite{% endblock %}
 {% block content %}
-<header class="app-page-header"><div><h1 class="h3 mb-1">财务确认</h1><p class="text-secondary mb-0">{{ asset.asset_code|default:asset.draft_number }} · {{ asset.asset_name }}</p></div><a class="btn btn-outline-secondary" href="{% url 'finance:pending-list' %}">返回财务待办</a></header>
+<header class="app-page-header"><div><h1 class="h3 mb-1">财务确认</h1><p class="text-secondary mb-0">{{ asset.asset_code|default:asset.draft_number }} · {{ asset.asset_name }}</p></div><a class="btn btn-outline-secondary" href="{{ pending_return_url }}">返回财务待办{% if pending_query %}（保留筛选）{% endif %}</a></header>
 <p class="text-secondary small">选择不同的会计认定不会改变资产编号或二维码。</p>
 <div class="row g-4"><aside class="col-12 col-xl-3"><section class="card mb-3"><div class="card-header">实物资料</div><div class="card-body"><dl class="mb-0 app-summary-list"><dt>实物分类</dt><dd>{{ asset.category }}</dd><dt>部门 / 责任人</dt><dd>{{ asset.department }} / {{ asset.responsible_employee }}</dd><dt>位置</dt><dd>{{ asset.location }}</dd><dt>达到可使用状态</dt><dd>{{ asset.commissioning_date|default:"未填写" }}</dd>{% if asset.management_attribute %}<dt>首次管理属性</dt><dd>{{ asset.get_management_attribute_display }}</dd>{% endif %}</dl><a href="{% url 'assets:asset-detail' asset.pk %}">查看资产详情</a><br><a href="{% url 'assets:attachment-upload' asset.pk %}?role=invoice">补充发票或财务附件</a></div></section><p class="small text-secondary">保存后仍是财务草稿。确认后启用折旧设置；月度折旧另行办理。</p></aside>
 <div class="col-12 col-xl-9">
 {% if not has_fixed_asset_categories %}<div class="alert alert-warning" data-fixed-asset-category-warning>尚未配置固定资产会计类别。请先<a href="{% url 'finance:fixed-category-create' %}">新建会计类别</a>。</div>{% endif %}
 {% if not asset.commissioning_date %}<div class="alert alert-warning">尚未填写达到可使用状态日期，可直接在下方补充，无需退回实物草稿。</div>{% endif %}
-<form method="post" action="{% url 'finance:finance-confirm' asset.pk %}" novalidate id="finance-confirm-form">{% csrf_token %}
+{% if preview_only %}<div class="alert alert-info" role="status">本页试算与填写内容尚未保存。核对后请选择“保存财务与折旧资料”或“确认财务与折旧”。</div>{% endif %}
+<form method="post" action="{% url 'finance:finance-confirm' asset.pk %}" novalidate id="finance-confirm-form" data-unsaved-guard="{% if form.errors or preview_only %}true{% endif %}">{% csrf_token %}
+<input type="hidden" name="pending_query" value="{{ pending_query }}">
 {% if form.errors %}<div class="alert alert-danger" role="alert"><strong>有资料需要调整，尚未保存或确认。</strong>{{ form.non_field_errors }}<ul class="mb-0">{% for field in form %}{% if field.errors %}<li><a href="#{{ field.id_for_label }}">{{ field.label }}：{{ field.errors|join:"；" }}</a></li>{% endif %}{% endfor %}</ul></div>{% endif %}
 {% for field in form.hidden_fields %}{{ field }}{% endfor %}
 {% for section in field_sections %}<section class="card mb-3" data-finance-section><div class="card-header"><h2 class="h6 mb-0">{{ section.title }}</h2></div><div class="card-body">{% if section.help %}<p class="small text-secondary">{{ section.help }}</p>{% endif %}<div class="row g-3">
@@ -16,5 +18,6 @@
 <section class="card mb-3"><div class="card-body"><label class="form-check">{{ form.confirm_permanent_code }}<span class="form-check-label">{{ form.confirm_permanent_code.label }}</span></label>{% for error in form.confirm_permanent_code.errors %}<div class="text-danger">{{ error }}</div>{% endfor %}<div class="app-action-bar mt-3"><button class="btn btn-outline-primary" type="submit" name="action" value="save">保存财务与折旧资料</button><button class="btn btn-outline-secondary" type="submit" formaction="{% url 'finance:finance-preview' asset.pk %}">折旧试算</button><button class="btn btn-primary" type="submit" name="action" value="confirm">确认财务与折旧</button></div></div></section>
 </form></div></div>
 {% if preview %}<section class="card mt-4"><div class="card-header"><h2 class="h6 mb-0">折旧试算 · 不影响账面</h2></div><div class="card-body"><p>原值 {{ preview.original_cost }} 元；残值 {{ preview.salvage_value }} 元；起算日 {{ preview.start_date }}。</p>{% if preview.requires_period_input and preview.depreciable_amount %}<p>本资产采用工作量法或手工折旧，后续按期录入实际工作量或确认金额。</p>{% endif %}</div>{% if preview.lines %}<div class="table-responsive app-work-table"><table class="table table-sm mb-0"><thead><tr><th>期次</th><th>期间</th><th>期初净值</th><th>计划折旧</th><th>累计计划</th><th>期末净值</th></tr></thead><tbody>{% for line in preview.lines %}<tr><td>{{ line.sequence_no }}</td><td>{{ line.period_start }} 至 {{ line.period_end }}</td><td class="app-money">{{ line.opening_book_value }}</td><td class="app-money">{{ line.planned_amount }}</td><td class="app-money">{{ line.planned_accumulated }}</td><td class="app-money">{{ line.closing_book_value }}</td></tr>{% endfor %}</tbody></table></div>{% elif not preview.depreciable_amount %}<div class="card-body pt-0">无剩余可折旧金额，无需新增折旧计划。</div>{% endif %}</section>{% endif %}
-<script src="{% static 'js/finance-confirm-form.js' %}?v=20260926" defer></script>
+{# Initialize enabled fields before the shared unsaved-input guard captures its baseline. #}
+<script src="{% static 'js/finance-confirm-form.js' %}?v=20261004"></script>
 {% endblock %}

@@ -1,4 +1,4 @@
-document.addEventListener("DOMContentLoaded", () => {
+(() => {
   const form = document.getElementById("finance-confirm-form");
   const treatment = document.getElementById("id_accounting_treatment");
   if (!form || !treatment) return;
@@ -52,4 +52,4 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   ["accounting_treatment", "salvage_mode", "start_rule", "posting_period", "method"].forEach(name => field(name)?.addEventListener("change", refresh));
   refresh();
-});
+})();

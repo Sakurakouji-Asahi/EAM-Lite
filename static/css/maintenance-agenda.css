@@ -1,0 +1,13 @@
+.maintenance-agenda-item {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .75rem;
+}
+.maintenance-agenda-description {
+  flex: 1 1 20rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.maintenance-agenda-day { min-width: 0; }
+.maintenance-agenda-day .card-header > div { min-width: 0; }

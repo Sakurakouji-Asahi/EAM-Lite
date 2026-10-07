@@ -1,0 +1,8 @@
+<section class="card shadow-sm mt-4" id="depreciation-entries" aria-labelledby="entry-history-title">
+  <div class="card-header"><h2 class="h6 mb-0" id="entry-history-title">实际折旧分录</h2></div>
+  <div class="table-responsive" data-scroll-table><table class="table table-sm mb-0 finance-entry-history-table"><thead><tr><th>期间</th><th>来源</th><th>金额</th><th>累计折旧</th><th>账面净值</th><th>核对</th></tr></thead><tbody>
+    {% for entry in entries %}<tr><td>{{ entry.period_start|date:"Y-m-d" }} 至 {{ entry.period_end_inclusive|date:"Y-m-d" }}</td><td>{{ entry.get_source_type_display }}</td><td>{{ entry.amount }}</td><td>{{ entry.accumulated_depreciation_after }}</td><td>{{ entry.book_value_after }}</td><td><a href="{% url 'finance:entry-detail' entry.pk %}?{{ entry_return_query }}">查看来源</a></td></tr>
+    {% empty %}<tr><td colspan="6" class="text-center text-secondary py-4">当前条件下没有实际分录。</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% include '_pagination.html' with page_obj=entry_page pagination_query=entry_query page_parameter='entry_page' page_anchor='depreciation-entries' %}

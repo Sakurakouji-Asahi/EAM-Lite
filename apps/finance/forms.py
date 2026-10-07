@@ -66,13 +66,31 @@ class PendingFinanceFilterForm(forms.Form):
 
 
 class DepreciationBatchFilterForm(forms.Form):
+    q = forms.CharField(label="资产编号、设备编号、名称或完整批次编号", required=False, max_length=200,
+                        help_text="按资产查找包含该资产的批次，明细数量仍显示整批范围。")
     period = forms.DateField(label="会计月份", required=False, input_formats=["%Y-%m"],
                              widget=forms.DateInput(format="%Y-%m", attrs={"type": "month"}),
                              help_text="显示期间与所选月份有交集的批次。")
     status = forms.ChoiceField(label="批次状态", required=False,
                                choices=(("", "全部状态"), *DepreciationBatch.Status.choices))
+    batch_type = forms.ChoiceField(label="批次类型", required=False,
+                                   choices=(("", "全部类型"), *DepreciationBatch.BatchType.choices))
     page_size = forms.TypedChoiceField(label="每页显示", required=False, coerce=int, initial=25,
                                        choices=((25,"25 条"),(50,"50 条"),(100,"100 条"),(200,"200 条")))
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        _bootstrap_widgets(self)
+
+
+class DepreciationPolicyFilterForm(forms.Form):
+    q = forms.CharField(label="政策稳定键或名称", required=False, max_length=200)
+    status = forms.ChoiceField(label="版本状态", required=False,
+                               choices=(("", "全部状态"), *DepreciationPolicy.Status.choices))
+    method = forms.ChoiceField(label="折旧方法", required=False,
+                               choices=(("", "全部方法"), *DepreciationMethod.choices))
+    page_size = forms.TypedChoiceField(label="每页显示", required=False, coerce=int, initial=25,
+                                       choices=((25, "25 条"), (50, "50 条"), (100, "100 条"), (200, "200 条")))
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

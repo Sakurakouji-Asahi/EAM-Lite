@@ -1,1 +1,17 @@
-{% extends "base.html" %}{% block title %}实盘录入 - EAM-Lite{% endblock %}{% block content %}<header class="app-page-header"><div><h1 class="h3 mb-1">实盘录入（{{ line.item.unit }}）</h1><p class="text-secondary mb-0">{{ line.item_code_snapshot }} · {{ line.item_name_snapshot }}{% if line.custody %} · {{ line.employee_snapshot }}{% endif %}</p></div><a class="btn btn-outline-secondary" href="{% url 'supplies:count-task-detail' task.pk %}">返回</a></header><form method="post" class="card card-body shadow-sm">{% csrf_token %}<input type="hidden" name="return_query" value="{{ return_query }}">{% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}<div class="alert alert-info">应盘数量：{{ line.expected_quantity }} {{ line.item.unit }}。实盘为零时请明确输入 0，不能留空。</div>{% for field in form %}{% if field.is_hidden %}{{ field }}{% else %}<div class="mb-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</div>{% endif %}{% endfor %}<div class="d-flex flex-wrap gap-2"><button class="btn btn-primary" type="submit" name="next_action" value="next">保存并录下一条未录入</button><button class="btn btn-outline-primary" type="submit" name="next_action" value="detail">保存并返回任务</button></div></form>{% endblock %}
+{% extends "base.html" %}
+{% load static %}
+{% block title %}实盘录入 - EAM-Lite{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3 mb-1">实盘录入（{{ line.item.unit }}）</h1><p class="text-secondary mb-0">{{ task.task_no }} · {{ task.name }}<br>{{ line.item_code_snapshot }} · {{ line.item_name_snapshot }}{% if line.custody %} · {{ line.department_snapshot }} · {{ line.employee_snapshot }}{% endif %}</p></div><a class="btn btn-outline-secondary" href="{% url 'supplies:count-task-detail' task.pk %}{% if return_query %}?{{ return_query }}{% endif %}">返回盘点任务</a></header>
+<form method="post" class="card card-body shadow-sm" data-count-entry data-unsaved-guard="{% if form.errors %}true{% else %}false{% endif %}">
+{% csrf_token %}<input type="hidden" name="return_query" value="{{ return_query }}">
+{% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+<div class="alert alert-info">应盘数量：{{ line.expected_quantity }} {{ line.item.unit }}。实盘为零时请明确输入 0，不能留空。</div>
+{% include 'supplies/_count_entry_preview.html' %}
+<div data-count-row data-count-expected="{{ line.expected_quantity }}" data-count-unit="{{ line.item.unit }}">
+{% for field in form %}{% if field.is_hidden %}{{ field }}{% else %}<div class="mb-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% for error in field.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}{% if field.name == 'counted_quantity' %}<div class="small mt-1" data-count-feedback hidden></div>{% elif field.name == 'remark' %}<small class="text-warning" data-count-reason-hint hidden>存在差异，请填写原因。</small>{% endif %}</div>{% endif %}{% endfor %}
+</div>
+<div class="d-flex flex-wrap gap-2"><button class="btn btn-primary" type="submit" name="next_action" value="next">保存并录下一条未录入</button><button class="btn btn-outline-primary" type="submit" name="next_action" value="detail">保存并返回任务</button></div>
+</form>
+<script src="{% static 'js/supply-count-entry.js' %}?v=20261004" defer></script>
+{% endblock %}

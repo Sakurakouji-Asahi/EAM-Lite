@@ -146,6 +146,7 @@ def test_assignee_scans_and_completes_on_mobile_without_f1_or_hr_leak(client):
         complete_url,
         {
             "idempotency_key": idempotency_key,
+            "completion_instance": form_page.context["form"]["completion_instance"].value(),
             # A disabled field is intentionally absent from a browser POST.
             "completed_date": timezone.localdate().isoformat(),
             "actual_content": "扫码后完成检查、清洁、润滑和紧固",
@@ -187,6 +188,7 @@ def test_mobile_completion_post_uploads_photo_to_new_record_in_same_page(
             complete_url,
             {
                 "idempotency_key": idempotency_key,
+                "completion_instance": form_page.context["form"]["completion_instance"].value(),
                 "completed_date": timezone.localdate().isoformat(),
                 "actual_content": "手机同页完成并提交现场照片",
                 "result": "normal",

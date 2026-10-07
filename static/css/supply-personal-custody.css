@@ -1,0 +1,11 @@
+.supply-personal-custody-totals { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); }
+.supply-personal-custody-totals > div { border: 1px solid var(--eam-border, #d7e1ea); border-radius: .65rem; padding: .75rem; min-width: 0; overflow-wrap: anywhere; }
+.supply-personal-custody-totals strong { display: block; font-variant-numeric: tabular-nums; }
+@media screen {
+  .supply-personal-custody-table { min-width: 48rem; }
+  .supply-personal-custody-table td:nth-child(2) { min-width: 13rem; }
+  .supply-personal-custody-table td:first-child, .supply-personal-custody-table th:last-child,
+  .supply-personal-custody-table td:last-child { white-space: nowrap; }
+  .supply-custody-history-table { min-width: 62rem; }
+  .supply-custody-history-table td:first-child, .supply-custody-history-table td:nth-child(2) { white-space: nowrap; }
+}

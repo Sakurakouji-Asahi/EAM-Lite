@@ -5,5 +5,12 @@
     <div class="card inventory-summary-card"><div class="card-body"><div class="text-secondary small">异常</div><div class="h3 mb-0 text-danger">{% if summary_links %}<a class="text-danger" href="{{ summary_links.exception }}" aria-label="查看现场异常资产">{{ summary.exception }}</a>{% else %}{{ summary.exception }}{% endif %}</div></div></div>
     <div class="card inventory-summary-card"><div class="card-body"><div class="text-secondary small">未盘</div><div class="h3 mb-0">{% if summary_links %}<a href="{{ summary_links.missing }}" aria-label="查看未盘资产">{{ summary.missing }}</a>{% else %}{{ summary.missing }}{% endif %}</div></div></div>
   </div>
-  <div class="progress mb-3" role="progressbar" aria-label="盘点进度" aria-valuenow="{{ summary.scanned }}" aria-valuemin="0" aria-valuemax="{{ summary.expected }}"><div class="progress-bar"{% if summary.expected %} style="width:{% widthratio summary.scanned summary.expected 100 %}%"{% endif %}>{{ summary.scanned }} / {{ summary.expected }}</div></div>
+  {% if summary.expected %}
+    <div class="inventory-progress mb-3">
+      <div class="d-flex justify-content-between small text-secondary mb-1"><span>盘点进度</span><span>{{ summary.scanned }} / {{ summary.expected }}</span></div>
+      <progress class="inventory-progress-meter" aria-label="盘点进度" aria-valuetext="已盘 {{ summary.scanned }}，应盘 {{ summary.expected }}" value="{{ summary.scanned }}" max="{{ summary.expected }}">{{ summary.scanned }} / {{ summary.expected }}</progress>
+    </div>
+  {% else %}
+    <p class="text-secondary small mb-3">本任务没有应盘资产（0 / 0）。</p>
+  {% endif %}
 {% endif %}

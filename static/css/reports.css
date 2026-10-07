@@ -28,4 +28,13 @@
 .report-catalog { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: .85rem; }
 .report-catalog > a { padding: 1rem; border: 1px solid var(--eam-line); border-radius: .4rem; background: var(--eam-surface); color: inherit; text-decoration: none; }
 .report-catalog > a:hover { border-color: var(--eam-line-strong); }
+.report-column-controls { border-bottom: 1px solid var(--eam-line); }
+.report-column-controls > summary { padding: .6rem 1rem; cursor: pointer; font-size: .85rem; font-weight: 650; }
+.report-column-body { padding: 0 1rem .85rem; }
+.report-column-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .5rem 1rem; }
+.report-column-controls[hidden], .report-preview-table [data-report-column][hidden] { display: none !important; }
+@media screen {
+  #report-detail-table[data-report-columns-reduced] { min-width: 0; }
+  #report-detail-table[data-report-columns-reduced] th { white-space: nowrap; }
+}
 @media (max-width: 575px) { .report-category-tabs a { padding: .4rem .5rem; font-size: .82rem; } .report-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .report-pagination { padding: .65rem; } }

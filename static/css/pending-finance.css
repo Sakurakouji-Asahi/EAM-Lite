@@ -1,0 +1,31 @@
+.pending-status-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .75rem;
+}
+
+.pending-status-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: .75rem;
+  min-width: 0;
+  padding: .9rem 1rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: .5rem;
+  color: var(--bs-body-color);
+  background: var(--bs-body-bg);
+  text-decoration: none;
+}
+
+.pending-status-card strong { font-size: 1.4rem; }
+.pending-status-card:is(:hover, :focus-visible, .is-active) {
+  border-color: var(--bs-primary);
+  background: var(--bs-primary-bg-subtle);
+  color: var(--bs-primary-text-emphasis);
+}
+.pending-filter-chip { overflow-wrap: anywhere; text-align: start; }
+
+@media (max-width: 575.98px) {
+  .pending-status-cards { grid-template-columns: minmax(0, 1fr); }
+}

@@ -621,7 +621,7 @@ def send_asset_for_repair(
 
 @transaction.atomic
 def complete_asset_repair(
-    *, actor, asset, effective_at, result, idempotency_key, request=None,
+    *, actor, asset, effective_at, result, idempotency_key, remark="", request=None,
 ):
     from apps.assets.models import AssetMovement
 
@@ -631,13 +631,17 @@ def complete_asset_repair(
     ).order_by("-effective_at", "-created_at").first()
     if start is None or start.from_status not in {"in_use", "idle"}:
         raise ValidationError("找不到可配对的送修历史。")
+    completion_remark = f"对应送修变动：{start.pk}"
+    note = str(remark or "").strip()
+    if note:
+        completion_remark += f"\n{note}"
     return _change_status(
         actor=actor, asset=asset, expected_from="under_repair",
         to_status=start.from_status, movement_type="repair_complete",
         effective_at=effective_at,
         reason=_required(result, "result", "维修完成必须填写结果。"),
         idempotency_key=idempotency_key,
-        remark=f"对应送修变动：{start.pk}", request=request,
+        remark=completion_remark, request=request,
     )
 
 
@@ -695,6 +699,9 @@ def loan_asset(
         payload=payload, model=AssetLoan,
     )
     if existing is not None:
+        # Older request hashes omit the note; compare the saved history instead.
+        if existing.loan_movement.remark != str(remark or "").strip():
+            raise ValidationError("相同幂等键已用于不同请求参数。")
         return existing
     if asset.record_status != "active" or asset.asset_status != expected_status:
         raise ValidationError("资产状态已变化，不能借出；请刷新后重试。")

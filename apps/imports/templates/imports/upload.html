@@ -1,7 +1,10 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}{{ definition.label }}导入 - EAM-Lite{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/import-upload.css' %}?v=20261004-file-review"><script src="{% static 'js/import-upload.js' %}?v=20261004-file-review" defer></script>{% endblock %}
 {% block content %}
-<h1 class="h3 mb-3">{{ definition.label }} Excel 导入</h1>
+<header class="app-page-header"><div><h1 class="h3 mb-1">{{ definition.label }} Excel 导入</h1><p class="text-secondary mb-0">当前公司：{{ company.short_name }} · 工作表：{{ definition.sheet_name }} · 每批最多 {{ max_import_rows }} 行</p></div><a class="btn btn-outline-primary" href="{% url 'imports:template' definition.import_type %}">下载标准模板</a></header>
+<ol class="import-upload-steps mb-3" aria-label="导入流程"><li><strong>1. 填写模板</strong><span>保留工作表、列名和填写说明</span></li><li><strong>2. 上传并核对</strong><span>查看错误、提示和整批预览</span></li><li><strong>3. 确认导入</strong><span>校验通过后再确认整批写入</span></li></ol>
 <div class="alert alert-info">
   请使用 {{ definition.version }} 标准模板。未知列、公式、宏、外部链接或嵌入对象将被拒绝；存在任何行错误时不能确认。
 </div>
@@ -24,18 +27,27 @@
   <strong>期初保管规则：</strong>只允许数量型低值耐用品；员工可留空，填写时必须属于责任部门且在职、启用。确认后直接建立开放保管和不可变 opening 流水，不改变仓库库存，也不提供破坏性回滚。
 </div>
 {% endif %}
-<p><a href="{% url 'imports:template' definition.import_type %}">下载标准模板</a></p>
-<form method="post" enctype="multipart/form-data" novalidate>
+<details class="card mb-3 import-field-guide" data-import-field-guide><summary class="card-header">查看模板字段填写指引（{{ field_guide|length }} 列）</summary><div class="card-body"><p class="small text-secondary">“每行必填”是基础必填项；其余字段可能按业务情况条件必填。以下指引也包含在模板的“填写说明”工作表中。</p><div class="d-flex flex-wrap align-items-center gap-3 mb-3" data-import-guide-search hidden><label for="import-field-search" class="visually-hidden">查找模板字段</label><input type="search" id="import-field-search" class="form-control import-field-search" placeholder="查找字段名称或填写规则" data-import-field-search><label class="form-check mb-0"><input type="checkbox" class="form-check-input" data-import-required-only>只看基础必填</label><span class="small text-secondary" data-import-field-count role="status"></span></div><div class="table-responsive import-field-table"><table class="table table-sm align-middle mb-0"><thead><tr><th scope="col">模板列名</th><th scope="col">填写要求</th><th scope="col">填写指引</th></tr></thead><tbody>{% for field in field_guide %}<tr data-import-field data-import-required="{{ field.required|yesno:'true,false' }}"><th scope="row">{{ field.name }}</th><td class="text-nowrap">{% if field.required %}<span class="badge text-bg-primary">每行必填</span>{% else %}<span class="small text-secondary">按业务填写</span>{% endif %}</td><td>{{ field.hint }}</td></tr>{% endfor %}<tr data-import-field-empty hidden><td colspan="3" class="text-center text-secondary py-3">没有匹配的字段。可减少搜索文字或关闭“只看基础必填”。</td></tr></tbody></table></div></div></details>
+<form method="post" enctype="multipart/form-data" class="card card-body" novalidate data-import-upload data-unsaved-guard="false">
   {% csrf_token %}
   {{ form.non_field_errors }}
   {{ form.import_type }}{{ form.idempotency_key }}
-  <div class="mb-3">
+  <div class="mb-3 import-file-zone" data-import-file-zone>
     <label class="form-label" for="{{ form.file.id_for_label }}">{{ form.file.label }}</label>
     {{ form.file }}
     {% for error in form.file.errors %}<div class="text-danger">{{ error }}</div>{% endfor %}
     <div class="form-text">{{ form.file.help_text }}</div>
+    <p class="small text-secondary mt-2 mb-0" data-import-drop-hint hidden>也可将一个 .xlsx 文件拖到此处。重新选择或拖入文件可替换，尚未上传。</p>
   </div>
-  <button class="btn btn-primary" type="submit">上传、解析并验证</button>
-  <a class="btn btn-link" href="{% url 'imports:home' %}">返回</a>
+  <section class="import-file-review mb-3" aria-labelledby="import-file-review-heading" data-import-file-review hidden>
+    <h2 class="h6" id="import-file-review-heading">已选文件，待上传</h2>
+    <p class="fw-semibold mb-1 import-selected-file" data-import-file-name></p>
+    <p class="small text-secondary mb-2" data-import-file-size></p>
+    <p class="small mb-2">将按本页“{{ definition.label }}”模板校验：{{ definition.sheet_name }} 工作表 · {{ definition.version }}。文件内容会在上传后核对。</p>
+    <button class="btn btn-sm btn-outline-secondary" type="button" data-import-file-clear>移除所选文件</button>
+  </section>
+  <p class="small text-danger" role="status" aria-live="polite" data-import-file-message hidden></p>
+  <p class="small text-secondary">上传后先查看校验结果；确认整批导入后才会创建对应业务记录。</p>
+  <div class="d-flex flex-wrap gap-2"><button class="btn btn-primary" type="submit">上传、解析并验证</button><a class="btn btn-outline-secondary" href="{% url 'imports:home' %}">返回导入中心</a></div>
 </form>
 {% endblock %}

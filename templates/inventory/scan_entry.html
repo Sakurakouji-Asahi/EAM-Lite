@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% load static %}
 {% block title %}扫码盘点 - {{ task.name }}{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/inventory-progress.css' %}"><link rel="stylesheet" href="{% static 'css/inventory-scan-mobile.css' %}">{% endblock %}
 {% block content %}
   <article class="app-narrow-page app-narrow-page-sm inventory-scan-page">
     <header class="mb-3">
@@ -9,17 +10,31 @@
       <p class="mb-0">{{ task.name }}</p>
     </header>
     {% include "inventory/_summary.html" %}
+    {% if recent_scan %}
+      <section class="card mb-3 border-success" aria-label="最近保存的现场结果">
+        <div class="card-body">
+          <div class="small text-secondary">最近保存 · {{ recent_scan.scanned_at|date:'m-d H:i' }}</div>
+          <strong>{{ recent_scan.task_asset.expected_code_snapshot }} · {{ recent_scan.task_asset.expected_name_snapshot }}</strong>
+          <div class="mt-1"><span class="badge {% if recent_scan.result == 'normal' %}text-bg-success{% else %}text-bg-warning{% endif %}">{{ recent_scan.get_result_display }}</span>{% if not recent_scan.is_effective %}<span class="small text-secondary ms-2">该资产已有较新的现场记录</span>{% endif %}</div>
+          <p class="small text-secondary mt-2 mb-0">{% if summary.missing %}还剩 {{ summary.missing }} 件未盘，可继续扫描下一件。{% else %}应盘资产均已有现场记录，可查看任务进度与异常。{% endif %}</p>
+        </div>
+      </section>
+    {% endif %}
+    {% if summary.expected and not summary.missing %}
+      <div class="alert alert-success" role="status"><strong>现场记录已齐。</strong>任务仍在进行，可继续复核；现场结束后{% if can_stop_scanning %}<a href="{% url 'inventory:task-stop' task.pk %}" class="alert-link">停止扫码并进入差异处理</a>{% else %}请联系任务负责人停止扫码并进入差异处理{% endif %}。</div>
+    {% endif %}
     <p class="text-secondary">打开本页的相机，对准资产标签；识别后核对现场信息并保存。</p>
     {% if error %}
       <div class="alert {% if error_kind == 'non_task' %}alert-warning{% else %}alert-danger{% endif %}" role="alert">{{ error }}</div>
     {% endif %}
-    <form method="post" class="card shadow-sm inventory-scan-form" data-qr-camera-form>
+    <form method="post" class="card shadow-sm inventory-scan-form" data-qr-camera-form data-inventory-scan-entry>
       <div class="card-body">
         {% csrf_token %}
+        <input type="hidden" name="opaque_origin_bridge" value="{{ opaque_origin_bridge }}">
         {% include "assets/_qr_camera_controls.html" %}
-        <label class="form-label" for="token">扫描资产标签</label>
-        <input class="form-control form-control-lg" id="token" name="token" data-qr-camera-value autocomplete="off" required>
-        <div class="form-text">本系统也兼容此前包含网址的旧二维码；仍会核验登录、盘点范围和当前有效标签。</div>
+        <label class="form-label" for="token">二维码内容（扫码枪或手工粘贴）</label>
+        <input class="form-control form-control-lg" id="token" name="token" data-qr-camera-value autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="512" aria-describedby="inventory-token-help" required>
+        <div class="form-text" id="inventory-token-help">请扫描或粘贴标签的二维码内容，不能用资产编号或设备编号代替。本系统兼容此前包含网址的旧二维码；识别后仍需核对现场信息，尚不会计入已盘。</div>
       </div>
       <div class="card-footer d-grid gap-2 inventory-scan-actions">
         <button class="btn btn-success btn-lg inventory-mobile-action" type="submit">核对并录入</button>
@@ -30,4 +45,5 @@
   </article>
   <script src="{% static 'vendor/zxing-browser/0.2.1/zxing-browser.min.js' %}" defer></script>
   <script src="{% static 'js/qr-camera-scanner.js' %}" defer></script>
+  <script src="{% static 'js/inventory-scan-assistance.js' %}" defer></script>
 {% endblock %}

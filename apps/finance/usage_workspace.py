@@ -37,13 +37,17 @@ class UsageQueryForm(forms.Form):
 
 
 class UsageLineForm(forms.Form):
-    units = forms.DecimalField(label='本期工作量',required=False,min_value=Decimal('0'),max_digits=24,decimal_places=6)
+    units = forms.DecimalField(label='本期工作量',required=False,min_value=Decimal('0'),max_digits=24,decimal_places=6,
+                              widget=forms.TextInput(attrs={'inputmode':'decimal','autocomplete':'off'}))
     remark = forms.CharField(label='备注',required=False,max_length=2000)
     def __init__(self,*args,profile,**kwargs):
         super().__init__(*args,**kwargs)
         self.profile=profile
         _bootstrap_widgets(self)
         for field in self.fields.values(): field.widget.attrs['aria-label']=f'{profile.asset.asset_code} {field.label}'
+        self.fields['units'].widget.attrs.update({'data-usage-units':'', 'inputmode':'decimal', 'autocomplete':'off', 'aria-describedby':'usage-input-note'})
+        self.fields['remark'].widget.attrs['data-usage-remark']=''
+        self.already_recorded = getattr(profile, 'usage_id', None) is not None
     def clean(self):
         values=super().clean()
         if values.get('remark') and values.get('units') is None:
@@ -140,8 +144,11 @@ def monthly_usage(request):
         else:
             messages.success(request,f'已保存 {changed} 项工作量；空白未保存。'+(f'其中 {capped} 项按原规则限制到剩余预计工作量，原输入已记在备注中。' if capped else ''))
             return redirect(reverse('finance:monthly-usage')+'?'+data.urlencode())
-    known=AssetWorkUsage.objects.filter(pk__in=[row.usage_id for row in page if row.usage_id])
+    known_ids = {row.usage_id for row in page if row.usage_id} | {row.usage_id for row in profiles if row.usage_id}
+    known=AssetWorkUsage.objects.filter(pk__in=known_ids).select_related('asset','entered_by').order_by('asset__asset_code','pk')
     context.update(page_obj=page,pagination_query=query,row_forms=row_forms,
-        recorded={str(row.depreciation_profile_id):row for row in known},manifest=signing.dumps(manifest,salt='monthly-usage',compress=True))
+        recorded={str(row.depreciation_profile_id):row for row in known},manifest=signing.dumps(manifest,salt='monthly-usage',compress=True),
+        already_recorded_count=sum(row.already_recorded for row in row_forms),
+        usage_has_errors=bool(form.errors) or any(row.errors for row in row_forms))
     context['recorded_rows']=[row for row in known]
     return render(request,'finance/monthly_usage.html',context)

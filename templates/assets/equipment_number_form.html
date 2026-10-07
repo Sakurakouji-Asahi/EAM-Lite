@@ -5,7 +5,7 @@
     <div><h1 class="h3 mb-1">补录或更正设备编号</h1><p class="text-secondary mb-0">{{ asset.asset_code }} · {{ asset.asset_name }}</p></div>
     <a class="btn btn-outline-secondary" href="{% url 'assets:asset-detail' asset.pk %}">返回资产</a>
   </header>
-  <form method="post" class="card shadow-sm app-form-section">
+  <form method="post" class="card shadow-sm app-form-section" data-unsaved-guard="{% if form.is_bound %}true{% else %}false{% endif %}">
     <div class="card-body">
       {% csrf_token %}
       {% if form.non_field_errors %}<div class="alert alert-danger" role="alert">{{ form.non_field_errors }}</div>{% endif %}

@@ -10,6 +10,7 @@ from apps.core.form_widgets import normalize_date_widgets
 from django.core.exceptions import PermissionDenied
 
 from apps.assets.lifecycle_permissions import can_lifecycle_action
+from apps.assets.form_options import link_assignment_options
 from apps.masterdata.models import Department, Employee, Location
 from apps.masterdata.permissions import role_names_for
 from apps.offboarding.domain import business_date
@@ -37,6 +38,9 @@ class ClearanceDetailFilterForm(forms.Form):
     q = forms.CharField(label="资产、设备编号或物品", required=False, max_length=200)
     resolution = forms.ChoiceField(label="处理范围",required=False,choices=(
         ('','全部项目'),('pending','只看未处理'),('resolved','只看已处理'),
+    ))
+    view = forms.ChoiceField(label="显示方式", required=False, choices=(
+        ("", "详细核对"), ("compact", "紧凑工作清单"),
     ))
 
     def __init__(self,*args,**kwargs):
@@ -179,6 +183,13 @@ class ClearanceItemReturnForm(forms.Form):
         if not self.is_bound:
             self.initial["idempotency_key"] = uuid.uuid4().hex
         _style(self)
+        self.fields["received_by_employee"].help_text = "实际签收资产的人员，可与归还后责任人不同。"
+        self.fields["return_department"].help_text = "先选择接收部门，再选择该部门的归还后责任人。"
+        self.fields["return_responsible_employee"].help_text = "保存后承担资产责任的人员；必须属于接收部门。"
+        link_assignment_options(
+            self, department="return_department", employee="return_responsible_employee",
+            location="return_location",
+        )
 
     def clean(self):
         cleaned = super().clean()
@@ -249,6 +260,13 @@ class ClearanceItemTransferForm(forms.Form):
         if not self.is_bound:
             self.initial["idempotency_key"] = uuid.uuid4().hex
         _style(self)
+
+        self.fields["to_department"].help_text = "先选择目标部门，再选择该部门的新责任人。"
+        self.fields["to_responsible_employee"].help_text = "保存后承担资产责任的在职启用人员。"
+        link_assignment_options(
+            self, department="to_department", employee="to_responsible_employee",
+            location="to_location",
+        )
 
     def clean(self):
         cleaned = super().clean()

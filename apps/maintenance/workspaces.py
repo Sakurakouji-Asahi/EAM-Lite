@@ -19,7 +19,7 @@ class PlanQueryForm(forms.Form):
         self.fields.pop('status' if due else 'due_scope')
         _style(self)
 
-    def apply(self,plans):
+    def apply(self,plans,*,include_status=True):
         if not self.is_valid():
             return plans.none()
         values = self.cleaned_data
@@ -30,7 +30,7 @@ class PlanQueryForm(forms.Form):
             plans=plans.filter(asset__department=values['department'])
         if values['responsible_employee']:
             plans=plans.filter(responsible_employee=values['responsible_employee'])
-        if values.get('status'):
+        if include_status and values.get('status'):
             plans=plans.filter(status=values['status'])
         return plans
 
@@ -48,7 +48,7 @@ class PlanHistoryForm(MaintenanceRecordFilterForm):
             return records.none()
         data=self.cleaned_data
         if data['q']:
-            records=records.filter(Q(actual_content__icontains=data['q'])|Q(remark__icontains=data['q'])|Q(problem__description__icontains=data['q']))
+            records=records.filter(Q(content_snapshot__icontains=data['q'])|Q(remark__icontains=data['q'])|Q(problem__description__icontains=data['q']))
         for field in ('status','result'):
             if data[field]: records=records.filter(**{field:data[field]})
         if data['date_from']: records=records.filter(completed_date__gte=data['date_from'])

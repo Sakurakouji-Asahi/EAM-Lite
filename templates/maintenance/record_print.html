@@ -1,0 +1,59 @@
+{% load static %}
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>{{ record.asset.asset_code }} · 保养完成记录</title>
+  <link rel="stylesheet" href="{% static 'css/maintenance-record-print.css' %}?v=20261004">
+  <script src="{% static 'js/maintenance-record-print.js' %}?v=20261004" defer></script>
+</head>
+<body>
+  <nav class="record-print-controls" aria-label="记录打印操作">
+    <div><strong>保养完成记录 · A4 预览</strong><p>可通过浏览器打印或保存为 PDF。问题状态与附件清单按当前可查看资料生成。</p></div>
+    <div class="record-print-buttons"><button type="button" data-maintenance-record-print hidden>打印保养记录</button><a href="{{ detail_url }}">返回记录详情</a></div>
+    <noscript><p>可使用浏览器菜单或 Ctrl+P 打印此页。</p></noscript>
+  </nav>
+  <main class="maintenance-record-paper">
+    <header class="record-paper-header">
+      <div class="record-paper-company">{{ record.company.short_name|default:record.company.name }} · 保养交接资料</div>
+      <h1>保养完成记录</h1>
+      <p class="record-paper-identity"><strong>{{ record.asset.asset_code }}</strong> / {{ record.asset.asset_name }}{% if record.asset.equipment_number %}<br>设备编号：{{ record.asset.equipment_number }}{% endif %}</p>
+      <p class="record-paper-status">记录：{{ record.get_status_display }} · 结果：{{ record.get_result_display }}</p>
+    </header>
+    {% if record.status == 'voided' %}<section class="record-paper-void" aria-label="作废说明"><h2>已作废 · 历史记录</h2><p>{{ record.void_reason }}</p><p>作废时间：{{ record.voided_at|date:'Y-m-d H:i' }} · 办理人：{{ record.voided_by.display_name|default:record.voided_by.username|default:'历史账号' }}</p></section>{% endif %}
+    <section class="record-paper-section" aria-labelledby="paper-execution-title">
+      <h2 id="paper-execution-title">执行信息</h2>
+      <dl class="record-paper-fields">
+        <div><dt>保养计划</dt><dd>{{ record.maintenance_plan.name }}</dd></div>
+        <div><dt>执行人</dt><dd>{% if record.completed_by %}{{ record.completed_by.employee_no }} / {{ record.completed_by.name }}{% else %}历史员工资料未保留{% endif %}</dd></div>
+        <div><dt>计划日期</dt><dd>{{ record.scheduled_date|date:'Y-m-d' }}</dd></div>
+        <div><dt>实际完成日期</dt><dd>{{ record.completed_date|date:'Y-m-d' }}</dd></div>
+        <div><dt>登记时间</dt><dd>{{ record.created_at|date:'Y-m-d H:i' }}</dd></div>
+      </dl>
+    </section>
+    <section class="record-paper-section" aria-labelledby="paper-content-title"><h2 id="paper-content-title">已保存的实际完成内容</h2><p class="record-paper-text">{{ record.content_snapshot }}</p>{% if record.remark %}<h3>备注</h3><p class="record-paper-text">{{ record.remark }}</p>{% endif %}</section>
+    {% if problem %}
+      <section class="record-paper-section" aria-labelledby="paper-problem-title">
+        <h2 id="paper-problem-title">发现问题与跟进情况</h2>
+        <p class="record-paper-text">{{ problem.description }}</p>
+        <dl class="record-paper-fields">
+          <div><dt>当前跟进状态</dt><dd>{% if record.status == 'voided' %}来源记录已作废 · 仅保留历史{% else %}{{ problem.get_status_display }}{% endif %}</dd></div>
+          <div><dt>跟进负责人</dt><dd>{% if problem.owner_employee %}{{ problem.owner_employee.employee_no }} / {{ problem.owner_employee.name }}{% else %}未分派{% endif %}</dd></div>
+          <div><dt>目标日期</dt><dd>{{ problem.target_date|date:'Y-m-d'|default:'未设置' }}</dd></div>
+          {% if problem.status == 'closed' %}<div><dt>关闭人 / 时间</dt><dd>{{ problem.closed_by.display_name|default:problem.closed_by.username|default:'历史账号' }} / {{ problem.closed_at|date:'Y-m-d H:i' }}</dd></div>{% endif %}
+        </dl>
+        {% if problem.status == 'closed' %}<h3>已保存的处理说明</h3><p class="record-paper-text">{{ problem.closure_note }}</p>{% endif %}
+      </section>
+    {% else %}<section class="record-paper-section"><h2>问题跟进</h2><p>本记录没有关联的问题跟进项。</p></section>{% endif %}
+    <section class="record-paper-section" aria-labelledby="paper-evidence-title">
+      <h2 id="paper-evidence-title">当前可查看的有效附件（{{ attachments|length }} 项）</h2>
+      <p class="record-paper-note">纸面列出文件名，附件内容可返回记录详情查看。</p>
+      {% if attachments %}<ol class="record-paper-evidence">{% for item in attachments %}<li><strong>{{ item.link.attachment.safe_filename }}</strong><br><span>{{ item.source_label }} · {{ item.link.created_at|date:'Y-m-d H:i' }}</span></li>{% endfor %}</ol>{% else %}<p>当前可查看范围内没有有效附件。</p>{% endif %}
+    </section>
+    <section class="record-paper-section" aria-labelledby="paper-standard-title"><h2 id="paper-standard-title">计划当前标准 · 交接参考</h2><p class="record-paper-note">标准随计划维护更新，执行情况以本页已保存的实际完成内容和结果为准。</p><p class="record-paper-text">{{ record.maintenance_plan.standard_content }}</p></section>
+    <footer class="record-paper-footer"><div>资料生成：{{ generated_at|date:'Y-m-d H:i' }}</div><div>记录编号：{{ record.pk }}</div></footer>
+  </main>
+</body>
+</html>

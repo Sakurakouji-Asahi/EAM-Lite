@@ -4,10 +4,9 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Count, Q
 
-from apps.masterdata.permissions import role_names_for
 from .forms import SupplyCountRecordForm, _bootstrap_widgets
 from .models import SupplyCountLine
-from .permissions import require_record_supply_count
+from .permissions import require_record_supply_count, scoped_supply_count_lines
 
 
 class CountResultFilterForm(forms.Form):
@@ -30,10 +29,7 @@ def visible_count_lines(actor, task):
     lines = SupplyCountLine.objects.filter(count_task=task).select_related(
         'item','count_task','stock_balance','custody__department','custody__employee',
         'adjustment_document_line__document','resolution_custody_movement','counted_by','resolved_by')
-    roles = role_names_for(actor)
-    if 'employee' in roles and not roles.intersection({'system_admin','finance','warehouse','equipment','management','department_manager'}):
-        lines = lines.filter(custody__employee__user=actor)
-    return lines.order_by('item_code_snapshot','pk')
+    return scoped_supply_count_lines(actor, task.company, lines).order_by('item_code_snapshot','pk')
 
 
 def count_summary(lines):

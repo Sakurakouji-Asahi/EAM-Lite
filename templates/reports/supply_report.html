@@ -1,8 +1,11 @@
 {% extends "reports/base.html" %}
+{% load static %}
+{% block extra_head %}{{ block.super }}<link rel="stylesheet" href="{% static 'css/report-drilldown.css' %}?v=20261004">{% endblock %}
 {% block title %}{{ definition.title }} | EAM-Lite{% endblock %}
 {% block content %}
 <header class="app-page-header"><div><p class="small text-secondary mb-1">报表中心</p><h1 class="h3 mb-1">{{ definition.title }}</h1><p class="text-secondary mb-0">{{ report_description }}</p></div><a class="btn btn-outline-secondary" href="{% url 'reports:supply-report-index' %}">数量物品报表目录</a></header>
 {% include 'reports/_navigation.html' %}
+{% if report_return_url %}<div class="d-flex flex-wrap align-items-center gap-2 mb-3"><a class="btn btn-outline-primary report-origin-link" href="{{ report_return_url }}">返回{{ report_return_title }}（保留条件和页码）</a><span class="small text-secondary">本页为汇总所选物品的领用、退回及冲销记录。</span></div>{% endif %}
 {% include 'reports/_filters.html' %}
 {% include 'reports/_presets.html' %}
 {% include 'reports/_results.html' %}

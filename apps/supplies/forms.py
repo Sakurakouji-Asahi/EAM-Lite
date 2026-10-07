@@ -14,6 +14,8 @@ from django.utils import timezone
 from apps.masterdata.models import Department, Employee, Location
 from apps.masterdata.permissions import resolve_department_ids, role_names_for
 from .domain import quantize_quantity, quantize_unit_cost, validate_zero_cost_reason
+from .draft_revision import decode_supply_edit_revision
+from .custody_transfer_choices import configure_custody_transfer_choices
 from .models import (
     SupplyCategory,
     SupplyCountDomain,
@@ -278,6 +280,10 @@ class SupplyDocumentForm(forms.Form):
         widget=forms.Textarea(attrs={"rows": 2, "class": "form-control"}),
     )
     idempotency_key = forms.CharField(widget=forms.HiddenInput())
+    expected_revision = forms.CharField(
+        required=False, widget=forms.HiddenInput(),
+        error_messages={"required": "缺少编辑页面版本，请重新打开最新草稿后核对。"},
+    )
 
     def __init__(
         self,
@@ -322,6 +328,10 @@ class SupplyDocumentForm(forms.Form):
             initial.setdefault("business_date", timezone.localdate())
             initial.setdefault("idempotency_key", str(uuid.uuid4()))
         super().__init__(*args, initial=initial, **kwargs)
+        if instance is None:
+            self.fields.pop("expected_revision")
+        else:
+            self.fields["expected_revision"].required = True
         warehouses = SupplyWarehouse.objects.filter(company=company, is_active=True)
         if instance is not None and (
             instance.target_warehouse_id or instance.source_warehouse_id
@@ -422,6 +432,12 @@ class SupplyDocumentForm(forms.Form):
             raise ValidationError("领用员工必须是当前公司在职、启用员工。")
         return employee
 
+    def clean_expected_revision(self):
+        return decode_supply_edit_revision(
+            token=self.cleaned_data["expected_revision"], actor=self.actor,
+            company=self.company, document=self.instance,
+        )
+
     def clean(self):
         cleaned = super().clean()
         source = cleaned.get("source_warehouse")
@@ -446,11 +462,20 @@ class SupplyDocumentForm(forms.Form):
         return value
 
 
+class SupplyDocumentItemSelect(forms.Select):
+    def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
+        option = super().create_option(name, value, label, selected, index, subindex, attrs)
+        item = getattr(value, "instance", None)
+        if item is not None:
+            option["attrs"]["data-item-unit"] = item.unit
+        return option
+
+
 class SupplyDocumentLineEntryForm(forms.Form):
     item = forms.ModelChoiceField(
         label="物品",
         queryset=SupplyItem.objects.none(),
-        widget=forms.Select(attrs={"class": "form-select"}),
+        widget=SupplyDocumentItemSelect(attrs={"class": "form-select"}),
     )
     quantity = forms.DecimalField(
         label="数量",
@@ -567,6 +592,7 @@ class SupplyConsumableReturnForm(forms.Form):
         actor=None,
         company=None,
         source_issue_line=None,
+        returnable_quantity=None,
         **kwargs,
     ):
         if actor is None or company is None or source_issue_line is None:
@@ -581,6 +607,11 @@ class SupplyConsumableReturnForm(forms.Form):
         self.fields["target_warehouse"].queryset = SupplyWarehouse.objects.filter(
             company=company, is_active=True
         ).order_by("normalized_code")
+        if returnable_quantity is not None:
+            _quantity_limit_hint(self.fields["quantity"], returnable_quantity, source_issue_line.item.unit)
+            self.fields["quantity"].help_text = (
+                f"当前可退 {returnable_quantity} {source_issue_line.item.unit}；草稿保存后需过账才计入累计有效退回。"
+            )
 
     def clean_target_warehouse(self):
         warehouse = self.cleaned_data["target_warehouse"]
@@ -609,6 +640,15 @@ class SupplyConsumableReturnForm(forms.Form):
         if source is None:
             raise ValidationError("原领用明细已失效，或不是可退回的低值易耗品。")
         return cleaned
+
+
+def _quantity_limit_hint(field, quantity, unit):
+    quantity = quantize_quantity(quantity)
+    field.widget.attrs.update({
+        "max": str(quantity),
+        "data-quantity-limit": str(quantity),
+        "data-quantity-unit": unit,
+    })
 
 
 class _CustodyActionBaseForm(forms.Form):
@@ -654,6 +694,7 @@ class _CustodyActionBaseForm(forms.Form):
         self.fields["quantity"].help_text = (
             f"当前最多可处理 {custody.current_quantity} {custody.item.unit}。"
         )
+        _quantity_limit_hint(self.fields["quantity"], custody.current_quantity, custody.item.unit)
 
     def clean_quantity(self):
         quantity = quantize_quantity(self.cleaned_data["quantity"])
@@ -733,6 +774,7 @@ class SupplyCustodyTransferForm(_CustodyActionBaseForm):
         self.fields["target_employee"].queryset = employees.select_related(
             "department"
         ).order_by("normalized_employee_no")
+        configure_custody_transfer_choices(self)
 
     def clean(self):
         cleaned = super().clean()

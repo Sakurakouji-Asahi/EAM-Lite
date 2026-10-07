@@ -1,14 +1,24 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}{% if task %}编辑{% else %}新建{% endif %}盘点任务 - EAM-Lite{% endblock %}
+{% block extra_head %}<script src="{% static 'js/inventory-asset-selection.js' %}" defer></script><script src="{% static 'js/inventory-scope-assistance.js' %}" defer></script>{% endblock %}
 {% block content %}
   <div class="mb-3"><h1 class="h3">{% if task %}编辑盘点任务草稿{% else %}新建盘点任务草稿{% endif %}</h1><p class="text-secondary">保存草稿不会生成应盘快照，也不能接受扫码。任务编号：{{ task_code }}</p></div>
-  <form method="post" class="card shadow-sm"><div class="card-body">
+  <form method="post" class="card shadow-sm" data-inventory-scope-assistance data-unsaved-guard="{% if form.is_bound %}true{% else %}false{% endif %}"><div class="card-body">
     <input type="hidden" name="selected_asset_ids_ui_present" value="1">
     {% csrf_token %}{% if not task %}<input type="hidden" name="_draft_token" value="{{ draft_token }}">{% endif %}
-    {% include "inventory/_form_fields.html" %}
+    {% if task and form.errors.expected_revision %}<div class="alert alert-danger" role="alert">{{ form.errors.expected_revision }}<a class="alert-link" href="{% url 'inventory:task-edit' task.pk %}">重新打开最新草稿</a>，核对后再提交。当前输入已保留。</div>{% endif %}
+    {% include "inventory/_form_fields.html" with scope_assistance=True %}
     <section class="border rounded p-3 mb-3" data-scope-assets>
       <h2 class="h6">勾选资产范围</h2><p class="small text-secondary">仅当范围选择“勾选资产”时生效；发布时仍会逐项重新校验对象权限和正式状态。</p>
-      <div class="table-responsive" style="max-height: 20rem"><table class="table table-sm align-middle"><thead><tr><th>选择</th><th>编号</th><th>名称</th><th>部门</th><th>责任人</th><th>位置</th></tr></thead><tbody>{% for asset in available_assets %}<tr><td><input class="form-check-input" type="checkbox" name="selected_asset_ids_ui" value="{{ asset.pk }}"{% if asset.pk|stringformat:'s' in selected_ids %} checked{% endif %}></td><td>{{ asset.asset_code }}</td><td>{{ asset.asset_name }}</td><td>{{ asset.department.name }}</td><td>{{ asset.responsible_employee.name }}</td><td>{{ asset.location.name }}</td></tr>{% empty %}<tr><td colspan="6" class="text-secondary">当前范围没有可选正式资产。</td></tr>{% endfor %}</tbody></table></div>
+      {% for error in form.selected_asset_ids.errors %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endfor %}
+      <div class="mb-3" data-inventory-selection-tools hidden>
+        <label class="form-label" for="inventory-asset-search">查找可选资产</label>
+        <input id="inventory-asset-search" class="form-control mb-2" type="search" autocomplete="off" placeholder="编号、设备编号、名称、部门、责任人或位置" aria-describedby="inventory-selection-help inventory-selection-summary" data-inventory-asset-search>
+        <div class="d-flex flex-wrap gap-2 align-items-center"><button class="btn btn-sm btn-outline-primary" type="button" data-inventory-select-visible>选择当前显示</button><button class="btn btn-sm btn-outline-secondary" type="button" data-inventory-clear-visible>取消当前显示</button><span class="small text-secondary" id="inventory-selection-summary" role="status" aria-live="polite" data-inventory-selection-summary></span></div>
+        <div class="form-text" id="inventory-selection-help">查询只改变显示；未显示的已选资产会保留。批量操作仅作用于当前显示的资产。</div>
+      </div>
+      <div class="table-responsive inventory-scope-assets-scroll"><table class="table table-sm align-middle"><thead><tr><th>选择</th><th>编号 / 设备编号</th><th>名称</th><th>部门</th><th>责任人</th><th>位置</th></tr></thead><tbody>{% for asset in available_assets %}<tr data-inventory-asset-row><td><input class="form-check-input" type="checkbox" name="selected_asset_ids_ui" value="{{ asset.pk }}" aria-label="选择资产 {{ asset.asset_code }} {{ asset.asset_name }}"{% if asset.pk|stringformat:'s' in selected_ids %} checked{% endif %}></td><td>{{ asset.asset_code }}{% if asset.equipment_number %}<div class="small text-secondary">{{ asset.equipment_number }}</div>{% endif %}</td><td>{{ asset.asset_name }}</td><td>{{ asset.department.name }}</td><td>{{ asset.responsible_employee.name }}</td><td>{{ asset.location.name }}</td></tr>{% empty %}<tr><td colspan="6" class="text-secondary">当前范围没有可选正式资产。</td></tr>{% endfor %}<tr data-inventory-selection-empty hidden><td colspan="6" class="text-secondary text-center">没有匹配的资产，请调整查询；已有勾选仍会保留。</td></tr></tbody></table></div>
     </section>
   </div><div class="card-footer d-flex gap-2"><button class="btn btn-primary" type="submit">保存草稿</button><a class="btn btn-outline-secondary" href="{% if task %}{% url 'inventory:task-detail' task.pk %}{% else %}{% url 'inventory:task-list' %}{% endif %}">取消</a></div></form>
 {% endblock %}

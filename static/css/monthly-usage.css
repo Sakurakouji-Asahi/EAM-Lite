@@ -1,0 +1,10 @@
+.usage-entry-review[hidden], .usage-entry-review [hidden] { display: none !important; }
+.usage-entry-stats { font-size: .9rem; font-variant-numeric: tabular-nums; }
+.usage-unit-totals { display: flex; flex-wrap: wrap; list-style: none; gap: .5rem 1.5rem; padding: 0; font-weight: 650; font-variant-numeric: tabular-nums; }
+.usage-entry-table th { white-space: nowrap; }
+.usage-entry-table td:first-child { min-width: 12rem; }
+.usage-entry-table [data-usage-units] { min-width: 10rem; }
+.usage-entry-table [data-usage-remark] { min-width: 16rem; }
+.usage-row-state { min-width: 9rem; }
+.usage-row-state > span { display: block; margin: .2rem 0; }
+.usage-row-invalid { --bs-table-bg: var(--bs-warning-bg-subtle, #fff3cd); }

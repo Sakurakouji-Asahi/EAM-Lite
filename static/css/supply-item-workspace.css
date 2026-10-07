@@ -1,0 +1,27 @@
+.supply-item-list-table {
+  min-width: 960px;
+}
+
+.supply-item-activity-table {
+  min-width: 600px;
+}
+
+.supply-item-list-table th,
+.supply-item-activity-table th,
+.supply-item-list-table td:first-child,
+.supply-item-activity-table td:nth-child(n + 2) {
+  white-space: nowrap;
+}
+
+.supply-item-list-table td:nth-child(2),
+.supply-item-list-table td:nth-child(3) {
+  min-width: 140px;
+}
+
+.supply-item-list-table td:nth-child(7) {
+  min-width: 160px;
+}
+
+.supply-item-activity-table td:first-child {
+  min-width: 220px;
+}

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}{{ title }}{% endblock %}
+{% block extra_head %}<script src="{% static 'js/maintenance-completion.js' %}" defer></script><script src="{% static 'js/maintenance-error-navigation.js' %}" defer></script>{% endblock %}
+{% block content %}
+<article class="app-narrow-page">
+  <header class="app-page-header"><div><div class="text-secondary">{{ plan.asset.asset_code }}{% if plan.asset.equipment_number %} · 设备 {{ plan.asset.equipment_number }}{% endif %}</div><h1 class="h3 mb-1">{{ title }}</h1><p class="text-secondary mb-0">{{ plan.asset.asset_name }} · {{ plan.responsible_employee.name }}</p></div></header>
+  {% include 'maintenance/_form_error_summary.html' %}
+  <section class="card mb-3" aria-labelledby="maintenance-standard-title">
+    <div class="card-header d-flex justify-content-between align-items-center gap-2"><h2 class="h6 mb-0" id="maintenance-standard-title">本次保养标准</h2><span class="small text-secondary">{{ plan.cycle_value }} {{ plan.get_cycle_unit_display }}一次</span></div>
+    <div class="card-body"><div class="text-break mb-3">{{ plan.standard_content|linebreaksbr }}</div><button type="button" class="btn btn-sm btn-outline-primary" data-maintenance-use-standard hidden>引用到实际完成内容</button><p class="form-text mb-0">引用后请核对现场实际情况，补充测量值、执行结果或未完成事项。</p><p class="small text-success mb-0 mt-2" role="status" aria-live="polite" data-maintenance-copy-status></p></div>
+  </section>
+  <form method="post" enctype="multipart/form-data" class="card shadow-sm" data-maintenance-completion data-maintenance-error-navigation data-unsaved-guard="{% if form.is_bound %}true{% else %}false{% endif %}">
+    <div class="card-body">{% include 'maintenance/_form_fields.html' with error_summary=True %}</div>
+    <div class="card-footer d-flex flex-wrap gap-2"><button class="btn btn-success maintenance-mobile-action" type="submit">{{ button_label|default:'确认完成' }}</button><a class="btn btn-outline-secondary maintenance-mobile-action" href="{{ cancel_url }}">取消</a></div>
+  </form>
+  {{ plan.standard_content|json_script:"maintenance-standard-content" }}
+</article>
+{% endblock %}

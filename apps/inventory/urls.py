@@ -1,6 +1,7 @@
 from django.urls import path
 
 from apps.inventory import views
+from apps.inventory.print_views import task_paper_checklist
 
 
 app_name = "inventory"
@@ -9,6 +10,8 @@ urlpatterns = [
     path("", views.task_list, name="task-list"),
     path("new/", views.task_create, name="task-create"),
     path("tasks/<uuid:pk>/", views.task_detail, name="task-detail"),
+    path("tasks/<uuid:pk>/results/export/", views.task_result_export, name="task-result-export"),
+    path("tasks/<uuid:pk>/results/paper/", task_paper_checklist, name="task-paper-checklist"),
     path("tasks/<uuid:pk>/edit/", views.task_edit, name="task-edit"),
     path("tasks/<uuid:pk>/publish/", views.task_publish, name="task-publish"),
     path("tasks/<uuid:pk>/scan/", views.task_scan_entry, name="task-scan"),

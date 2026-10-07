@@ -1,9 +1,13 @@
+from collections import Counter
+from uuid import UUID
+
 from django import forms
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core import signing
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 from django.http import HttpResponseBadRequest, QueryDict
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -18,6 +22,7 @@ from .schemas import REPORT_REGISTRY, SUPPLY_REPORT_REGISTRY, RETIRED_REPORT_KEY
 from .catalog import report_url
 from .relative_periods import relative_choices,apply_relative_period
 from .history_forms import ExportHistoryFilterForm
+from .export_history import export_file_context
 
 
 def preset_context(actor, company, report_key, query):
@@ -91,13 +96,15 @@ def preset_delete(request, pk):
 
 
 class ExportListForm(ExportHistoryFilterForm):
+    q = forms.CharField(label='文件名、导出人或记录编号',required=False,max_length=200,
+                        widget=forms.TextInput(attrs={'placeholder':'文件名、姓名、账号或完整记录编号'}))
     report_type = forms.ChoiceField(label='报表类型',required=False)
     mine = forms.BooleanField(label='只看本人导出',required=False)
 
     def __init__(self,*args,actor,**kwargs):
         super().__init__(*args,**kwargs)
         self.fields.pop('period')
-        self.fields['mine'].widget.attrs['class'] = 'form-check-input ms-2'
+        self.fields['mine'].widget.attrs['class'] = 'form-check-input'
         self.fields['report_type'].choices = [('', '全部有权查看的报表')] + [(key,definition.title)
             for key,definition in {**REPORT_REGISTRY,**SUPPLY_REPORT_REGISTRY}.items() if can_view_report(actor,key)]
 
@@ -106,16 +113,24 @@ class ExportListForm(ExportHistoryFilterForm):
 @login_required
 @require_GET
 def export_history(request):
-    from .views import _company_or_400
+    from .views import _company_or_400, _export_return_url
+    from .export_history import history_search_context
+    company = _company_or_400()
     form = ExportListForm(request.GET,actor=request.user)
     choices = [key for key,_ in form.fields['report_type'].choices if key]
-    rows = ExportLog.objects.filter(company=_company_or_400(), export_type__in=choices).select_related('requested_by').order_by('-requested_at','-pk')
-    if form.is_valid():
+    rows = ExportLog.objects.filter(company=company, export_type__in=choices).select_related('requested_by','output_attachment').order_by('-requested_at','-pk')
+    valid = form.is_valid()
+    if valid:
         data = form.cleaned_data
+        if data['q']:
+            search = Q(output_attachment__safe_filename__icontains=data['q']) | Q(requested_by__display_name__icontains=data['q']) | Q(requested_by__username__icontains=data['q'])
+            try:
+                search |= Q(pk=UUID(data['q']))
+            except ValueError:
+                pass
+            rows = rows.filter(search)
         if data['report_type']:
             rows = rows.filter(export_type=data['report_type'])
-        if data['status']:
-            rows = rows.filter(status=data['status'])
         if data['date_from']:
             rows = rows.filter(requested_at__date__gte=data['date_from'])
         if data['date_to']:
@@ -126,5 +141,23 @@ def export_history(request):
         rows = rows.none()
     # Metadata obeys the same permission, cost-column and historical-scope rules as downloads.
     visible = [row for row in rows.iterator() if can_view_export(request.user,row)]
+    counts = Counter(row.status for row in visible)
+    status_summary = []
+    for status,label,count in [('', '全部状态',len(visible)), *((value,label,counts[value]) for value,label in ExportLog.Status.choices)]:
+        params = request.GET.copy()
+        params.pop('page',None)
+        params.pop('status',None)
+        if status:
+            params['status'] = status
+        status_summary.append({'label':label,'count':count,'url':reverse('reports:export-history') + ('?' + params.urlencode() if params else ''),
+                               'selected':valid and form.cleaned_data['status'] == status})
+    if valid and data['status']:
+        visible = [row for row in visible if row.status == data['status']]
     page, query = paginate_query(request,visible)
-    return render(request,'reports/export_history.html',{'form':form,'page_obj':page,'pagination_query':query},status=200 if form.is_valid() else 400)
+    for row in page:
+        row.file_context = export_file_context(request.user,row)
+        row.source_url = _export_return_url(row)
+    return render(request,'reports/export_history.html',{'form':form,'page_obj':page,'pagination_query':query,
+        'history_query':request.GET.urlencode(),'status_summary':status_summary,'history_valid':valid,
+        'history_has_filters':valid and any(form.cleaned_data.values()),
+        **history_search_context(form)},status=200 if valid else 400)

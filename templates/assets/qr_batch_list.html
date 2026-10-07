@@ -1,14 +1,21 @@
-{% extends "base.html" %}
+{% extends "base.html" %}{% load static %}
 {% block title %}标签打印批次 - EAM-Lite{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/label-batch-workspace.css' %}?v=20261004">{% endblock %}
 {% block content %}
   <header class="app-page-header align-items-start">
-    <div><h1 class="h3 mb-1">标签打印批次</h1><p class="text-secondary mb-0">批次为追加式打印历史，不显示二维码 Token。</p></div>
+    <div><h1 class="h3 mb-1">标签打印批次</h1><p class="text-secondary mb-0">先找到未完成贴标的批次，再逐项核对实物与当前标签。</p></div>
     <a class="btn btn-primary" href="{% url 'assets:label-queue' %}">返回打印队列</a>
   </header>
-  <form method="get" class="card card-body mb-3"><div class="row g-2 align-items-end"><div class="col-md-7"><label class="form-label" for="batch-search">批次、资产编号、设备编号或名称</label><input class="form-control" id="batch-search" name="q" value="{{ query }}"></div><div class="col-md-3"><label class="form-label" for="batch-status">状态</label><select class="form-select" id="batch-status" name="status"><option value="">全部状态</option>{% for key,label in status_choices %}<option value="{{ key }}"{% if selected_status == key %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div><div class="col-md-2"><button class="btn btn-primary">查询</button></div></div></form>
-  <div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover align-middle mb-0">
-    <thead class="table-light"><tr><th>批次编号</th><th>模板</th><th>状态</th><th>标签数</th><th>创建时间</th><th>打印时间</th><th>操作</th></tr></thead>
-    <tbody>{% for batch in batches %}<tr><td>{{ batch.batch_code }}</td><td>{{ batch.template_version }}</td><td>{{ batch.get_status_display }}</td><td>{{ batch.item_count|default:0 }}</td><td>{{ batch.created_at|date:"Y-m-d H:i" }}</td><td>{{ batch.printed_at|date:"Y-m-d H:i"|default:"—" }}</td><td><a class="btn btn-sm btn-outline-primary" href="{% url 'assets:label-batch-detail' batch.pk %}">查看</a></td></tr>{% empty %}<tr><td colspan="7" class="text-center text-secondary py-4">尚无打印批次。</td></tr>{% endfor %}</tbody>
+  {% include '_list_filters.html' %}
+  <p class="small text-secondary">当前查询共 {{ page_obj.paginator.count }} 个批次。贴标数量按当前二维码状态显示，同一标签可能出现在多次打印记录中；已打印不代表已贴好。</p>
+  <div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover align-middle mb-0 label-batch-table">
+    <thead class="table-light"><tr><th>打印批次</th><th>当前贴标进度</th><th>打印记录</th><th>操作</th></tr></thead>
+    <tbody>{% for batch in batches %}<tr data-label-batch="{{ batch.pk }}">
+      <td data-label="打印批次"><strong>{{ batch.batch_code }}</strong><div class="small text-secondary mt-1">{{ batch.template_version }} · 共 {{ batch.item_count }} 张</div></td>
+      <td data-label="贴标进度"><div class="label-progress-tags"><span class="badge text-bg-{% if batch.pending_count %}warning{% else %}light border text-secondary{% endif %}">待确认 {{ batch.pending_count }}</span><span class="badge text-bg-{% if batch.attached_count %}success{% else %}light border text-secondary{% endif %}">已贴标 {{ batch.attached_count }}</span>{% if batch.inactive_count %}<span class="badge text-bg-secondary">已失效 {{ batch.inactive_count }}</span>{% endif %}{% if batch.waiting_count %}<span class="badge text-bg-light border text-secondary">尚不可贴标 {{ batch.waiting_count }}</span>{% endif %}</div></td>
+      <td data-label="打印记录"><span>{{ batch.get_status_display }}</span><div class="small text-secondary mt-1">创建 {{ batch.created_at|date:"Y-m-d H:i" }}</div>{% if batch.printed_at %}<div class="small text-secondary">打印 {{ batch.printed_at|date:"Y-m-d H:i" }}</div>{% endif %}</td>
+      <td data-label="操作"><div class="d-flex flex-wrap gap-2">{% if batch.pending_count %}<a class="btn btn-sm btn-primary" href="{{ batch.pending_url }}">继续贴标（{{ batch.pending_count }}）</a>{% endif %}<a class="btn btn-sm btn-outline-secondary" href="{{ batch.detail_url }}">查看批次</a></div></td>
+    </tr>{% empty %}<tr><td colspan="4"><div class="app-empty-state"><strong>没有符合条件的打印批次</strong><span>可调整批次状态、贴标进度或关键词。</span><a class="btn btn-sm btn-outline-primary" href="{% url 'assets:label-batch-list' %}">查看全部批次</a></div></td></tr>{% endfor %}</tbody>
   </table></div></div>
 {% include '_pagination.html' %}
 {% endblock %}

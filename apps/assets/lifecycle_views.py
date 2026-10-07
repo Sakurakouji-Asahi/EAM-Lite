@@ -59,6 +59,8 @@ from apps.assets.lifecycle_services import (
     void_disposal_attachment,
 )
 from apps.assets.models import Asset, AssetDisposal, AssetLoan, AttachmentLink
+from apps.assets.transfer_workspace import configure_transfer_labels, transfer_review_context
+from apps.assets.repair_workspace import repair_context
 from apps.masterdata.models import Attachment, InitializationSetting
 from apps.masterdata.permissions import current_company
 
@@ -144,6 +146,12 @@ def _action_form(
         action=action,
         initial=initial,
     )
+    if action == "transfer":
+        configure_transfer_labels(form)
+    if action == "repair_complete":
+        form.fields["reason"].label = "维修结果"
+        form.fields["reason"].help_text = "填写维修处理结果及试运行情况，保存到本次维修完成记录。"
+        form.fields["remark"].help_text = "可补充更换配件、检测经过等；系统会保留与原送修记录的关联。"
     if request.method == "POST" and form.is_valid():
         try:
             result = callback(form.cleaned_data)
@@ -168,6 +176,8 @@ def _action_form(
             "button_label": button_label,
             "button_class": button_class,
             "multipart": enctype,
+            "transfer_review": transfer_review_context(asset, form) if action == "transfer" else None,
+            "repair_context": repair_context(asset) if action == "repair_complete" else None,
         },
     )
 
@@ -248,7 +258,8 @@ def asset_repair_complete(request, pk):
         request, pk, action="repair_complete", title="维修完成", description="资产将恢复最近一次送修前的在用或闲置状态。",
         callback=lambda asset, data: complete_asset_repair(
             actor=request.user, asset=asset, effective_at=data["effective_at"],
-            result=data["reason"], idempotency_key=data["idempotency_key"], request=request,
+            result=data["reason"], remark=data["remark"],
+            idempotency_key=data["idempotency_key"], request=request,
         ),
     )
 

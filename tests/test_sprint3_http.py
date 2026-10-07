@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
@@ -8,6 +10,7 @@ from django.urls import reverse
 from apps.assets.models import Asset, AssetCodeHistory, AttachmentLink
 from apps.assets.services import submit_asset_for_finance, upload_asset_attachment
 from apps.audit.models import AuditLog
+from tests.test_asset_edit_revision import edit_revision
 from apps.coding.services import set_default_scheme
 from tests.test_sprint4_acceptance import _mark_initialized
 from apps.masterdata.models import AssetCodingScheme, Attachment, IssuedCode, SequenceCounter
@@ -49,6 +52,7 @@ def make_context(*, role="equipment", initialized=True):
 def form_data(category, department, employee, location, **overrides):
     data = {
         "asset_action": "draft",  # This module exercises explicit draft editing.
+        "idempotency_key": uuid.uuid4().hex,
         "asset_name": "HTTP 检具",
         "category": str(category.pk),
         "brand": "HTTP",
@@ -156,6 +160,7 @@ def test_create_edit_detail_and_dynamic_fields_work_without_financial_inputs(cli
         asset_name="HTTP 已更新",
     )
     edit_data[f"custom_{custom.pk}-value"] = "蓝"
+    edit_data["expected_revision"] = edit_revision(client, reverse("assets:asset-edit", args=[asset.pk]))
     edited = client.post(
         reverse("assets:asset-edit", args=[asset.pk]), edit_data
     )
@@ -580,6 +585,7 @@ def test_edit_draft_can_fill_missing_department_employee_and_location(client):
             location,
             asset_name="资料已补齐",
             unit="台",
+            expected_revision=edit_revision(client, reverse("assets:asset-edit", args=[asset.pk])),
         ),
     )
 

@@ -1,9 +1,11 @@
 {% extends "base.html" %}
 {% block title %}{{ title }} - EAM-Lite{% endblock %}
 {% block content %}
-  <header class="app-page-header"><div><h1 class="h3 mb-1">{{ title }}</h1><p class="text-secondary mb-0">按品种建立物品档案，按数量登记库存与领退。</p></div><a class="btn btn-outline-secondary" href="{% url 'supplies:item-list' %}">返回</a></header>
+  <header class="app-page-header"><div><h1 class="h3 mb-1">{{ title }}</h1><p class="text-secondary mb-0">按品种建立物品档案，按数量登记库存与领退。</p></div><a class="btn btn-outline-secondary" href="{{ item_list_url }}">返回物品清单</a></header>
+  {% if copy_source %}<section class="card card-body shadow-sm mb-3" aria-label="复制资料来源"><div class="d-flex flex-wrap gap-2 justify-content-between"><strong>复制资料新增</strong><a href="{{ copy_source_url }}">查看来源</a></div><p class="mb-1 mt-2">{{ copy_source.item_code }} · {{ copy_source.name }}</p><p class="small text-secondary mb-0">已带入可复用资料，当前表单尚未保存。请核对名称、管理模式和计量单位，编码可留空自动生成。</p></section>{% endif %}
+  {% for notice in copy_notices %}<div class="alert alert-warning" role="note">{{ notice }}</div>{% endfor %}
   <div class="alert alert-info" role="note">一个物品编码对应一种物品，数量由出入库单据登记。领用后消耗选“低值易耗品”；需按数量持续保管、归还或转交选“数量型低值耐用品”。需要独立识别每一件时，使用逐件资产建档。</div>
   <div class="card shadow-sm app-form-section"><div class="card-body">
-    {% url 'supplies:item-list' as cancel_url %}{% include "supplies/_form.html" %}
+    {% include "supplies/_item_archive_form.html" %}
   </div></div>
 {% endblock %}

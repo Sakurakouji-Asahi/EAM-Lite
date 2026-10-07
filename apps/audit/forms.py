@@ -7,6 +7,7 @@ from datetime import timedelta
 from django import forms
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from apps.audit.permissions import AUDIT_OBJECT_TYPE_REGISTRY
 
@@ -19,24 +20,42 @@ _DATETIME_DEFAULT_FORMAT = "%Y-%m-%dT%H:%M:%S.%f"
 
 def _default_time_range():
     end_at = timezone.localtime(timezone.now())
+    end_at = end_at.replace(microsecond=end_at.microsecond // 1000 * 1000)
     return end_at - timedelta(days=7), end_at
+
+
+class AuditDateTimeInput(forms.DateTimeInput):
+    """Display defaults and offset-bearing links as valid datetime-local values."""
+
+    def format_value(self, value):
+        if isinstance(value, str):
+            try:
+                value = parse_datetime(value) or value
+            except ValueError:
+                pass
+        if hasattr(value, "strftime"):
+            if timezone.is_aware(value):
+                value = timezone.localtime(value)
+            return value.strftime(_DATETIME_DEFAULT_FORMAT)[:-3]
+        return super().format_value(value)
 
 
 class AuditLogFilterForm(forms.Form):
     q = forms.CharField(label='业务编号、名称或中文动作',required=False,max_length=200,
-        widget=forms.TextInput(attrs={'placeholder':'资产编号、设备编号、库存单据号或中文动作'}))
+        help_text='支持资产/设备编号、库存单据号、员工编号/姓名、盘点任务编号/名称、保养计划名称和中文动作。',
+        widget=forms.TextInput(attrs={'placeholder':'输入编号、人员、任务或计划名称'}))
     start_at = forms.DateTimeField(
         label="开始时间（上海）",
         input_formats=(_DATETIME_INPUT_FORMAT, "%Y-%m-%d %H:%M", "%Y-%m-%d"),
-        widget=forms.DateTimeInput(
-            attrs={"type": "datetime-local"}, format=_DATETIME_INPUT_FORMAT
+        widget=AuditDateTimeInput(
+            attrs={"type": "datetime-local", "step": "0.001"}, format=_DATETIME_INPUT_FORMAT
         ),
     )
     end_at = forms.DateTimeField(
         label="结束时间（上海）",
         input_formats=(_DATETIME_INPUT_FORMAT, "%Y-%m-%d %H:%M", "%Y-%m-%d"),
-        widget=forms.DateTimeInput(
-            attrs={"type": "datetime-local"}, format=_DATETIME_INPUT_FORMAT
+        widget=AuditDateTimeInput(
+            attrs={"type": "datetime-local", "step": "0.001"}, format=_DATETIME_INPUT_FORMAT
         ),
     )
     actor = forms.ModelChoiceField(
@@ -102,6 +121,8 @@ class AuditLogFilterForm(forms.Form):
                 .distinct()
                 .order_by("username")
             )
+        for field in self.fields.values():
+            field.widget.attrs.setdefault("class", "form-select" if isinstance(field.widget, forms.Select) else "form-control")
 
     def clean(self):
         cleaned = super().clean()

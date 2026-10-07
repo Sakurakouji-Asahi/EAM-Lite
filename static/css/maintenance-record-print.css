@@ -1,0 +1,46 @@
+* { box-sizing: border-box; }
+body { margin: 0; padding: 1.25rem; color: #182c40; background: #eef3f6; font: 14px/1.6 "Microsoft YaHei", "PingFang SC", sans-serif; }
+.record-print-controls { max-width: 190mm; margin: 0 auto 1rem; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; }
+.record-print-controls p { margin: .35rem 0 0; }
+.record-print-buttons { display: flex; flex-wrap: wrap; gap: .6rem; }
+.record-print-buttons button, .record-print-buttons a { padding: .5rem .8rem; border: 1px solid #376889; border-radius: .35rem; background: white; color: #17476c; font: inherit; text-decoration: none; cursor: pointer; }
+.record-print-buttons button { background: #17476c; color: white; }
+.maintenance-record-paper { max-width: 190mm; margin: auto; padding: 9mm; border: 1px solid #cedbe5; background: white; box-shadow: 0 .3rem 1rem #17365314; overflow-wrap: anywhere; }
+.record-paper-header { border-bottom: 2px solid #244c68; padding-bottom: 4mm; }
+.record-paper-company, .record-paper-note, .record-paper-footer { color: #536779; font-size: 12px; }
+h1 { font-size: 23px; margin: 2mm 0 3mm; line-height: 1.4; }
+.record-paper-identity { margin: 0 0 2mm; }
+.record-paper-status { margin: 0; font-weight: bold; }
+.record-paper-section { margin-top: 5mm; }
+h2 { font-size: 16px; line-height: 1.4; margin: 0 0 3mm; padding-bottom: 1.5mm; border-bottom: 1px solid #94aaba; }
+h3 { font-size: 13px; margin: 3mm 0 1mm; }
+p { margin: 0 0 2mm; }
+.record-paper-text { white-space: pre-wrap; }
+.record-paper-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2.5mm 6mm; margin: 0; }
+.record-paper-fields > div { min-width: 0; }
+dt { color: #536779; font-size: 12px; }
+dd { margin: .5mm 0 0; }
+.record-paper-void { margin-top: 4mm; padding: 3mm; border: 2px solid #7d3531; }
+.record-paper-void h2 { color: #7d3531; }
+.record-paper-void p { white-space: pre-wrap; }
+.record-paper-evidence { margin: 0; padding-left: 1.5rem; }
+.record-paper-evidence li { margin-bottom: 2mm; }
+.record-paper-evidence span { color: #536779; font-size: 12px; }
+.record-paper-footer { margin-top: 5mm; padding-top: 3mm; border-top: 1px solid #94aaba; }
+@media screen and (max-width: 575px) {
+  body { padding: .75rem; }
+  .maintenance-record-paper { padding: 5mm; }
+  .record-paper-fields { grid-template-columns: minmax(0, 1fr); }
+}
+@page { size: A4; margin: 14mm; }
+@media print {
+  body { padding: 0; background: white; color: black; font-size: 10pt; }
+  .record-print-controls { display: none !important; }
+  .maintenance-record-paper { max-width: none; padding: 0; border: 0; box-shadow: none; }
+  .record-paper-company, .record-paper-note, dt, .record-paper-evidence span, .record-paper-footer { color: #333; font-size: 9pt; }
+  h1 { font-size: 17pt; }
+  h2 { font-size: 12pt; break-after: avoid; }
+  h3 { font-size: 10pt; break-after: avoid; }
+  .record-paper-header, .record-paper-fields > div, .record-paper-evidence li, .record-paper-footer { break-inside: avoid; }
+  .record-paper-text { orphans: 3; widows: 3; }
+}

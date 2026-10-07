@@ -15,6 +15,8 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.utils import timezone
 
+from .draft_revision import decode_inventory_edit_revision
+
 from apps.inventory.permissions import (
     can_close_inventory_task,
     can_manage_inventory_attachment,
@@ -33,6 +35,26 @@ def _style(form):
             "class",
             "form-select" if isinstance(field.widget, forms.Select) else "form-control",
         )
+
+
+class InventoryTaskListFilterForm(forms.Form):
+    q = forms.CharField(
+        label="任务编号或名称", required=False, max_length=200,
+        widget=forms.SearchInput(attrs={"placeholder": "输入任务编号或名称"}),
+    )
+    status = forms.ChoiceField(label="任务状态", required=False)
+    relation = forms.ChoiceField(label="任务关系", required=False, choices=(
+        ("", "全部可查看任务"), ("assigned", "指派给我执行"), ("created", "我创建的任务"),
+    ))
+    work = forms.ChoiceField(label="待办范围", required=False, choices=(
+        ("", "全部任务"), ("unscanned", "有未盘资产"), ("unresolved", "有待处理异常或盘盈"),
+    ))
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from apps.inventory.models import InventoryTask
+        self.fields["status"].choices = (("", "全部状态"), *InventoryTask.Status.choices)
+        _style(self)
 
 
 class InventoryResultFilterForm(forms.Form):
@@ -56,6 +78,8 @@ class InventoryResultFilterForm(forms.Form):
 
 
 class InventoryTaskForm(forms.Form):
+    expected_revision = forms.CharField(required=False, widget=forms.HiddenInput(),
+        error_messages={"required": "缺少编辑页面版本，请重新打开最新草稿后核对。"})
     name = forms.CharField(label="任务名称", max_length=200)
     inventory_type = forms.ChoiceField(
         label="盘点类型",
@@ -101,11 +125,16 @@ class InventoryTaskForm(forms.Form):
         label="备注", required=False, max_length=2000, widget=forms.Textarea
     )
 
-    def __init__(self, *args, actor=None, company=None, **kwargs):
+    def __init__(self, *args, actor=None, company=None, task=None, **kwargs):
         if actor is None or company is None:
             raise PermissionDenied("盘点任务表单必须绑定用户和公司。")
         self.actor, self.company = actor, company
+        self.task = task
         super().__init__(*args, **kwargs)
+        if task is None:
+            self.fields.pop("expected_revision")
+        else:
+            self.fields["expected_revision"].required = True
         self.fields["scope_department"].queryset = Department.objects.filter(
             company=company, is_active=True
         )
@@ -133,6 +162,11 @@ class InventoryTaskForm(forms.Form):
         if len(values) != len(set(values)):
             raise ValidationError("已选资产不能重复。")
         return values
+
+    def clean_expected_revision(self):
+        # Identity validation here; version comparison only under service locks.
+        return decode_inventory_edit_revision(token=self.cleaned_data["expected_revision"],
+            actor=self.actor, company=self.company, task=self.task)
 
     def clean(self):
         cleaned = super().clean()
@@ -186,9 +220,9 @@ class InventoryScanForm(forms.Form):
         help_text="默认带入任务发布时的资产状态。",
     )
     other_mismatch = forms.BooleanField(
-        label="还有位置、责任人、状态以外的异常",
+        label="其他异常（位置、责任人、状态均一致时）",
         required=False,
-        help_text="例如标签破损、实物信息无法辨认。勾选后必须填写异常说明。",
+        help_text="仅在三项现场信息均与发布快照一致时勾选，例如标签破损。已有上述差异时，在异常说明中补充情况即可。",
     )
     note = forms.CharField(
         label="异常说明（按需填写）",
@@ -289,13 +323,15 @@ class InventoryResolutionForm(forms.Form):
     resolution_type = forms.ChoiceField(
         label="处理结论",
         choices=(
-            ("master_updated", "已执行主档变动"),
+            ("", "请选择处理结论"),
+            ("master_updated", "执行正式主档变动"),
             ("master_confirmed", "确认主档无误"),
             ("loss_confirmed", "确认盘亏"),
             ("other", "其他处理"),
         ),
     )
-    conclusion = forms.CharField(label="结论说明", max_length=2000, widget=forms.Textarea)
+    conclusion = forms.CharField(label="结论说明", max_length=2000, widget=forms.Textarea(attrs={"rows": 4}),
+        help_text="说明核实依据、原因和后续安排；不要只重复处理类型。")
     to_department = forms.ModelChoiceField(
         label="目标部门", required=False, queryset=Department.objects.none()
     )
@@ -308,12 +344,13 @@ class InventoryResolutionForm(forms.Form):
     to_status = forms.ChoiceField(
         label="新状态",
         required=False,
-        choices=(("in_use", "在用"), ("idle", "闲置")),
+        choices=(("", "保持当前状态"), ("in_use", "在用"), ("idle", "闲置")),
     )
     effective_at = forms.DateTimeField(
         label="变动生效时间",
         required=False,
         widget=forms.DateTimeInput(attrs={"type": "datetime-local"}),
+        help_text="仅执行正式主档变动时必填；目标部门、责任人、位置留空时沿用当前主档。",
     )
 
     def __init__(self, *args, actor=None, task=None, **kwargs):
@@ -455,5 +492,6 @@ __all__ = [
     "InventoryTaskCancelForm",
     "InventoryTaskCloseForm",
     "InventoryTaskForm",
+    "InventoryTaskListFilterForm",
     "SupplementalInventoryScanForm",
 ]

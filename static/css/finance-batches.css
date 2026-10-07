@@ -1,0 +1,7 @@
+/* Long applied filter labels stay inside the batch page on narrow screens. */
+[aria-label="已应用筛选"] > .btn {
+  max-width: 100%;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

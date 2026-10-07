@@ -1,0 +1,17 @@
+.permission-field input,
+.permission-field select,
+.permission-field textarea,
+.permission-field [id],
+.permission-revoke-form textarea { scroll-margin-top: 6rem; }
+.permission-revoke-form {
+  display: flex;
+  gap: .5rem;
+  align-items: flex-start;
+  min-width: 0;
+}
+.permission-revoke-form > div { min-width: 0; }
+.scope-revoke-row .permission-revoke-form { min-width: 0; flex: 1 1 16rem; }
+.permission-revoke-form textarea { min-height: 4rem; }
+@media (max-width: 575.98px) {
+  .scope-revoke-row .permission-revoke-form { width: 100%; }
+}

@@ -1,0 +1,6 @@
+<dl class="finance-profile-parameters mb-0">
+  {% for row in rows %}<div class="finance-profile-parameter{% if row.changed %} finance-profile-parameter-changed{% endif %}">
+    <dt>{{ row.label }}{% if row.changed %}<span class="badge text-bg-warning ms-2">已变化</span>{% endif %}</dt>
+    <dd>{% if row.changed %}<span class="small text-secondary">上一版本 v{{ previous_profile.version }}</span><div>{{ row.previous }}</div><span class="small text-secondary mt-2 d-block">本版本 v{{ profile.version }}</span>{% endif %}<div>{{ row.value }}</div></dd>
+  </div>{% endfor %}
+</dl>

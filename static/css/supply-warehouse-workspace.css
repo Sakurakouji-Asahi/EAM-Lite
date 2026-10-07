@@ -1,0 +1,7 @@
+.supply-warehouse-table { min-width: 1000px; }
+.supply-warehouse-table th,
+.supply-warehouse-table td:first-child { white-space: nowrap; }
+.supply-warehouse-table td:nth-child(2),
+.supply-warehouse-table td:nth-child(6) { min-width: 170px; }
+.supply-warehouse-table td:last-child { min-width: 140px; }
+.supply-warehouse-detail dl dd { overflow-wrap: anywhere; }

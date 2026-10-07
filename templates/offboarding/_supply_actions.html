@@ -1,0 +1,4 @@
+{% load workflow_navigation %}
+{% if row.can_return %}<a class="btn btn-sm btn-outline-success" href="{% url 'supplies:durable-return-create' item.custody_id %}?{% workflow_query %}">归还仓库</a>{% endif %}
+{% if row.can_transfer %}<a class="btn btn-sm btn-outline-primary" href="{% url 'supplies:custody-transfer' item.custody_id %}?{% workflow_query %}">转交</a>{% endif %}
+{% if row.can_write_off %}<a class="btn btn-sm btn-outline-danger" href="{% url 'supplies:custody-write-off' item.custody_id 'loss' %}?{% workflow_query %}">报损</a><a class="btn btn-sm btn-outline-danger" href="{% url 'supplies:custody-write-off' item.custody_id 'scrap' %}?{% workflow_query %}">报废</a>{% endif %}

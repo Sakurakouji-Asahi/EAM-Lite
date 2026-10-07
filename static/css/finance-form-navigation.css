@@ -1,0 +1,7 @@
+.finance-field-navigator { padding: .8rem 1rem; border: 1px solid var(--eam-line); border-radius: .5rem; background: var(--eam-surface-muted); }
+.finance-field-navigator summary { cursor: pointer; }
+.finance-field-results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; max-height: 15rem; overflow-y: auto; overscroll-behavior: contain; }
+.finance-field-results button { text-align: left; white-space: normal; overflow-wrap: anywhere; }
+[data-finance-form-navigation] [hidden] { display: none !important; }
+[data-finance-form-errors] { overflow-wrap: anywhere; }
+@media (max-width: 575.98px) { .finance-field-results { grid-template-columns: 1fr; } }

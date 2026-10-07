@@ -6,26 +6,36 @@ import uuid
 from urllib.parse import urlencode
 from pathlib import Path
 
-from apps.core.multi_upload import upload_many
+from apps.core.multi_upload import MAX_UPLOAD_FILES, MAX_UPLOAD_TOTAL_BYTES, upload_many
 from django.contrib import messages
 from apps.core.pagination import paginate_query
+from apps.core.return_navigation import safe_return_url
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import FieldDoesNotExist, PermissionDenied, ValidationError
 from django.core.files.storage import default_storage
 from django.core.paginator import Paginator
 from django.db.models import Q
 from django.db.utils import OperationalError, ProgrammingError
-from django.http import FileResponse, Http404, HttpResponseBadRequest, HttpResponseNotAllowed
+from django.http import FileResponse, Http404, HttpResponseBadRequest, HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.template.loader import render_to_string
+from django.urls import reverse
 from django.utils.encoding import escape_uri_path
+from django.views.decorators.cache import never_cache
 
 from apps.assets.access import asset_company_for_request, asset_queryset_for_request, asset_or_404
+from apps.assets.attachment_workspace import attachment_workspace
+from apps.assets.attachment_bundle import BUNDLE_MAX_FILES, BUNDLE_MAX_TOTAL_BYTES
+from apps.assets.copy_workspace import can_copy_asset_basics, copy_basic_initial, copy_source_for_request
+from apps.assets.code_lookup import code_lookup_summary
+from apps.assets.repair_workspace import can_open_repair_workspace, repair_context
 from apps.assets.forms import (
     AssetAttachmentUploadForm,
     AssetAttachmentVoidForm,
     AssetCustomValueForm,
     AssetDeleteForm,
     AssetDraftForm,
+    asset_edit_revision_token,
     AssetEquipmentNumberForm,
     AssetSubmitForm,
     AssetWithdrawForm,
@@ -157,10 +167,14 @@ def _tree_path(node):
 
 
 def _configure_hierarchy_labels(form):
-    if "category" in form.fields:
-        form.fields["category"].label_from_instance = _tree_path
-    if "location" in form.fields:
-        form.fields["location"].label_from_instance = _tree_path
+    from .form_options import HierarchyOptionLabels
+
+    for name in ("category", "location"):
+        if name in form.fields:
+            field = form.fields[name]
+            field.label_from_instance = HierarchyOptionLabels(field.queryset.model, form.company)
+    if "department" in form.fields:
+        form.fields["department"].label_from_instance = lambda node: f"{node.code} / {node.name}"
     if "responsible_employee" in form.fields:
         form.fields["responsible_employee"].label_from_instance = (
             lambda employee: f"{employee.employee_no} · {employee.name} · {employee.department}"
@@ -197,7 +211,7 @@ def _selected_category(request, company, *, asset=None, form=None):
         category = form.cleaned_data.get("category")
         if category is not None:
             return category
-    raw_id = request.POST.get("category") if request.method == "POST" else None
+    raw_id = (request.POST if request.method == "POST" else request.GET).get("category")
     if raw_id:
         try:
             return AssetCategory.objects.get(company=company, is_active=True, pk=raw_id)
@@ -206,14 +220,16 @@ def _selected_category(request, company, *, asset=None, form=None):
     return asset.category if asset is not None else None
 
 
-def _custom_value_forms(request, *, company, category, asset=None):
+def _custom_value_forms(request, *, company, category, asset=None, enforce_required=True,
+                        stored_values=None):
     if category is None:
         return []
     existing = {}
     if asset is not None:
+        values = stored_values if stored_values is not None else asset.custom_values.select_related("custom_field")
         existing = {
             value.custom_field_id: _custom_value(value)
-            for value in asset.custom_values.select_related("custom_field")
+            for value in values
         }
     forms = []
     for custom_field in AssetCustomField.objects.filter(
@@ -221,6 +237,7 @@ def _custom_value_forms(request, *, company, category, asset=None):
     ).order_by("display_order", "normalized_code"):
         kwargs = {
             "custom_field": custom_field,
+            "enforce_required": enforce_required,
             "prefix": f"custom_{custom_field.pk}",
             "initial": {"value": existing.get(custom_field.pk)},
         }
@@ -228,6 +245,31 @@ def _custom_value_forms(request, *, company, category, asset=None):
             kwargs["data"] = request.POST
         forms.append(AssetCustomValueForm(**kwargs))
     return forms
+
+
+@login_required
+@never_cache
+def asset_custom_fields(request, pk=None):
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+    company = asset_company_for_request()
+    asset = asset_or_404(request.user, company, pk) if pk is not None else None
+    # Apply the same creation/edit permission boundary as the complete form.
+    AssetDraftForm(actor=request.user, company=company, instance=asset)
+    category = _selected_category(request, company)
+    if category is None:
+        raise Http404("请选择当前公司的启用实物分类。")
+    custom_forms = _custom_value_forms(
+        request, company=company, category=category, asset=asset,
+        enforce_required=asset is None,
+    )
+    return JsonResponse({
+        "category": str(category.pk),
+        "html": render_to_string("assets/_custom_value_fields.html", {
+            "custom_value_forms": custom_forms,
+            "selected_category": category,
+        }, request=request),
+    })
 
 
 def _custom_payload(custom_forms):
@@ -269,6 +311,7 @@ def asset_list(request):
         filter_errors = exc.messages
         queryset = base_queryset.none()
     query = filters["q"]
+    code_lookup = code_lookup_summary(queryset, filters.get("codes", ""), include_equipment=list_has_p1) if not filter_errors else None
     filter_query = urlencode({key: value for key, value in filters.items() if value})
     can_create = bool(roles.intersection(ASSET_GLOBAL_WRITE_ROLES)) or bool(
         "department_manager" in roles
@@ -279,13 +322,13 @@ def asset_list(request):
         "responsible_employee_id"
     )
     from apps.masterdata.location_tree import LocationTree
-    location_ids = base_queryset.exclude(location_id=None).values_list("location_id", flat=True)
+    location_ids = base_queryset.exclude(location_id=None).order_by().values_list("location_id", flat=True).distinct()
     location_options = LocationTree(company).options(location_ids)
     from apps.masterdata.directory import employee_department_tree
     from apps.masterdata.permissions import scoped_departments
     department_options, _, _ = employee_department_tree(
         scoped_departments(request.user, company).order_by("normalized_code"),
-        base_queryset.exclude(department_id=None).values_list("department_id", flat=True),
+        base_queryset.exclude(department_id=None).order_by().values_list("department_id", flat=True).distinct(),
     )
     page_size = request.GET.get("page_size", "25")
     if page_size not in {"25", "50", "100", "200"}:
@@ -305,9 +348,11 @@ def asset_list(request):
             "query": query,
             "filters": filters,
             "filter_errors": filter_errors,
+            "code_lookup": code_lookup,
             "filter_query": filter_query,
             "page_size": page_size,
             "pagination_query": urlencode({**{key: value for key, value in filters.items() if value}, "page_size": page_size}),
+            "list_return_query": urlencode({"return_to": request.get_full_path()}),
             "extra_filters_open": any(filters.get(key) for key in ("fixed_asset_category", "maintenance_required", "label_status", "has_serial_number", "has_attachments", "initialized_from", "initialized_to", "created_from", "created_to")),
             "label_choices": CHOICES["label_status"].items(),
             "fixed_categories": FixedAssetCategory.objects.filter(company=company) if can_financial_filters else (),
@@ -323,6 +368,7 @@ def asset_list(request):
             "list_has_p1": list_has_p1,
             "list_column_count": 10 + (2 if list_has_p1 else 0) + (1 if can_financial_filters else 0),
             "can_create": can_create,
+            "can_open_repairs": can_open_repair_workspace(request.user),
             "can_financial_filters": can_financial_filters,
             "individual_durable_view": individual_durable_view,
             "individual_durable_hint": individual_durable_view,
@@ -384,10 +430,28 @@ def asset_list_export(request):
     return response
 
 
+def _asset_navigation_url(request, view_name, *, pk):
+    target = reverse(view_name, kwargs={"pk": pk})
+    return_to = safe_return_url(request, "")
+    return f"{target}?{urlencode({'return_to': return_to})}" if return_to else target
+
+
 def _render_asset_form(request, *, company, asset=None):
+    copy_source = copy_source_for_request(request, company) if asset is None else None
+    if copy_source is not None and request.GET.get("component_of"):
+        return HttpResponseBadRequest("复制资料新增与新增组件请分别使用对应入口。")
     action = request.POST.get("asset_action", "register" if asset is None else "draft")
     registration_requested = asset is None and action == "register"
     initial = {}
+    stored_values = None
+    if asset is not None and request.method == "GET":
+        # Capture persisted state before ModelForm validation can mutate its instance.
+        from apps.assets.draft_revision import read_asset_draft_custom_values
+
+        stored_values = read_asset_draft_custom_values(asset)
+        initial["expected_revision"] = asset_edit_revision_token(
+            actor=request.user, asset=asset, custom_values=stored_values,
+        )
     if asset is None and request.method == "GET":
         if request.GET.get("source") == "individual_durable":
             initial["management_attribute"] = "LV"
@@ -404,13 +468,20 @@ def _render_asset_form(request, *, company, asset=None):
             initial.update({"component_of": parent, "management_attribute": parent.identity.management_attribute,
                             "coding_year": parent.identity.coding_year, "coding_year_note": parent.identity.year_note})
     form = AssetDraftForm(
-        request.POST or None,
+        request.POST if request.method == "POST" else None,
         actor=request.user,
         company=company,
         instance=asset,
         registration_requested=registration_requested,
+        require_edit_revision=asset is not None,
+        require_create_key=asset is None,
         initial=initial,
     )
+    copy_omitted_fields = []
+    if copy_source is not None and request.method == "GET":
+        copied, copy_omitted_fields = copy_basic_initial(copy_source, form)
+        initial.update(copied)
+        form.initial.update(copied)
     _configure_hierarchy_labels(form)
     form_valid = form.is_valid() if request.method == "POST" else False
     category = _selected_category(
@@ -418,11 +489,15 @@ def _render_asset_form(request, *, company, asset=None):
     )
     if request.method == "GET" and initial.get("category") is not None:
         category = initial["category"]
+    if request.method == "GET" and category is not None:
+        form.initial["category"] = category
     custom_forms = _custom_value_forms(
-        request, company=company, category=category, asset=asset
+        request, company=company, category=category, asset=asset,
+        enforce_required=registration_requested,
+        stored_values=stored_values,
     )
     custom_valid = (
-        all(custom_form.is_valid() for custom_form in custom_forms)
+        all([custom_form.is_valid() for custom_form in custom_forms])
         if request.method == "POST"
         else False
     )
@@ -434,14 +509,13 @@ def _render_asset_form(request, *, company, asset=None):
                 raise ValidationError("请保存草稿后，从资产详情办理实物建档。")
             asset_data = {
                 key: value for key, value in form.cleaned_data.items()
-                if key != "idempotency_key"
+                if key not in {"idempotency_key", "expected_revision"}
             }
             if asset is None:
                 create_service = create_registered_asset if registration_requested else create_asset_draft
-                registration_options = (
-                    {"idempotency_key": form.cleaned_data["idempotency_key"]}
-                    if registration_requested else {}
-                )
+                registration_options = {
+                    "idempotency_key": form.cleaned_data["idempotency_key"]
+                }
                 saved = create_service(
                     actor=request.user,
                     company=company,
@@ -461,6 +535,7 @@ def _render_asset_form(request, *, company, asset=None):
                     asset=asset,
                     data=asset_data,
                     custom_values=_custom_payload(custom_forms),
+                    expected_revision=form.cleaned_data["expected_revision"],
                     request=request,
                 )
                 messages.success(request, "资产草稿已保存。")
@@ -472,6 +547,8 @@ def _render_asset_form(request, *, company, asset=None):
                 and can_create_attachment_link(request.user, saved, "A0")
             ):
                 return redirect("assets:attachment-upload", pk=saved.pk)
+            if asset is not None or copy_source is not None:
+                return redirect(_asset_navigation_url(request, "assets:asset-detail", pk=saved.pk))
             return redirect("assets:asset-detail", pk=saved.pk)
     elif request.method == "POST" and category is None:
         form.add_error("category", "请选择当前公司的启用实物分类。")
@@ -481,14 +558,23 @@ def _render_asset_form(request, *, company, asset=None):
         {
             "company": company,
             "asset": asset,
+            "copy_source_asset": copy_source,
+            "copy_source_url": _asset_navigation_url(request, "assets:asset-detail", pk=copy_source.pk) if copy_source else "",
+            "copy_omitted_fields": copy_omitted_fields,
             "form": form,
+            "edit_revision_error": asset is not None and bool(form.errors.get("expected_revision")),
+            "return_to": safe_return_url(request, "") if asset is not None or copy_source is not None else "",
+            "edit_url": _asset_navigation_url(request, "assets:asset-edit", pk=asset.pk) if asset is not None else "",
             "form_sections": _form_sections(form),
             "custom_value_forms": custom_forms,
+            "custom_value_errors": [custom_form["value"] for custom_form in custom_forms if custom_form.errors],
+            "selected_category": category,
             "individual_durable_hint": request.GET.get("source")
             == "individual_durable",
             "cancel_url": (
-                redirect("assets:asset-detail", pk=asset.pk).url
+                _asset_navigation_url(request, "assets:asset-detail", pk=asset.pk)
                 if asset is not None
+                else _asset_navigation_url(request, "assets:asset-detail", pk=copy_source.pk) if copy_source is not None
                 else redirect("assets:asset-list").url
             ),
         },
@@ -619,7 +705,7 @@ def asset_detail(request, pk):
                 Attachment.MalwareScanStatus.CLEAN,
             ),
         )
-        .select_related("attachment", "created_by")
+        .select_related("attachment", "attachment__uploaded_by", "created_by")
         .order_by("role", "created_at")
     )
     attachment_rows = [
@@ -647,6 +733,9 @@ def asset_detail(request, pk):
         {
             "company": company,
             "asset": asset,
+            "repair_context": repair_context(asset) if can_p1 and not archived else None,
+            "back_url": safe_return_url(request, redirect("assets:asset-list").url),
+            "edit_url": _asset_navigation_url(request, "assets:asset-edit", pk=asset.pk),
             "can_p1": can_p1,
             "can_summary_fields": can_summary_fields,
             "can_financial": can_financial,
@@ -663,7 +752,13 @@ def asset_detail(request, pk):
                 for value in custom_values
             ],
             "attachment_rows": attachment_rows,
+            "attachment_workspace": attachment_workspace(attachment_rows),
+            "attachment_bundle_max_files": BUNDLE_MAX_FILES,
+            "attachment_bundle_max_bytes": BUNDLE_MAX_TOTAL_BYTES,
             "can_edit": can_edit_asset_draft(request.user, asset),
+            "can_copy_basics": can_copy_asset_basics(request.user, asset),
+            "copy_basics_url": reverse("assets:asset-create") + "?" + urlencode({
+                "copy_from": asset.pk, "return_to": safe_return_url(request, "")}),
             "can_edit_equipment_number": can_edit_asset_equipment_number(request.user, asset),
             "can_submit": can_submit_asset(request.user, asset),
             "can_withdraw": can_withdraw_asset(request.user, asset),
@@ -879,9 +974,21 @@ def attachment_upload(request, pk):
         asset=asset,
         initial=initial,
     )
+    from apps.masterdata.services import get_system_setting
+    from apps.assets.services import MIME_BY_EXTENSION
+
+    allowed = [ext for ext in get_system_setting(company=company, key="attachment_allowed_extensions") if ext in MIME_BY_EXTENSION]
+    file_limit = get_system_setting(company=company, key="attachment_max_size_bytes")
+    form.fields["file"].widget.attrs.update({
+        "accept": ",".join("." + ext for ext in allowed),
+        "data-upload-files": "", "data-max-files": MAX_UPLOAD_FILES,
+        "data-max-total-bytes": MAX_UPLOAD_TOTAL_BYTES,
+        "data-max-file-bytes": file_limit, "data-allowed-extensions": ",".join(allowed),
+    })
     if initial.get("role") == "photo":
         form.fields["file"].widget.attrs.update({
-            "accept": "image/jpeg,image/png,image/webp", "capture": "environment",
+            "accept": ",".join(dict.fromkeys(MIME_BY_EXTENSION[ext] for ext in allowed if MIME_BY_EXTENSION[ext].startswith("image/"))),
+            "capture": "environment",
         })
     if request.method == "POST" and form.is_valid():
         try:
@@ -901,7 +1008,9 @@ def attachment_upload(request, pk):
     return render(
         request,
         "assets/attachment_upload.html",
-        {"asset": asset, "form": form, "photo_capture": initial.get("role") == "photo"},
+        {"asset": asset, "form": form, "photo_capture": initial.get("role") == "photo",
+         "upload_file_limit": file_limit, "upload_count_limit": MAX_UPLOAD_FILES,
+         "upload_total_limit": MAX_UPLOAD_TOTAL_BYTES, "upload_extensions": allowed},
     )
 
 

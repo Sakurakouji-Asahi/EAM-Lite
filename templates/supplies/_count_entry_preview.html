@@ -1,0 +1,12 @@
+<section class="card card-body shadow-sm mb-3" data-count-preview hidden aria-label="当前填写核对">
+  <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+    <strong>当前填写核对</strong>
+    <span class="small text-secondary" data-count-progress></span>
+  </div>
+  <div class="small" data-count-unit-totals></div>
+  {% if bulk_entry %}<div class="d-flex flex-wrap gap-2 mt-2">
+    <button type="button" class="btn btn-sm btn-outline-primary" data-count-next-blank>跳到下一空白行</button>
+    <button type="button" class="btn btn-sm btn-outline-warning" data-count-next-reason>跳到待填差异原因</button>
+  </div>{% endif %}
+  <p class="small text-secondary mb-0 mt-2">按物品单位分别核对已填写行；空白与 0 不同，保存前请核对每行实物和差异原因。</p>
+</section>

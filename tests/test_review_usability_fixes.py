@@ -230,6 +230,7 @@ def test_unchecking_all_selected_assets_does_not_reuse_old_hidden_selection(clie
     payload = {"name": task.name, "inventory_type": "special", "scope_type": "selected_assets",
                "planned_start": task.planned_start, "planned_end": task.planned_end,
                "selected_asset_ids": str(first.pk), "selected_asset_ids_ui_present": "1"}
+    payload["expected_revision"] = client.get(reverse("inventory:task-edit", args=[task.pk])).context["form"]["expected_revision"].value()
     response = client.post(reverse("inventory:task-edit", args=[task.pk]), payload)
     assert response.status_code == 200
     assert "selected_asset_ids" in response.context["form"].errors

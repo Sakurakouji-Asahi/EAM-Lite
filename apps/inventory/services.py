@@ -365,7 +365,7 @@ def create_inventory_task_draft(
 
 @transaction.atomic
 def update_inventory_task_draft(
-    *, actor, task, data, assignee_users, request=None
+    *, actor, task, data, assignee_users, expected_revision=None, request=None
 ):
     from apps.inventory.models import InventoryTask, InventoryTaskAssignee
 
@@ -376,6 +376,12 @@ def update_inventory_task_draft(
         actor, task.company, data.get("inventory_type"),
         scope_department=data.get("scope_department"),
     )
+    if expected_revision is not None:
+        require_publish_inventory_task(actor, task)
+        from .draft_revision import inventory_task_revision_snapshot
+        if inventory_task_revision_snapshot(task, lock_assignees=True) != expected_revision:
+            raise ValidationError({"expected_revision":
+                "这份盘点草稿已被其他操作更新，本次没有保存。请重新打开最新草稿，核对后再提交。"})
     _validate_type_scope(
         data.get("inventory_type"), data.get("scope_type"), data.get("scope_department")
     )

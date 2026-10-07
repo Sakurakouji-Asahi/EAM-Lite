@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from calendar import monthrange
 from urllib.parse import urlencode
 from decimal import Decimal
 from django import forms
@@ -23,6 +22,12 @@ from apps.assets.models import Asset
 from apps.finance.workspaces import batch_review_context, ManualAmountForm, TheoreticalBusinessForm
 from apps.finance.readiness import pending_finance_assets, missing_finance_base_fields, filter_pending_finance_assets
 from apps.finance.confirmation_initial import finance_confirmation_initial as _finance_initial
+from apps.finance.pending_workspace import pending_followup_url, pending_list_context, pending_navigation
+from apps.finance.batch_workspace import batch_detail_url, batch_list_context, batch_list_navigation, filter_batches
+from apps.finance.policy_workspace import (
+    filter_policies, policy_detail_context, policy_followup_url, policy_list_context, policy_navigation,
+)
+from apps.finance.profile_history import profile_history_links
 from apps.finance.forms import (
     PendingFinanceFilterForm,
     AssetCategoryPolicyForm,
@@ -30,6 +35,7 @@ from apps.finance.forms import (
     DepreciationBatchGenerateForm,
     DepreciationBatchFilterForm,
     DepreciationPolicyForm,
+    DepreciationPolicyFilterForm,
     DangerousActionForm,
     FinanceDraftForm,
     FixedAssetCategoryForm,
@@ -132,6 +138,7 @@ def pending_finance_list(request):
     assets = scoped_finance_assets(request.user, company).select_related(
         "category", "department", "responsible_employee", "finance", "registration"
     ).order_by("submitted_at", "created_at", "pk")
+    workspace_assets = assets
     query = {}
     if form.is_valid():
         data = form.cleaned_data
@@ -140,8 +147,10 @@ def pending_finance_list(request):
     else:
         assets = assets.none()
     page = Paginator(assets, form.cleaned_data.get("page_size") or 25).get_page(request.GET.get("page"))
+    workspace = pending_list_context(request, form=form, queryset=workspace_assets, query=query, page=page)
     for asset in page.object_list:
         asset.finance_missing_fields = missing_finance_base_fields(asset)
+        asset.finance_confirm_url = pending_followup_url("finance:finance-confirm", asset, workspace["pending_query"])
     return render(
         request,
         "finance/pending_list.html",
@@ -153,6 +162,7 @@ def pending_finance_list(request):
             "pagination_query": urlencode(query),
             "selection_key": f"eam-bulk-finance:{company.pk}:{request.user.pk}:{query.get('import_batch','')}",
             "bulk_filters": query,
+            **workspace,
         },
     )
 
@@ -168,7 +178,7 @@ def _finance_form(request, *, asset, confirm=False):
     )
 
 
-def _finance_confirm_context(*, asset, form, preview=None, preview_only=False):
+def _finance_confirm_context(request, *, asset, form, preview=None, preview_only=False):
     sections = [
         ("会计认定与金额", "", ("accounting_treatment", "original_cost", "fixed_asset_category", "capitalization_date", "commissioning_date", "accounting_treatment_reason")),
         ("折旧规则", "留空项目使用适用政策的默认值。", ("depreciation_policy", "method", "useful_life_months", "posting_period", "salvage_mode", "salvage_rate", "salvage_amount", "start_rule", "specified_start_date", "stop_rule", "annual_posting_month", "expected_total_units", "work_unit")),
@@ -180,6 +190,7 @@ def _finance_confirm_context(*, asset, form, preview=None, preview_only=False):
         "form": form,
         "preview": preview,
         "preview_only": preview_only,
+        **pending_navigation(request),
         "field_sections": [{"title": title, "help": help_text, "fields": [form[name] for name in names if not form[name].is_hidden]}
                            for title, help_text, names in sections],
         "has_fixed_asset_categories": form.fields[
@@ -216,7 +227,7 @@ def finance_preview(request, pk):
         request,
         "finance/finance_confirm.html",
         _finance_confirm_context(
-            asset=asset, form=form, preview=result, preview_only=True
+            request, asset=asset, form=form, preview=result, preview_only=True
         ),
     )
 
@@ -227,6 +238,7 @@ def finance_confirm(request, pk):
     company = _company()
     if request.method not in {"GET", "POST"}:
         return HttpResponseNotAllowed(["GET", "POST"])
+    pending_query = pending_navigation(request)["pending_query"]
     completed = scoped_finance_assets(request.user, company).filter(
         pk=pk, finance__finance_confirmed_at__isnull=False,
     ).first()
@@ -235,7 +247,7 @@ def finance_confirm(request, pk):
             messages.info(request, "该资产已完成财务确认，本次提交未修改数据；如需更正，请在财务资料页办理调整。")
         else:
             messages.info(request, "该资产已完成财务确认，已打开财务资料。")
-        return redirect("finance:asset-finance-detail", pk=completed.pk)
+        return redirect(pending_followup_url("finance:asset-finance-detail", completed, pending_query))
     asset = _pending_asset(company, pk)
     action = request.POST.get("action") if request.method == "POST" else None
     form = _finance_form(request, asset=asset, confirm=action == "confirm")
@@ -268,17 +280,17 @@ def finance_confirm(request, pk):
                     request,
                     f"资产 {asset.asset_code} 的财务与折旧设置已确认，实物状态保持不变。",
                 )
-                return redirect("finance:asset-finance-detail", pk=asset.pk)
+                return redirect(pending_followup_url("finance:asset-finance-detail", asset, pending_query))
             else:
                 raise ValidationError("未知的财务确认动作。")
         except (ValidationError, ValueError) as exc:
             _service_error(form, exc)
         else:
-            return redirect("finance:finance-confirm", pk=asset.pk)
+            return redirect(pending_followup_url("finance:finance-confirm", asset, pending_query))
     return render(
         request,
         "finance/finance_confirm.html",
-        _finance_confirm_context(asset=asset, form=form),
+        _finance_confirm_context(request, asset=asset, form=form),
     )
 
 
@@ -296,9 +308,10 @@ def asset_finance_detail(request, pk):
         accounting_treatment__isnull=False,
         original_cost__isnull=False,
     )
-    profiles = asset.depreciation_profiles.select_related(
+    profiles = asset.depreciation_profiles.filter(company=company).select_related(
         "depreciation_policy"
     ).order_by("version")
+    profile_history_links(request, profiles)
     entries = asset.depreciation_entries.order_by("period_start", "created_at")
     actual_ad = entries.aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
     book_value = finance.original_cost - finance.impairment_balance_cache - actual_ad
@@ -315,6 +328,7 @@ def asset_finance_detail(request, pk):
             "finance": finance,
             "profiles": profiles,
             **entry_history_context(request, entries),
+            **pending_navigation(request),
             "actual_ad": actual_ad,
             "book_value": book_value,
             "can_record_work_usage": can_manage_finance(request.user)
@@ -329,15 +343,19 @@ def asset_finance_detail(request, pk):
 def policy_list(request):
     require_view_finance(request.user)
     company = _company()
+    form = DepreciationPolicyFilterForm(request.GET)
+    policies = DepreciationPolicy.objects.filter(company=company).order_by("policy_key", "-version", "pk")
+    matching = filter_policies(policies, form.cleaned_data) if form.is_valid() else policies.none()
+    page = Paginator(matching, form.cleaned_data.get("page_size") or 25).get_page(request.GET.get("page"))
     return render(
         request,
         "finance/policy_list.html",
         {
-            "policies": DepreciationPolicy.objects.filter(company=company).order_by(
-                "policy_key", "-version"
-            ),
+            "policies": page.object_list, "page_obj": page, "filter_form": form,
             "can_manage": can_manage_finance(request.user),
+            **policy_list_context(request, form=form, queryset=policies, page=page),
         },
+        status=200 if form.is_valid() else 400,
     )
 
 
@@ -352,6 +370,7 @@ def policy_form(request, pk=None):
     )
     if request.method not in {"GET", "POST"}:
         return HttpResponseNotAllowed(["GET", "POST"])
+    navigation = policy_navigation(request)
     form = DepreciationPolicyForm(
         request.POST or None, actor=request.user, instance=policy
     )
@@ -376,8 +395,15 @@ def policy_form(request, pk=None):
             _service_error(form, exc)
         else:
             messages.success(request, "折旧政策草稿已保存。")
-            return redirect("finance:policy-detail", pk=saved.pk)
-    return render(request, "finance/form.html", {"form": form, "title": "折旧政策"})
+            return redirect(policy_followup_url("finance:policy-detail", policy=saved,
+                                               policy_query=navigation["policy_query"]))
+    return render(request, "finance/form.html", {
+        "form": form, "title": "折旧政策", **navigation,
+        "cancel_url": policy_followup_url("finance:policy-detail", policy=policy,
+                                          policy_query=navigation["policy_query"])
+                      if policy is not None else navigation["policy_return_url"],
+        "cancel_label": "返回政策详情" if policy is not None else "返回政策查询",
+    })
 
 
 @login_required
@@ -387,15 +413,9 @@ def policy_detail(request, pk):
     return render(
         request,
         "finance/policy_detail.html",
-        {
-            "policy": policy,
-            "can_manage": can_manage_finance(request.user),
-            "action_form": (
-                PolicyActionForm(actor=request.user)
-                if can_manage_finance(request.user)
-                else None
-            ),
-        },
+        policy_detail_context(request, policy, can_manage=can_manage_finance(request.user),
+                              action_form=PolicyActionForm(actor=request.user)
+                              if can_manage_finance(request.user) else None),
     )
 
 
@@ -405,12 +425,13 @@ def policy_action(request, pk, action):
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
     policy = get_object_or_404(DepreciationPolicy, pk=pk, company=_company())
+    navigation = policy_navigation(request)
     form = PolicyActionForm(request.POST, actor=request.user)
     if not form.is_valid():
         return render(
             request,
             "finance/policy_detail.html",
-            {"policy": policy, "can_manage": True, "action_form": form},
+            policy_detail_context(request, policy, can_manage=True, action_form=form),
             status=400,
         )
     reason = form.cleaned_data["reason"]
@@ -432,7 +453,8 @@ def policy_action(request, pk, action):
                 actor=request.user, policy=policy, reason=reason, request=request
             )
             messages.success(request, "已克隆为新草稿版本。")
-            return redirect("finance:policy-edit", pk=policy.pk)
+            return redirect(policy_followup_url("finance:policy-edit", policy=policy,
+                                               policy_query=navigation["policy_query"]))
         elif action == "retire":
             policy = retire_depreciation_policy(
                 actor=request.user, policy=policy, reason=reason, request=request
@@ -443,7 +465,8 @@ def policy_action(request, pk, action):
         messages.error(request, "; ".join(exc.messages))
     else:
         messages.success(request, "折旧政策状态已更新。")
-    return redirect("finance:policy-detail", pk=policy.pk)
+    return redirect(policy_followup_url("finance:policy-detail", policy=policy,
+                                       policy_query=navigation["policy_query"]))
 
 
 @login_required
@@ -592,18 +615,18 @@ def finance_settings(request):
 def batch_list(request):
     require_view_finance(request.user)
     queryset = DepreciationBatch.objects.filter(company=_company())
+    workspace_batches = queryset
     form = DepreciationBatchFilterForm(request.GET)
     valid = form.is_valid()
     if valid:
-        period = form.cleaned_data["period"]
-        if period:
-            month_end = period.replace(day=monthrange(period.year, period.month)[1])
-            queryset = queryset.filter(period_start__lte=month_end, period_end__gt=period)
-        if form.cleaned_data["status"]:
-            queryset = queryset.filter(status=form.cleaned_data["status"])
+        queryset = filter_batches(queryset, form.cleaned_data)
     else:
         queryset = queryset.none()
-    queryset = queryset.annotate(item_count=Count("items")).order_by("-period_start", "-generation_no", "pk")
+    queryset = queryset.select_related("generated_by").annotate(
+        item_count=Count("items"), ready_count=Count("items", filter=Q(items__status="ready")),
+        error_count=Count("items", filter=Q(items__status="error")),
+        skipped_count=Count("items", filter=Q(items__status="skipped")),
+    ).order_by("-period_start", "-generation_no", "pk")
     page_obj = Paginator(queryset, form.cleaned_data.get("page_size") or 25).get_page(request.GET.get("page"))
     query = request.GET.copy()
     query.pop("page", None)
@@ -616,6 +639,7 @@ def batch_list(request):
             "pagination_query": query.urlencode(),
             "filter_form": form,
             "can_manage": can_manage_finance(request.user),
+            **batch_list_context(request, form=form, queryset=workspace_batches, page=page_obj),
         },
         status=200 if valid else 400,
     )
@@ -625,6 +649,7 @@ def batch_list(request):
 def batch_generate(request):
     require_manage_finance(request.user)
     company = _company()
+    navigation = batch_list_navigation(request)
     form = DepreciationBatchGenerateForm(request.POST or None, actor=request.user)
     form.fields["manual_inputs_json"].widget = forms.HiddenInput()
     valid = form.is_valid() if request.method == "POST" else False
@@ -651,14 +676,14 @@ def batch_generate(request):
             except ValidationError as exc:
                 _service_error(form, exc)
             else:
-                return redirect("finance:batch-detail", pk=batch.pk)
-    return render(request, "finance/batch_generate.html", {"form": form, "manual_rows": manual_rows, "has_manual_profiles":has_manual_profiles})
+                return redirect(batch_detail_url(batch, navigation["batch_query"]))
+    return render(request, "finance/batch_generate.html", {"form": form, "manual_rows": manual_rows, "has_manual_profiles":has_manual_profiles, **navigation})
 
 
 @login_required
 def batch_detail(request, pk):
     require_view_finance(request.user)
-    batch = get_object_or_404(DepreciationBatch, pk=pk, company=_company())
+    batch = get_object_or_404(DepreciationBatch.objects.select_related("generated_by", "confirmed_by", "reverses_batch", "supersedes_batch"), pk=pk, company=_company())
     context = batch_review_context(request, batch)
     return render(request, "finance/batch_detail.html", context, status=200 if context["filters_valid"] else 400)
 
@@ -678,13 +703,14 @@ def batch_confirm(request, pk):
         messages.error(request, "; ".join(exc.messages))
     else:
         messages.success(request, "折旧批次已确认，实际分录已追加。")
-    return redirect("finance:batch-detail", pk=batch.pk)
+    return redirect(batch_detail_url(batch, batch_list_navigation(request)["batch_query"], item_query=request.GET))
 
 
 @login_required
 def batch_reverse(request, pk):
     require_manage_finance(request.user)
     batch = get_object_or_404(DepreciationBatch, pk=pk, company=_company())
+    navigation = batch_list_navigation(request)
     form = IdempotentReasonForm(
         request.POST or None,
         actor=request.user,
@@ -703,8 +729,11 @@ def batch_reverse(request, pk):
             _service_error(form, exc)
         else:
             messages.success(request, "原批次已通过反向分录冲销，原历史保持不变。")
-            return redirect("finance:batch-detail", pk=reversal.pk)
-    return render(request, "finance/form.html", {"form": form, "title": "冲销折旧批次"})
+            return redirect(batch_detail_url(reversal, navigation["batch_query"]))
+    return render(request, "finance/form.html", {"form": form, "title": "冲销折旧批次",
+        "description": "核对来源批次及原因。提交后通过反向分录冲销，保留原计提记录。",
+        "submit_label": "确认冲销批次", "cancel_label": "返回待冲销批次",
+        "cancel_url": batch_detail_url(batch, navigation["batch_query"]), **navigation})
 
 
 def _profile_for_asset(company, pk):
@@ -915,6 +944,7 @@ def theoretical_run(request, pk):
 
 @login_required
 def theoretical_detail(request, pk, run_pk):
+    from .theoretical_workspace import detail_context
     require_view_finance(request.user)
     company = _company()
     asset = get_object_or_404(scoped_finance_assets(request.user, company), pk=pk)
@@ -922,5 +952,5 @@ def theoretical_detail(request, pk, run_pk):
     return render(
         request,
         "finance/theoretical_detail.html",
-        {"asset": asset, "run": run, "lines": run.lines.all()},
+        {"asset": asset, "run": run, **detail_context(request, asset, run)},
     )

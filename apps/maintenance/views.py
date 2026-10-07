@@ -1,6 +1,8 @@
 """Server-rendered preventive-maintenance UI."""
 
 from __future__ import annotations
+from datetime import timedelta
+from urllib.parse import urlencode
 
 from apps.core.multi_upload import upload_many
 from django.contrib import messages
@@ -8,6 +10,7 @@ from apps.core.pagination import paginate_query
 from apps.audit.models import AuditLog
 from apps.maintenance.assignment import ProblemAssignmentForm, assign_problem
 from apps.maintenance.domain import business_date
+from apps.maintenance.problem_workspace import problem_return_url, problem_timing
 from django.db.models.functions import Coalesce
 from django.contrib.auth.decorators import login_required
 from django import forms
@@ -19,6 +22,7 @@ from django.db.models import Case, Count, Q, When
 from django.http import FileResponse, Http404, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.encoding import escape_uri_path
+from django.urls import reverse
 
 from apps.assets.models import Asset
 from apps.assets.models import AttachmentLink
@@ -26,6 +30,7 @@ from apps.maintenance.forms import (
     MaintenanceCompletionForm,
     MaintenanceAttachmentUploadForm,
     MaintenancePlanForm,
+    MaintenancePlanStatusForm,
     MaintenanceProblemCloseForm,
     MaintenanceProblemFilterForm,
     MaintenanceRecordVoidForm,
@@ -120,6 +125,7 @@ def _problem(request, pk):
             "company",
             "asset__department",
             "maintenance_record__maintenance_plan",
+            "owner_employee",
         ),
         pk=pk,
         company=company,
@@ -173,20 +179,26 @@ def _can_manage_any_plan(user, company):
 @login_required
 def plan_list(request):
     from .workspaces import PlanQueryForm
+    from .plan_workspace import plan_list_presentation
     company = _company()
     plans = _plans(request.user,company)
     form = PlanQueryForm(request.GET,plans=plans)
     selected = form.apply(plans).order_by('next_maintenance_date','asset__asset_code','pk')
     page,query = _paginate(request,selected)
-    return render(request,'maintenance/plan_list.html',{'plans':page,'page_obj':page,'pagination_query':query,
+    context = {'plans':page,'page_obj':page,'pagination_query':query,
         'filter_form':form,'filters':{'q':request.GET.get('q',''),'status':request.GET.get('status','')},
-        'can_manage':_can_manage_any_plan(request.user,company)},status=200 if form.is_valid() else 400)
+        'can_manage':_can_manage_any_plan(request.user,company)}
+    context.update(plan_list_presentation(request, form, form.apply(plans, include_status=False)))
+    return render(request,'maintenance/plan_list.html',context,status=200 if form.is_valid() else 400)
 
 
 @login_required
 def plan_create(request):
+    from .plan_workspace import plan_navigation_context, plan_return_url
+    from .plan_reference import reference_context, reference_initial, reference_source
     company = _company()
-    initial = {}
+    source = reference_source(request, _plans(request.user, company))
+    initial = reference_initial(source)
     if "asset" in request.GET:
         asset = get_object_or_404(Asset.objects.filter(company=company), pk=request.GET["asset"])
         require_manage_maintenance_plan(request.user, asset)
@@ -204,88 +216,113 @@ def plan_create(request):
             _service_error(form, exc)
         else:
             messages.success(request, "保养计划已创建。")
-            return redirect("maintenance:plan-detail", pk=plan.pk)
+            return redirect(plan_return_url(request) or reverse("maintenance:plan-detail", args=[plan.pk]))
     return render(
         request,
         "maintenance/plan_form.html",
         {
             "form": form,
-            "title": "新建保养计划",
+            "title": "参考计划新建保养计划" if source else "新建保养计划",
             "has_eligible_assets": form.fields["asset"].queryset.exists(),
+            **plan_navigation_context(request),
+            **reference_context(request, source),
         },
     )
 
 
 @login_required
 def plan_edit(request, pk):
+    from .plan_workspace import plan_navigation_context, plan_return_url
     from .services import plan_date_preview
+    from .plan_revision import maintenance_plan_revision_snapshot, plan_edit_revision_token
     plan = _plan(request, pk)
     require_manage_maintenance_plan(request.user, plan)
+    initial = {}
+    if request.method != "POST":
+        initial["expected_revision"] = plan_edit_revision_token(actor=request.user, plan=plan)
     form = MaintenancePlanForm(
-        request.POST or None,
+        request.POST if request.method == "POST" else None,
         actor=request.user,
         company=plan.company,
         instance=plan,
+        initial=initial,
     )
+
+    def render_edit(*, date_preview=None):
+        context = {"form": form, "title": "编辑保养计划", "has_eligible_assets": True,
+                   "editing": True, "reopen_url": reverse("maintenance:plan-edit", args=[plan.pk]),
+                   "edit_revision_error": bool(form.errors.get("expected_revision"))}
+        context.update(plan_navigation_context(request, plan))
+        if context["plan_return_query"]:
+            context["reopen_url"] += "?" + context["plan_return_query"]
+        context["plan"] = plan
+        if date_preview is not None:
+            context["date_preview"] = date_preview
+        return render(request, "maintenance/plan_form.html", context)
+
     if request.method == "POST" and form.is_valid():
-        if request.POST.get('action') == 'preview':
+        if request.POST.get("action") == "preview":
             try:
-                dates = plan_date_preview(plan, **{key:form.cleaned_data[key] for key in ('cycle_value','cycle_unit','first_due_date')})
+                # A preview keeps the submitted page revision. It never turns
+                # old values into a new page that can overwrite a later save.
+                if maintenance_plan_revision_snapshot(plan) != form.cleaned_data["expected_revision"]:
+                    raise ValidationError({"expected_revision":
+                        "这份保养计划已被其他操作更新，请重新打开最新编辑页面后核对再预览。"})
+                dates = plan_date_preview(plan, **{key: form.cleaned_data[key]
+                    for key in ("cycle_value", "cycle_unit", "first_due_date")})
             except ValidationError as exc:
                 _service_error(form, exc)
             else:
-                return render(request, 'maintenance/plan_form.html', {'form':form, 'title':'编辑保养计划',
-                    'has_eligible_assets':True, 'editing':True, 'date_preview':dates})
-            return render(request, 'maintenance/plan_form.html', {'form':form, 'title':'编辑保养计划',
-                'has_eligible_assets':True, 'editing':True})
+                return render_edit(date_preview=dates)
+            return render_edit()
         try:
             plan = update_maintenance_plan(
                 actor=request.user,
                 plan=plan,
                 request=request,
-                **{
-                    key: value
-                    for key, value in _plan_payload(form).items()
-                    if key != "asset"
-                },
+                expected_revision=form.cleaned_data["expected_revision"],
+                **{key: value for key, value in _plan_payload(form).items() if key != "asset"},
             )
         except (PermissionDenied, ValidationError) as exc:
             _service_error(form, exc)
         else:
             messages.success(request, "保养计划已更新。")
-            return redirect("maintenance:plan-detail", pk=plan.pk)
-    return render(
-        request,
-        "maintenance/plan_form.html",
-        {"form": form, "title": "编辑保养计划", "has_eligible_assets": True, "editing":True},
-    )
+            return redirect(plan_return_url(request) or reverse("maintenance:plan-detail", args=[plan.pk]))
+    return render_edit()
 
 
 @login_required
 def plan_detail(request, pk):
     from .workspaces import PlanHistoryForm
+    from .plan_workspace import plan_navigation_context
+    from .plan_reference import reference_create_url
     plan = _plan(request,pk)
     form = PlanHistoryForm(request.GET)
     records = form.apply(plan.records.select_related('completed_by','maintenance_plan','asset')).order_by('-completed_date','-created_at','pk')
     page,query = _paginate(request,records,per_page=form.cleaned_data.get('page_size') or 25)
     return render(request,'maintenance/plan_detail.html',{'plan':plan,'records':page,'page_obj':page,
+        'record_return_query':urlencode({'return_to':request.get_full_path()}),
         'pagination_query':query,'filter_form':form,'can_manage':can_manage_maintenance_plan(request.user,plan),
-        'can_complete':plan.status == 'active' and can_complete_maintenance(request.user,plan)},status=200 if form.is_valid() else 400)
+        'can_complete':plan.status == 'active' and can_complete_maintenance(request.user,plan),
+        'reference_create_url':reference_create_url(request, plan),
+        **plan_navigation_context(request, plan)},status=200 if form.is_valid() else 400)
 
 
 @login_required
 def due_list(request):
     company = _company()
     plans = _plans(request.user, company).filter(status="active")
-    from .workspaces import PlanQueryForm
-    form = PlanQueryForm(request.GET,plans=plans,due=True)
+    from .due_agenda import DueAgendaForm, agenda_context, sorted_due_items
+    form = DueAgendaForm(request.GET,plans=plans,due=True)
     plans = form.apply(plans)
+    today = business_date()
     items = []
     counts = {"upcoming": 0, "due_today": 0, "overdue": 0}
     labels = {"upcoming": "即将到期", "due_today": "今日到期", "overdue": "逾期"}
     for plan, status in due_maintenance_plans(
         request.user,
         company,
+        as_of=today,
         queryset=plans,
     ):
         if status in counts:
@@ -295,12 +332,25 @@ def due_list(request):
                     "plan": plan,
                     "due_status": status,
                     "due_label": labels[status],
+                    "due_timing": (f"逾期 {(today - plan.next_maintenance_date).days} 天"
+                                   if status == "overdue" else "今日到期" if status == "due_today"
+                                   else f"距到期 {(plan.next_maintenance_date - today).days} 天"),
                     "can_complete": can_complete_maintenance(request.user, plan),
                 }
             )
     if form.is_valid() and form.cleaned_data["due_scope"]:
         items = [item for item in items if item["due_status"] == form.cleaned_data["due_scope"]]
+    items = sorted_due_items(items)
+    date_scope = items
+    if form.is_valid() and form.cleaned_data["due_date"]:
+        items = [item for item in items if item["plan"].next_maintenance_date == form.cleaned_data["due_date"]]
     page_obj, pagination_query = _paginate(request, items)
+    summary_params = request.GET.copy()
+    summary_params.pop("page", None)
+    due_links = {}
+    for scope in counts:
+        summary_params["due_scope"] = scope
+        due_links[scope] = "?" + summary_params.urlencode()
     return render(
         request,
         "maintenance/due_list.html",
@@ -308,8 +358,10 @@ def due_list(request):
             "items": page_obj,
             "filter_form": form,
             "counts": counts,
+            "due_links": due_links,
             "page_obj": page_obj,
             "pagination_query": pagination_query,
+            **agenda_context(request, form=form, items=date_scope, page=page_obj, today=today),
         }, status=200 if form.is_valid() else 400,
     )
 
@@ -317,10 +369,11 @@ def due_list(request):
 def _complete_view(request, plan, *, scheduled_date=None):
     require_complete_maintenance(request.user, plan)
     form = MaintenanceCompletionForm(
-        request.POST or None,
+        request.POST if request.method == "POST" else None,
         request.FILES or None,
         actor=request.user,
         plan=plan,
+        require_current_instance=scheduled_date is None,
         initial={"scheduled_date": scheduled_date} if scheduled_date else None,
     )
     if scheduled_date and request.method != "POST":
@@ -330,16 +383,19 @@ def _complete_view(request, plan, *, scheduled_date=None):
             completion_data = {
                 key: value
                 for key, value in form.cleaned_data.items()
-                if key not in {"uploaded_file", "security_class"}
+                if key not in {"uploaded_file", "security_class", "completion_instance"}
             }
+            if form.require_current_instance:
+                completion_data["expected_instance_date"] = form.cleaned_data["completion_instance"]
             with transaction.atomic():
-                record = complete_maintenance(
+                record, created = complete_maintenance(
                     actor=request.user,
                     plan=plan,
                     request=request,
+                    return_created=True,
                     **completion_data,
                 )
-                if form.cleaned_data.get("uploaded_file"):
+                if created and form.cleaned_data.get("uploaded_file"):
                     upload_many(upload_maintenance_attachment,
                         actor=request.user,
                         target=record,
@@ -350,14 +406,16 @@ def _complete_view(request, plan, *, scheduled_date=None):
         except (PermissionDenied, ValidationError) as exc:
             _service_error(form, exc)
         else:
-            messages.success(request, "保养完成记录已保存。")
+            messages.success(request, "保养完成记录已保存。" if created else
+                             "返回原已保存记录，补充证据请在记录页上传")
             return redirect("maintenance:record-detail", pk=record.pk)
     return render(
         request,
-        "maintenance/action_form.html",
+        "maintenance/completion_form.html",
         {
             "form": form,
             "title": f"完成保养：{plan.name}",
+            "plan": plan,
             "button_label": "确认完成",
             "cancel_url": f"/maintenance/plans/{plan.pk}/",
         },
@@ -371,24 +429,31 @@ def plan_complete(request, pk):
 
 @login_required
 def plan_status(request, pk):
+    from .plan_workspace import plan_navigation_context, plan_return_url
     plan = _plan(request, pk)
     require_manage_maintenance_plan(request.user, plan)
     if request.method not in {"GET", "POST"}:
         return HttpResponseNotAllowed(["GET", "POST"])
-    if request.method == "POST":
-        status = request.POST.get("status", "")
-        reason = request.POST.get("reason", "").strip()
+    form = MaintenancePlanStatusForm(
+        request.POST if request.method == "POST" else None,
+        initial={"status": "active"},
+    )
+    form.fields["status"].widget.attrs["class"] = "form-select"
+    form.fields["reason"].widget.attrs["class"] = "form-control"
+    if request.method == "POST" and form.is_valid():
         try:
             set_maintenance_plan_status(
-                actor=request.user, plan=plan, status=status,
-                reason=reason, request=request,
+                actor=request.user, plan=plan,
+                status=form.cleaned_data["status"],
+                reason=form.cleaned_data["reason"], request=request,
             )
         except (PermissionDenied, ValidationError) as exc:
-            messages.error(request, "; ".join(getattr(exc, "messages", [str(exc)])))
+            _service_error(form, exc)
         else:
             messages.success(request, "保养计划状态已更新。")
-            return redirect("maintenance:plan-detail", pk=plan.pk)
-    return render(request, "maintenance/plan_status.html", {"plan": plan})
+            return redirect(plan_return_url(request) or reverse("maintenance:plan-detail", args=[plan.pk]))
+    return render(request, "maintenance/plan_status.html", {"plan": plan, "form": form,
+                  **plan_navigation_context(request, plan)})
 
 
 @login_required
@@ -424,6 +489,7 @@ def record_list(request):
             "pagination_query": pagination_query,
             "filter_form": form,
             "show_asset_columns": True,
+            "record_return_query": urlencode({"return_to": request.get_full_path()}),
         },
         status=200 if valid else 400,
     )
@@ -431,39 +497,25 @@ def record_list(request):
 
 @login_required
 def record_detail(request, pk):
+    from .record_navigation import record_navigation_context
+    from .print_workspace import record_attachment_rows, record_paper_url
     record = _record(request, pk)
     problem = getattr(record, "problem", None)
-    links = []
-    for link in record.attachment_links.select_related("attachment", "created_by"):
-        if can_view_maintenance_attachment(request.user, link):
-            links.append(
-                {
-                    "link": link,
-                    "can_void": can_manage_maintenance_attachment(
-                        request.user, record, security_class=link.security_class
-                    ),
-                }
-            )
-    if problem is not None:
-        for link in problem.attachment_links.select_related("attachment", "created_by"):
-            if can_view_maintenance_attachment(request.user, link):
-                links.append(
-                    {
-                        "link": link,
-                        "can_void": can_manage_maintenance_attachment(
-                            request.user, problem, security_class=link.security_class
-                        ),
-                    }
-                )
+    links = record_attachment_rows(request.user,record,problem)
     assignment_history = AuditLog.objects.filter(company=record.company,object_type="MaintenanceProblem",
         object_id=str(problem.pk),action="maintenance.problem_assigned").select_related("user").order_by("-created_at","pk") if problem else []
     assignment_page, assignment_query = paginate_query(request,assignment_history,parameter="assignment_page",per_page=10)
+    problem_return = problem_return_url(request)
     return render(
         request,
         "maintenance/record_detail.html",
         {
             "record": record, "assignment_page":assignment_page, "assignment_query":assignment_query,
+            "record_print_url":record_paper_url(request,record),
+            **record_navigation_context(request, record),
             "problem": problem,
+            "problem_list_url": problem_return or reverse("maintenance:problem-list"),
+            "problem_return_query": urlencode({"return_to": problem_return}) if problem_return else "",
             "can_void": record.status == "confirmed"
             and can_void_maintenance_record(request.user, record),
             "can_redo": record.status == "voided"
@@ -560,18 +612,28 @@ def problem_list(request):
             problems = problems.filter(owner_employee=form.cleaned_data["owner_employee"])
         if form.cleaned_data["mine"]:
             problems = problems.filter(owner_employee__user=request.user)
-        if form.cleaned_data["due_scope"] == "overdue":
-            problems = problems.filter(status="open",target_date__lt=today)
-        elif form.cleaned_data["due_scope"] == "today":
-            problems = problems.filter(status="open",target_date=today)
-        elif form.cleaned_data["due_scope"] == "unassigned":
-            problems = problems.filter(status="open").filter(Q(owner_employee__isnull=True)|Q(target_date__isnull=True))
         if form.cleaned_data["date_from"]:
             problems = problems.filter(maintenance_record__completed_date__gte=form.cleaned_data["date_from"])
         if form.cleaned_data["date_to"]:
             problems = problems.filter(maintenance_record__completed_date__lte=form.cleaned_data["date_to"])
     else:
         problems = problems.none()
+    attention_counts = problems.aggregate(
+        overdue=Count("pk", filter=Q(status="open", target_date__lt=today)),
+        today=Count("pk", filter=Q(status="open", target_date=today)),
+        week=Count("pk", filter=Q(status="open", target_date__gt=today, target_date__lte=today + timedelta(days=7))),
+        unassigned=Count("pk", filter=Q(status="open") & (Q(owner_employee__isnull=True) | Q(target_date__isnull=True))),
+    )
+    if valid:
+        due_scope = form.cleaned_data["due_scope"]
+        if due_scope == "overdue":
+            problems = problems.filter(status="open", target_date__lt=today)
+        elif due_scope == "today":
+            problems = problems.filter(status="open", target_date=today)
+        elif due_scope == "week":
+            problems = problems.filter(status="open", target_date__gt=today, target_date__lte=today + timedelta(days=7))
+        elif due_scope == "unassigned":
+            problems = problems.filter(status="open").filter(Q(owner_employee__isnull=True) | Q(target_date__isnull=True))
     counts = problems.aggregate(
         open=Count("pk", filter=Q(status="open")),
         closed=Count("pk", filter=Q(status="closed")),
@@ -589,8 +651,15 @@ def problem_list(request):
     for status in ("open", "closed"):
         summary_params["status"] = status
         problem_links[status] = "?" + summary_params.urlencode()
+    attention_links = {}
+    for scope in ("overdue", "today", "week", "unassigned"):
+        params = request.GET.copy()
+        params.pop("page", None)
+        params["status"] = "open"
+        params["due_scope"] = scope
+        attention_links[scope] = "?" + params.urlencode()
     items = [
-        {"problem": problem, "is_overdue":problem.status == "open" and problem.target_date is not None and problem.target_date < today, "can_close": problem.status == "open" and can_close_maintenance_problem(request.user, problem)}
+        {"problem": problem, "timing": problem_timing(problem, today), "is_overdue":problem.status == "open" and problem.target_date is not None and problem.target_date < today, "can_close": problem.status == "open" and can_close_maintenance_problem(request.user, problem)}
         for problem in page_obj.object_list
     ]
     return render(
@@ -603,6 +672,8 @@ def problem_list(request):
             "filter_form": form,
             "problem_counts": counts,
             "problem_links": problem_links,
+            "attention_counts": attention_counts,
+            "attention_links": attention_links,
         },
         status=200 if valid else 400,
     )
@@ -622,10 +693,10 @@ def problem_assign(request, pk):
             _service_error(form,exc)
         else:
             messages.success(request,"负责人和目标日期已保存，原分派历史已保留。")
-            return redirect("maintenance:record-detail",pk=problem.maintenance_record_id)
+            return redirect(problem_return_url(request, reverse("maintenance:record-detail", args=[problem.maintenance_record_id])))
     return render(request,"maintenance/action_form.html",{"form":form,"title":"分派或调整问题跟进",
         "button_label":"保存分派","description":"登记负责人不改变账号权限；问题仍由设备管理员或授权部门主管核验后关闭。",
-        "cancel_url":f"/maintenance/records/{problem.maintenance_record_id}/"})
+        **_problem_action_context(request, problem)})
 
 
 @login_required
@@ -648,11 +719,23 @@ def problem_close(request, pk):
             _service_error(form, exc)
         else:
             messages.success(request, "保养问题已关闭。")
-            return redirect("maintenance:record-detail", pk=problem.maintenance_record_id)
+            return redirect(problem_return_url(request, reverse("maintenance:record-detail", args=[problem.maintenance_record_id])))
     return render(
         request, "maintenance/action_form.html",
-        {"form": form, "title": "关闭保养问题", "button_label": "确认关闭", "cancel_url": f"/maintenance/records/{problem.maintenance_record_id}/"},
+        {"form": form, "title": "关闭保养问题", "button_label": "确认关闭", **_problem_action_context(request, problem)},
     )
+
+
+def _problem_action_context(request, problem):
+    return_to = problem_return_url(request)
+    record_url = reverse("maintenance:record-detail", args=[problem.maintenance_record_id])
+    return {
+        "problem": problem,
+        "problem_timing": problem_timing(problem, business_date()),
+        "problem_return_to": return_to,
+        "problem_record_url": record_url + "?" + urlencode({"return_to": return_to}) if return_to else record_url,
+        "cancel_url": return_to or record_url,
+    }
 
 
 def _attachment_target(request, target_type, pk):

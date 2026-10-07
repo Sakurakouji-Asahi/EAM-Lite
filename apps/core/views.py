@@ -17,6 +17,7 @@ from apps.reports.queries import build_dashboard
 from apps.assets.workbenches import lifecycle_work_summary
 
 from .context_processors import build_application_navigation
+from .task_workspace import build_task_workspace
 
 
 @never_cache
@@ -172,6 +173,11 @@ def task_center(request):
             actor=request.user,
             company=company,
         )
+    lifecycle_work = lifecycle_work_summary(request.user, company)
+    workspace = build_task_workspace(
+        navigation=navigation, dashboard=dashboard,
+        lifecycle=lifecycle_work, supply_dashboard=supply_dashboard,
+    )
     response = render(
         request,
         "core/task_center.html",
@@ -179,7 +185,8 @@ def task_center(request):
             "app_navigation": navigation,
             "dashboard": dashboard,
             "supply_dashboard": supply_dashboard,
-            "lifecycle_work": lifecycle_work_summary(request.user, company) if company else None,
+            "lifecycle_work": lifecycle_work,
+            "task_workspace": workspace,
         },
     )
     response["Cache-Control"] = "private, no-store"

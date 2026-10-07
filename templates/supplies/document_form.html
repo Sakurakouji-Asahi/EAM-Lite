@@ -1,15 +1,22 @@
 {% extends "base.html" %}
 {% load static %}
 {% block title %}{{ title }} - EAM-Lite{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/supply-document-form.css' %}?v=20261004-mobile-lines">{% endblock %}
 {% block content %}
 <header class="app-page-header">
   <div><h1 class="h3 mb-1">{{ title }}</h1><p class="text-secondary mb-0">草稿不会改变库存；{% if show_entered_cost %}单位成本为 0 时必须写明原因。{% else %}成本由过账服务根据库存快照计算，表单不能录入或覆盖。{% endif %}</p></div>
-  <a class="btn btn-outline-secondary" href="{% if document %}{% url 'supplies:document-detail' document.pk %}{% else %}{% url 'supplies:document-list' %}{% endif %}">返回</a>
+  <a class="btn btn-outline-secondary" href="{{ document_form_back_url }}">返回</a>
 </header>
+{% if copy_source %}<section class="alert alert-info" aria-label="参考原单开草稿"><strong>正在填写新的草稿，原单不会改变。</strong><div class="mt-1">参考：<a href="{{ copy_source_url }}">{{ copy_source.document_no }}</a> · {{ copy_source.get_status_display }}。</div><p class="small mb-0 mt-1">已带入可用的仓库、{% if document_type == 'issue' %}部门、员工、{% elif document_type == 'receipt' %}来源单位、{% endif %}物品和数量，可继续修改；业务日期默认今天。请核对数量并填写本次说明{% if show_entered_cost %}、单位成本和外部单号{% endif %}，新草稿不会自动过账。</p>{% if copy_notices %}<ul class="small mb-0 mt-2">{% for notice in copy_notices %}<li>{{ notice }}</li>{% endfor %}</ul>{% endif %}</section>{% endif %}
+{% if stock_prefill %}<section class="alert alert-info" aria-label="库存开单来源"><strong>已从当前库存带入来源仓库与物品，尚未保存。</strong><div class="mt-1">{{ stock_prefill.warehouse }} · {{ stock_prefill.item }}（{{ stock_prefill.item.unit }}）</div><div>库存参考：{{ stock_prefill.quantity }} {{ stock_prefill.item.unit }}；请填写本次数量{% if document_type == 'issue' %}和领用部门 / 员工{% else %}及目标仓库{% endif %}。</div><p class="small mb-0 mt-1">仓库与物品仍可修改；草稿不会预留或减少库存，过账时会按当时库存重新核对。</p></section>{% endif %}
 {% if not has_active_warehouses or not has_active_items %}<div class="alert alert-warning"><strong>创建库存单据前还需补充基础资料。</strong>{% if not has_active_warehouses %}当前没有启用仓库，请先<a class="alert-link" href="{% url 'supplies:warehouse-create' %}">新建仓库</a>。{% endif %}{% if not has_active_items %}当前没有启用物品，请先<a class="alert-link" href="{% url 'supplies:item-create' %}">新建物品</a>。{% endif %}</div>{% endif %}
-<form method="post" novalidate>
+<form method="post" novalidate data-unsaved-guard="{% if form.is_bound %}true{% else %}false{% endif %}">
   {% csrf_token %}
+  {% if copy_source %}<input type="hidden" name="copy_from" value="{{ copy_source.pk }}">{% endif %}
+  {% if document_return_to %}<input type="hidden" name="return_to" value="{{ document_return_to }}">{% endif %}
   {{ form.idempotency_key }}
+  {% if document %}{{ form.expected_revision }}{% endif %}
+  {% if document and form.errors.expected_revision %}<div class="alert alert-danger" role="alert">{{ form.errors.expected_revision }}<a class="alert-link" href="{% url 'supplies:document-edit' document.pk %}{% if document_navigation_query %}?{{ document_navigation_query }}{% endif %}">重新打开最新草稿</a>，核对后再提交。当前输入已保留。</div>{% endif %}
   {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
   <section class="card shadow-sm mb-4"><div class="card-body">
     <h2 class="h5 mb-3">基本信息</h2>
@@ -23,28 +30,34 @@
     </div>
   </div></section>
   <section class="card shadow-sm mb-4"><div class="card-body">
-    <div class="d-flex justify-content-between align-items-center mb-3"><h2 class="h5 mb-0">单据明细</h2><div class="d-flex align-items-center gap-2"><span class="text-secondary small">可填写多行，空白行会忽略</span><span class="visually-hidden" id="supply-line-status" aria-live="polite"></span><button class="btn btn-sm btn-outline-primary" type="button" id="add-supply-line" aria-describedby="supply-line-status">新增明细行</button></div></div>
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3"><h2 class="h5 mb-0">单据明细</h2><div class="d-flex flex-wrap align-items-center gap-2"><span class="text-secondary small">可填写多行，空白行会忽略；勾选删除可取消恢复</span><span class="visually-hidden" id="supply-line-status" aria-live="polite"></span><button class="btn btn-sm btn-outline-primary" type="button" id="add-supply-line" aria-describedby="supply-line-status">新增明细行</button></div></div>
+    <div class="supply-line-preview mb-3" id="supply-line-preview" hidden aria-label="明细数量录入预览">
+      <div class="d-flex flex-wrap gap-3 align-items-center mb-2"><strong>录入预览</strong><span id="supply-line-count" aria-live="polite" aria-atomic="true"></span></div>
+      <div class="d-flex flex-wrap gap-2" id="supply-unit-totals"></div>
+      <p class="small text-secondary mb-0 mt-2">数量按相同计量单位分别合计；物品、数量、成本与库存将在提交时核对。</p>
+    </div>
     {{ formset.management_form }}
+    {% if formset.total_error_count %}<div class="alert alert-danger" role="alert"><strong>单据明细需要修正，当前输入已保留。</strong><div class="d-flex flex-wrap gap-2 mt-2">{% for line_form in formset %}{% if line_form.errors and not line_form.DELETE.value %}<a class="alert-link" href="#supply-line-{{ forloop.counter0 }}">第 {{ forloop.counter }} 行{% for field in line_form.visible_fields %}{% if field.errors %} · {{ field.label }}{% endif %}{% endfor %}</a>{% endif %}{% endfor %}</div></div>{% endif %}
     {% if formset.non_form_errors %}<div class="alert alert-danger">{{ formset.non_form_errors }}</div>{% endif %}
-    <div class="table-responsive"><table class="table align-middle">
-      <thead><tr><th style="min-width:15rem">物品</th><th style="min-width:9rem">数量</th>{% if show_entered_cost %}<th style="min-width:10rem">单位成本</th>{% endif %}<th style="min-width:16rem">备注{% if show_entered_cost %} / 0 成本原因{% endif %}</th><th>删除</th></tr></thead>
-      <tbody id="supply-line-rows">{% for line_form in formset %}<tr>
-        <td>{{ line_form.item }}{% for error in line_form.item.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</td>
-        <td>{{ line_form.quantity }}{% for error in line_form.quantity.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</td>
-        {% if show_entered_cost %}<td>{{ line_form.entered_unit_cost }}{% for error in line_form.entered_unit_cost.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</td>{% endif %}
-        <td>{{ line_form.line_remark }}{% for error in line_form.line_remark.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}{% for error in line_form.non_field_errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</td>
-        <td>{% if line_form.DELETE %}<div class="form-check">{{ line_form.DELETE }}<label class="form-check-label" for="{{ line_form.DELETE.id_for_label }}">删除</label></div>{% endif %}</td>
+    <div class="table-responsive supply-document-lines-wrap"><table class="table align-middle supply-document-lines">
+      <thead><tr><th class="supply-line-item">物品</th><th class="supply-line-quantity">数量</th>{% if show_entered_cost %}<th class="supply-line-cost">单位成本</th>{% endif %}<th class="supply-line-remark">备注{% if show_entered_cost %} / 0 成本原因{% endif %}</th><th class="supply-line-delete">删除</th></tr></thead>
+      <tbody id="supply-line-rows">{% for line_form in formset %}<tr id="supply-line-{{ forloop.counter0 }}"{% if line_form.errors and not line_form.DELETE.value %} class="supply-line-has-errors"{% endif %}>
+        <td><strong class="small d-block mb-2" data-line-number>第 {{ forloop.counter }} 行</strong><label class="supply-document-field-label" for="{{ line_form.item.id_for_label }}">物品</label>{{ line_form.item }}{% for error in line_form.item.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</td>
+        <td><label class="supply-document-field-label" for="{{ line_form.quantity.id_for_label }}">数量</label>{{ line_form.quantity }}<span class="form-text supply-line-unit" data-line-unit hidden></span>{% for error in line_form.quantity.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</td>
+        {% if show_entered_cost %}<td><label class="supply-document-field-label" for="{{ line_form.entered_unit_cost.id_for_label }}">单位成本</label>{{ line_form.entered_unit_cost }}{% for error in line_form.entered_unit_cost.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</td>{% endif %}
+        <td><label class="supply-document-field-label" for="{{ line_form.line_remark.id_for_label }}">备注{% if show_entered_cost %} / 0 成本原因{% endif %}</label>{{ line_form.line_remark }}{% for error in line_form.line_remark.errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}{% for error in line_form.non_field_errors %}<div class="text-danger small">{{ error }}</div>{% endfor %}</td>
+        <td>{% if line_form.DELETE %}<div class="form-check">{{ line_form.DELETE }}<label class="form-check-label" for="{{ line_form.DELETE.id_for_label }}">删除</label></div><span class="small text-secondary" data-line-deleted hidden>本行不保存<br>取消勾选可恢复</span>{% endif %}</td>
       </tr>{% endfor %}</tbody>
     </table></div>
-    <template id="empty-supply-line"><tr>
-      <td>{{ formset.empty_form.item }}</td>
-      <td>{{ formset.empty_form.quantity }}</td>
-      {% if show_entered_cost %}<td>{{ formset.empty_form.entered_unit_cost }}</td>{% endif %}
-      <td>{{ formset.empty_form.line_remark }}</td>
-      <td><div class="form-check">{{ formset.empty_form.DELETE }}<label class="form-check-label" for="{{ formset.empty_form.DELETE.id_for_label }}">删除</label></div></td>
+    <template id="empty-supply-line"><tr id="supply-line-__prefix__">
+      <td><strong class="small d-block mb-2" data-line-number></strong><label class="supply-document-field-label" for="{{ formset.empty_form.item.id_for_label }}">物品</label>{{ formset.empty_form.item }}</td>
+      <td><label class="supply-document-field-label" for="{{ formset.empty_form.quantity.id_for_label }}">数量</label>{{ formset.empty_form.quantity }}<span class="form-text supply-line-unit" data-line-unit hidden></span></td>
+      {% if show_entered_cost %}<td><label class="supply-document-field-label" for="{{ formset.empty_form.entered_unit_cost.id_for_label }}">单位成本</label>{{ formset.empty_form.entered_unit_cost }}</td>{% endif %}
+      <td><label class="supply-document-field-label" for="{{ formset.empty_form.line_remark.id_for_label }}">备注{% if show_entered_cost %} / 0 成本原因{% endif %}</label>{{ formset.empty_form.line_remark }}</td>
+      <td><div class="form-check">{{ formset.empty_form.DELETE }}<label class="form-check-label" for="{{ formset.empty_form.DELETE.id_for_label }}">删除</label></div><span class="small text-secondary" data-line-deleted hidden>本行不保存<br>取消勾选可恢复</span></td>
     </tr></template>
   </div></section>
-  <div class="app-form-actions app-form-actions-contained mobile-action-bar"><button class="btn btn-outline-primary" type="submit" name="next_action" value="detail"{% if not has_active_warehouses or not has_active_items %} disabled{% endif %}>仅保存草稿</button>{% if can_continue_to_post %}<button class="btn btn-primary" type="submit" name="next_action" value="post"{% if not has_active_warehouses or not has_active_items %} disabled{% endif %}>保存并核对过账</button>{% endif %}<a class="btn btn-outline-secondary" href="{% url 'supplies:document-list' %}">取消</a></div>
+  <div class="app-form-actions app-form-actions-contained mobile-action-bar"><button class="btn btn-outline-primary" type="submit" name="next_action" value="detail"{% if not has_active_warehouses or not has_active_items %} disabled{% endif %}>仅保存草稿</button>{% if can_continue_to_post %}<button class="btn btn-primary" type="submit" name="next_action" value="post"{% if not has_active_warehouses or not has_active_items %} disabled{% endif %}>保存并核对过账</button>{% endif %}<a class="btn btn-outline-secondary" href="{{ document_form_back_url }}">取消</a></div>
 </form>
-<script src="{% static 'js/supply-document-form.js' %}" defer></script>
+<script src="{% static 'js/supply-document-form.js' %}?v=20261004-mobile-lines" defer></script>
 {% endblock %}

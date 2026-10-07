@@ -1,0 +1,5 @@
+{% load workflow_navigation %}
+{% if row.can_return %}<a class="btn btn-sm btn-outline-success" href="{% url 'offboarding:item-return' clearance.pk item.pk %}?{% workflow_query %}">办理归还</a>{% endif %}
+{% if row.can_transfer %}<a class="btn btn-sm btn-outline-primary" href="{% url 'offboarding:item-transfer' clearance.pk item.pk %}?{% workflow_query %}">办理转交</a>{% endif %}
+{% if row.can_dispose %}<a class="btn btn-sm btn-outline-danger" href="{% url 'assets:disposal-start' item.asset_id %}?{% workflow_query %}">进入处置流程</a>{% endif %}
+{% if row.can_upload %}<a class="btn btn-sm btn-outline-secondary" href="{% url 'offboarding:attachment-upload' clearance.pk 'item' item.pk %}?{% workflow_query %}">上传证据</a>{% endif %}

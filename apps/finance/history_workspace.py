@@ -1,15 +1,16 @@
 from django import forms
+from urllib.parse import urlencode
 from django.contrib.auth.decorators import login_required
 from django.db.models import Sum
 from django.shortcuts import get_object_or_404,render
 from django.utils import timezone
 from apps.core.pagination import paginate_query
 from apps.core.query_forms import DateRangeQueryForm
-from apps.audit.display import localize_audit_payload
 from apps.masterdata.permissions import current_company
 from .forms import _bootstrap_widgets
 from .models import DepreciationEntry,TheoreticalDepreciationRun
 from .permissions import require_view_finance,scoped_finance_assets
+from .theoretical_workspace import history_row_links, parameter_comparison, result_comparison
 
 
 class EntryQueryForm(forms.Form):
@@ -28,7 +29,8 @@ def entry_history_context(request,entries):
     else:
         entries=entries.none()
     page,query=paginate_query(request,entries.order_by('-period_start','-created_at','pk'),parameter='entry_page')
-    return {'entry_filter':form,'entries':page.object_list,'entry_page':page,'entry_query':query}
+    return {'entry_filter':form,'entries':page.object_list,'entry_page':page,'entry_query':query,
+            'entry_return_query':urlencode({'return_to':request.get_full_path()})}
 
 
 class TheoryQueryForm(DateRangeQueryForm):
@@ -53,6 +55,8 @@ def theoretical_history(request,pk):
     form=TheoryQueryForm(request.GET,runs=all_runs)
     selected=all_runs
     comparison=[]
+    result_rows=[]
+    compared_runs=[]
     if form.is_valid():
         data=form.cleaned_data
         if data['status']: selected=selected.filter(status=data['status'])
@@ -60,12 +64,13 @@ def theoretical_history(request,pk):
         if data['date_to']: selected=selected.filter(as_of_date__lte=data['date_to'])
         a,b=data['compare_a'],data['compare_b']
         if a and b:
-            left=localize_audit_payload(a.parameter_snapshot_json)
-            right=localize_audit_payload(b.parameter_snapshot_json)
-            comparison=[{'label':key,'a':left.get(key),'b':right.get(key),'changed':left.get(key)!=right.get(key)}
-                        for key in sorted(set(left)|set(right))]
-            comparison.insert(0,{'label':'试算截止日期','a':a.as_of_date,'b':b.as_of_date,'changed':a.as_of_date!=b.as_of_date})
+            comparison=parameter_comparison(a,b)
+            result_rows=result_comparison(a,b)
+            compared_runs=[a,b]
     else: selected=selected.none()
     page,query=paginate_query(request,selected)
+    history_row_links(request,asset,page.object_list)
+    history_row_links(request,asset,compared_runs)
     return render(request,'finance/theoretical_history.html',{'asset':asset,'filter_form':form,'page_obj':page,
-        'pagination_query':query,'comparison':comparison},status=200 if form.is_valid() else 400)
+        'pagination_query':query,'comparison':comparison,'result_comparison':result_rows,
+        'compared_runs':compared_runs},status=200 if form.is_valid() else 400)

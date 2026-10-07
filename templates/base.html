@@ -8,15 +8,23 @@
   <meta name="theme-color" content="#16324f">
   <title>{% block title %}EAM-Lite{% endblock %}</title>
   <link rel="stylesheet" href="{% static 'vendor/bootstrap/5.3.8/css/bootstrap.min.css' %}">
-  <link rel="stylesheet" href="{% static 'css/app.css' %}?v=20260926-usability2">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}?v=20261003-layout">
+  <link rel="stylesheet" href="{% static 'css/quick-navigation.css' %}?v=20261004-pinned">
+  <link rel="stylesheet" href="{% static 'css/workspace-preferences.css' %}?v=20261004">
+  <link rel="stylesheet" href="{% static 'css/mobile-filters.css' %}?v=20261004">
   <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
   <script src="{% static 'vendor/htmx/2.0.10/htmx.min.js' %}" defer></script>
   <script src="{% static 'vendor/bootstrap/5.3.8/js/bootstrap.bundle.min.js' %}" defer></script>
   <script src="{% static 'js/app.js' %}?v=20260928-workflows3" defer></script>
-  <script src="{% static 'js/assignment-forms.js' %}?v=20260907" defer></script>
+  <script src="{% static 'js/quick-navigation.js' %}?v=20261004-pinned" defer></script>
+  <script src="{% static 'js/workspace-preferences.js' %}?v=20261004" defer></script>
+  <script src="{% static 'js/query-presets.js' %}?v=20261004" defer></script>
+  <script src="{% static 'js/mobile-filters.js' %}?v=20261004" defer></script>
+  <script src="{% static 'js/table-scroll-hints.js' %}?v=20261004" defer></script>
+  <script src="{% static 'js/assignment-forms.js' %}?v=20261004-inventory-scope" defer></script>
   {% block extra_head %}{% endblock %}
 </head>
-<body class="app-body">
+<body class="app-body"{% if request.user.is_authenticated %} data-preference-scope="{{ request.user.pk }}"{% endif %}>
   <a class="skip-link" href="#main-content">跳到主要内容</a>
 
   {% if runtime_metadata.is_development %}
@@ -46,12 +54,13 @@
           <form class="d-none d-lg-flex flex-grow-1 mx-3" method="get" action="{% url 'assets:asset-list' %}" role="search" aria-label="全局资产搜索" data-global-asset-search>
             <div class="input-group input-group-sm">
               <label class="visually-hidden" for="global-asset-search">搜索资产</label>
-              <input class="form-control" id="global-asset-search" name="q" value="{{ request.GET.q|default:'' }}" placeholder="资产编号、设备编号、草稿号或名称" autocomplete="off">
+              <input class="form-control" id="global-asset-search" name="q" value="{% if request.resolver_match.view_name == 'assets:asset-list' %}{{ request.GET.q|default:'' }}{% endif %}" placeholder="资产编号、设备编号、草稿号或名称" autocomplete="off">
               <button class="btn btn-light" type="submit">搜索资产</button>
             </div>
           </form>
         {% endif %}
         <div class="app-topbar-actions">
+          <button class="app-command-trigger" type="button" data-quick-navigation-open aria-label="查找功能" aria-haspopup="dialog" aria-controls="quick-navigation" title="查找功能（Ctrl+K）" hidden><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m16 16 5 5"></path></svg><span class="d-none d-sm-inline">查找功能</span><kbd class="d-none d-xl-inline">Ctrl K</kbd></button>
           <a class="btn btn-outline-light" href="{% url 'assets:qr-scan-entry' %}" data-topbar-asset-scan><span class="d-none d-sm-inline">扫码资产</span><span class="d-sm-none">扫码</span></a>
           {% if app_navigation.asset.can_create %}
             <a class="btn app-quick-create d-none d-md-inline-flex" href="{% url 'assets:asset-create' %}" data-topbar-asset-create>新增逐件资产</a>
@@ -70,6 +79,15 @@
                 <div class="app-role-list">{% for role in current_role_labels %}<span>{{ role }}</span>{% empty %}<span>未分配业务角色</span>{% endfor %}</div>
               </div>
               <div class="dropdown-divider"></div>
+              <div class="px-3 py-2" data-table-density-controls hidden>
+                <div class="small text-secondary mb-2">表格行距</div>
+                <div class="btn-group btn-group-sm w-100" role="group" aria-label="表格行距">
+                  <button type="button" class="btn btn-outline-secondary" data-table-density="comfortable" aria-pressed="true">舒适</button>
+                  <button type="button" class="btn btn-outline-secondary" data-table-density="compact" aria-pressed="false">紧凑</button>
+                </div>
+                <p class="small text-secondary mt-2 mb-0">在本浏览器记住你的选择。</p>
+              </div>
+              <div class="dropdown-divider" data-table-density-controls hidden></div>
               <form method="post" action="{% url 'logout' %}">
                 {% csrf_token %}
                 <button type="submit" class="dropdown-item app-logout-button">退出登录</button>
@@ -82,6 +100,7 @@
   </header>
 
   {% if request.user.is_authenticated %}
+    {% include "_quick_navigation.html" %}
     <div class="app-layout">
       <aside class="app-sidebar d-none d-xl-flex" aria-label="桌面功能菜单">
         <div class="app-sidebar-heading">

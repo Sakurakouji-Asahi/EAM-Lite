@@ -1056,6 +1056,18 @@ form[data-eam-submitting="true"] button[type="submit"]::after {
   max-width: 44rem;
 }
 
+.app-error-card {
+  max-width: 42rem;
+}
+
+.inventory-scope-assets-scroll {
+  max-height: 20rem;
+}
+
+.inventory-surplus-convert {
+  max-width: 56rem;
+}
+
 .app-narrow-page form.card > .card-footer {
   position: sticky;
   bottom: 0.75rem;

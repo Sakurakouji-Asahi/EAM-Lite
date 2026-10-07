@@ -1,4 +1,5 @@
 import io
+import uuid
 from datetime import timedelta
 from decimal import Decimal
 
@@ -24,7 +25,7 @@ def browser_data(context, **extra):
         "asset_name": "无照片先建档", "category": str(context["category"].pk),
         "department": str(context["department"].pk), "responsible_employee": str(context["employee"].pk),
         "location": str(context["location"].pk), "unit": "台", "quantity": "1",
-        "asset_action": "register", "idempotency_key": "browser-create",
+        "asset_action": "register", "idempotency_key": uuid.uuid4().hex,
         **extra,
     }
 

@@ -1,0 +1,19 @@
+.asset-form-assistance[hidden] { display: none; }
+.asset-form-assistance { background: var(--eam-surface, #f6f8fb); }
+.asset-form-section-links { display: flex; flex-wrap: wrap; gap: .4rem; }
+.asset-form-section-links a {
+  display: inline-flex; align-items: center; min-height: 36px;
+  padding: .3rem .6rem; border: 1px solid var(--eam-line, #dfe5ee);
+  border-radius: .35rem; background: #fff; text-decoration: none;
+  overflow-wrap: anywhere;
+}
+form[data-asset-form-assistance] :is(input, select, textarea, summary, h2) {
+  scroll-margin-block: calc(var(--eam-topbar-height, 64px) + 1rem) 6rem;
+}
+form[data-asset-form-assistance] :is(summary, h2):focus-visible {
+  outline: 2px solid var(--eam-accent, #0d6efd); outline-offset: 4px;
+}
+@media (max-width: 575.98px) {
+  .asset-form-assistance .card-body { padding: .8rem; }
+  .asset-form-section-links a { font-size: .8rem; }
+}

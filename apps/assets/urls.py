@@ -7,6 +7,9 @@ from apps.assets.trace_views import asset_trace_edit
 from apps.assets.custody_views import custody_return
 from apps.assets.bulk_views import bulk_registration
 from apps.assets.correction_views import reverse_trace
+from apps.assets.print_views import asset_information_card
+from apps.assets.repair_views import repair_workbench
+from apps.assets.attachment_bundle import attachment_bundle
 from apps.assets.lifecycle_urls import urlpatterns as lifecycle_urlpatterns
 from apps.assets.qr_urls import urlpatterns as qr_urlpatterns
 
@@ -14,14 +17,18 @@ from apps.assets.qr_urls import urlpatterns as qr_urlpatterns
 app_name = "assets"
 
 urlpatterns = [
+    path('repairs/', repair_workbench, name='repair-workbench'),
     path('loans/', workbenches.loan_workbench, name='loan-workbench'),
     path('disposals/', workbenches.disposal_workbench, name='disposal-workbench'),
     path("", views.asset_list, name="asset-list"),
     path("new/", views.asset_create, name="asset-create"),
+    path("custom-fields/", views.asset_custom_fields, name="asset-custom-fields"),
     path("bulk-register/", bulk_registration, name="bulk-registration"),
     path("code-preview/", asset_code_preview, name="asset-code-preview"),
     path("export/", views.asset_list_export, name="asset-list-export"),
     path("<uuid:pk>/", views.asset_detail, name="asset-detail"),
+    path("<uuid:pk>/attachments/download-selected/", attachment_bundle, name="attachment-bundle"),
+    path("<uuid:pk>/information-card/", asset_information_card, name="asset-information-card"),
     path("<uuid:pk>/identification/", identification_confirm, name="identification-confirm"),
     path("<uuid:pk>/origin/", asset_trace_edit, {"kind": "origin"}, name="asset-origin-edit"),
     path("<uuid:pk>/composition/", asset_trace_edit, {"kind": "composition"}, name="asset-composition-edit"),
@@ -29,6 +36,7 @@ urlpatterns = [
     path("<uuid:pk>/custody-returns/<uuid:record_pk>/reverse/", reverse_trace, {"kind": "custody"}, name="custody-return-reverse"),
     path("<uuid:pk>/origins/<uuid:record_pk>/reverse/", reverse_trace, {"kind": "origin"}, name="origin-reverse"),
     path("<uuid:pk>/edit/", views.asset_edit, name="asset-edit"),
+    path("<uuid:pk>/custom-fields/", views.asset_custom_fields, name="asset-custom-fields"),
     path("<uuid:pk>/equipment-number/", views.asset_equipment_number, name="asset-equipment-number"),
     path("<uuid:pk>/submit/", views.asset_submit, name="asset-submit"),
     path("<uuid:pk>/withdraw/", views.asset_withdraw, name="asset-withdraw"),

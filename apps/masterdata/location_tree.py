@@ -5,10 +5,11 @@ from apps.masterdata.models import Location
 
 
 class LocationTree:
-    def __init__(self, company):
-        self.nodes = {row.pk: row for row in Location.objects.filter(company=company).only(
+    def __init__(self, company, *, nodes=None):
+        records = nodes if nodes is not None else Location.objects.filter(company=company).only(
             "id", "company_id", "parent_id", "code", "normalized_code", "name", "level"
-        )}
+        )
+        self.nodes = {row.pk: row for row in records if row.company_id == company.pk}
         self.children = defaultdict(list)
         for node in self.nodes.values():
             self.children[node.parent_id].append(node.pk)

@@ -22,6 +22,7 @@ from apps.masterdata.permissions import current_company, role_names_for
 from apps.audit.models import OperationUndo
 from apps.audit.permissions import scoped_audit_logs
 from apps.audit.undo import SUPPORTED, preview_undo, undo_operation
+from apps.audit.workspace import enrich_projection, history_workspace
 
 
 _ALLOWED_QUERY_KEYS = frozenset(
@@ -105,7 +106,7 @@ def audit_log_list(request):
             log.object_type != "ImportBatch" or log.new_data_json.get("import_type") == "asset_initialization"
         )
         item["is_undone"] = log.pk in undone
-        projected.append(item)
+        projected.append(enrich_projection(item, filters=form))
     page_obj.object_list = projected
 
     query_data = form.data.copy()
@@ -117,6 +118,7 @@ def audit_log_list(request):
             "form": form,
             "page_obj": page_obj,
             "filter_query": query_data.urlencode(),
+            **history_workspace(form),
         },
     )
     response["Cache-Control"] = "private, no-store"

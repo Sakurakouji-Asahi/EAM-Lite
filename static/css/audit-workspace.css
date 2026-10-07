@@ -1,0 +1,11 @@
+.audit-filter-chips { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.audit-filter-chips a { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: start; }
+.audit-change-list { min-width: 18rem; max-width: 32rem; margin: 0; padding-left: 1.1rem; font-size: .85rem; }
+.audit-change-list li { margin-bottom: .4rem; overflow-wrap: anywhere; }
+.audit-history-object { min-width: 12rem; max-width: 20rem; overflow-wrap: anywhere; }
+.audit-full-record { margin-top: .6rem; min-width: 15rem; }
+.audit-full-record > summary { color: var(--bs-primary); cursor: pointer; }
+.audit-full-record .audit-json { max-height: 22rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.audit-history-links { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .6rem; }
+.audit-advanced > summary { color: var(--bs-secondary-color); cursor: pointer; }
+.audit-change-value { color: var(--bs-secondary-color); }

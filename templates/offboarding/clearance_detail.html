@@ -1,6 +1,7 @@
 {% extends "base.html" %}
-{% load workflow_navigation %}
+{% load workflow_navigation static %}
 {% block title %}{{ clearance.employee.name }}清退详情 - EAM-Lite{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/clearance-worklist.css' %}?v=20261004">{% endblock %}
 {% block content %}
   <header class="app-page-header align-items-start">
     <div>
@@ -64,17 +65,15 @@
   {% endif %}
 
   <h2 class="h4 mb-3">清退项目</h2>
-  <section id="clearance-assets"><h2 class="h5">查找清退项目</h2><p class="small text-secondary">上方为整单进度，筛选仅改变明细显示。</p>{% include '_list_filters.html' %}</section>
+  <section id="clearance-assets"><h2 class="h5">查找清退项目</h2><p class="small text-secondary">上方为整单进度，筛选仅改变明细显示。“未处理”包括处置中的未解决资产；可切换紧凑工作清单快速办理。</p>{% include '_list_filters.html' %}<p class="small text-secondary">符合当前条件：逐件资产 {{ asset_page.paginator.count }} 项 · 数量型耐用品保管 {{ supply_page.paginator.count }} 项。</p></section>
+  {% if compact_view %}{% include 'offboarding/_asset_worklist.html' %}{% else %}
   {% for row in item_rows %}
     {% with item=row.item %}
       <article class="card shadow-sm mb-3" aria-labelledby="clearance-item-{{ item.pk }}">
         <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
           <div><h3 class="h5 mb-1" id="clearance-item-{{ item.pk }}">{{ item.asset_code_snapshot }} · {{ item.asset_name_snapshot }}</h3><span class="badge text-bg-{% if item.resolution == 'pending' %}danger{% elif item.resolution == 'disposal_in_progress' %}warning{% else %}success{% endif %}">{{ item.get_resolution_display }}</span> <span class="badge text-bg-light">{{ item.get_source_type_display }}</span>{% if item.added_during_clearance %} <span class="badge text-bg-info">后补发现</span>{% endif %}</div>
           <div class="d-flex flex-wrap gap-2">
-            {% if row.can_return %}<a class="btn btn-sm btn-outline-success" href="{% url 'offboarding:item-return' clearance.pk item.pk %}">办理归还</a>{% endif %}
-            {% if row.can_transfer %}<a class="btn btn-sm btn-outline-primary" href="{% url 'offboarding:item-transfer' clearance.pk item.pk %}">办理转交</a>{% endif %}
-            {% if row.can_dispose %}<a class="btn btn-sm btn-outline-danger" href="{% url 'assets:disposal-start' item.asset_id %}">进入处置流程</a>{% endif %}
-            {% if row.can_upload %}<a class="btn btn-sm btn-outline-secondary" href="{% url 'offboarding:attachment-upload' clearance.pk 'item' item.pk %}">上传证据</a>{% endif %}
+            {% include 'offboarding/_asset_actions.html' %}
           </div>
         </div>
         <div class="card-body">
@@ -121,17 +120,20 @@
       </article>
     {% endwith %}
   {% empty %}
-    <div class="card card-body shadow-sm text-secondary">该清退单当前没有项目。</div>
+    <div class="card card-body shadow-sm text-secondary">没有符合当前条件的逐件资产。可调整关键词或处理范围。</div>
   {% endfor %}
+  {% endif %}
 
-  <h2 class="h4 mt-4 mb-3">数量型低值耐用品</h2>
   {% include '_pagination.html' with page_obj=asset_page pagination_query=asset_pagination_query page_parameter='page' page_anchor='clearance-assets' %}
+  <h2 class="h4 mt-4 mb-3">数量型低值耐用品</h2>
   <div id="clearance-supplies"></div>
+  {% if compact_view %}{% include 'offboarding/_supply_worklist.html' %}{% else %}
   {% for row in supply_item_rows %}{% with item=row.item %}
-    <article class="card shadow-sm mb-3">
-      <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2"><div><h3 class="h5 mb-1">{{ item.item_code_snapshot }} · {{ item.item_name_snapshot }}</h3><span class="badge text-bg-{% if item.resolution == 'pending' %}danger{% else %}success{% endif %}">{{ item.get_resolution_display }}</span></div><div class="d-flex flex-wrap gap-2">{% if row.can_return %}<a class="btn btn-sm btn-outline-success" href="{% url 'supplies:durable-return-create' item.custody_id %}">归还仓库</a>{% endif %}{% if row.can_transfer %}<a class="btn btn-sm btn-outline-primary" href="{% url 'supplies:custody-transfer' item.custody_id %}?{% workflow_query %}">转交</a>{% endif %}{% if row.can_write_off %}<a class="btn btn-sm btn-outline-danger" href="{% url 'supplies:custody-write-off' item.custody_id 'loss' %}?{% workflow_query %}">报损</a><a class="btn btn-sm btn-outline-danger" href="{% url 'supplies:custody-write-off' item.custody_id 'scrap' %}?{% workflow_query %}">报废</a>{% endif %}</div></div>
+    <article class="card shadow-sm mb-3" id="clearance-supply-item-{{ item.pk }}">
+      <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2"><div><h3 class="h5 mb-1">{{ item.item_code_snapshot }} · {{ item.item_name_snapshot }}</h3><span class="badge text-bg-{% if item.resolution == 'pending' %}danger{% else %}success{% endif %}">{{ item.get_resolution_display }}</span></div><div class="d-flex flex-wrap gap-2">{% include 'offboarding/_supply_actions.html' %}</div></div>
       <div class="card-body"><div class="row g-3"><div class="col-12 col-lg-6"><h4 class="h6">发起时快照（不可变）</h4><dl class="row small mb-0"><dt class="col-4 text-secondary">部门/员工</dt><dd class="col-8">{{ item.department_snapshot }} / {{ item.employee_snapshot }}</dd><dt class="col-4 text-secondary">数量</dt><dd class="col-8">{{ item.quantity_snapshot }} {{ item.custody.item.unit }}</dd>{% if show_supply_cost %}<dt class="col-4 text-secondary">管理金额</dt><dd class="col-8">¥{{ item.amount_snapshot }}</dd>{% endif %}</dl></div><div class="col-12 col-lg-6"><h4 class="h6">当前与解决证据</h4><dl class="row small mb-0"><dt class="col-4 text-secondary">当前保管</dt><dd class="col-8"><a href="{% url 'supplies:custody-detail' item.custody_id %}?{% workflow_query %}">{{ item.custody.get_status_display }} · {{ item.custody.current_quantity }} {{ item.custody.item.unit }}</a></dd><dt class="col-4 text-secondary">解决流水</dt><dd class="col-8">{% if item.custody_movement_id %}{{ item.custody_movement.get_action_display }} · {{ item.custody_movement_id }}{% else %}尚未形成{% endif %}</dd>{% if item.resolved_at %}<dt class="col-4 text-secondary">处理时间</dt><dd class="col-8">{{ item.resolved_at|date:'Y-m-d H:i' }}</dd>{% endif %}</dl></div></div>{% if item.resolution == 'pending' %}<div class="alert alert-info mt-3 mb-0">部分归还、部分转交、部分报损或部分报废不会提前解决；来源保管义务全部结清后，最后一条真实流水才成为解决证据。</div>{% endif %}</div>
     </article>
   {% endwith %}{% empty %}<div class="card card-body shadow-sm text-secondary">没有符合条件的数量型耐用品保管项目。</div>{% endfor %}
+  {% endif %}
 {% include '_pagination.html' with page_obj=supply_page pagination_query=supply_pagination_query page_parameter='supply_page' page_anchor='clearance-supplies' %}
 {% endblock %}

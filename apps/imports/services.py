@@ -26,7 +26,7 @@ from django.db.models import Q
 from django.utils import timezone
 from django.utils.text import get_valid_filename
 from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from apps.audit.services import request_audit_context, write_business_audit_log
@@ -346,6 +346,8 @@ def _require_current_import_company(company):
 
 
 def build_template_workbook(import_type: str, company=None, *, version=None) -> bytes:
+    from apps.imports.field_guide import template_field_guide
+
     definition = get_template_definition(import_type, company=company, version=version)
     workbook = Workbook()
     sheet = workbook.active
@@ -520,8 +522,18 @@ def build_template_workbook(import_type: str, company=None, *, version=None) -> 
             )
     for row in policies:
         instructions.append(row)
-    instructions.column_dimensions["A"].width = 18
+    instructions.append(["字段填写指引", "“每行必填”是基础必填项；其余字段仍可能按业务情况条件必填。"])
+    for field in template_field_guide(definition, finance_keys=ASSET_FINANCE_KEYS if import_type == "asset_initialization" else ()):
+        required = "每行必填" if field["required"] else "按业务填写"
+        instructions.append([field["name"], f"{required}；{field['hint']}"])
+    instructions.column_dimensions["A"].width = 26
     instructions.column_dimensions["B"].width = 90
+    instructions.freeze_panes = "A2"
+    for row in instructions:
+        for cell in row:
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+        lines = max((len(str(row[0].value or "")) + 12) // 13, (len(str(row[1].value or "")) + 44) // 45)
+        instructions.row_dimensions[row[0].row].height = max(20, lines * 16)
     if definition.has_example_sheet:
         example = workbook.create_sheet("示例")
         example.append(definition.headers)

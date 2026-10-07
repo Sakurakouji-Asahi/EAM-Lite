@@ -1,0 +1,13 @@
+.label-batch-table td { padding: 1rem; }
+.label-batch-table td:first-child { overflow-wrap: anywhere; }
+.label-progress-tags { display: flex; flex-wrap: wrap; gap: .4rem; max-width: 19rem; }
+.label-progress-tags .badge { font-weight: 500; padding: .5em .65em; }
+@media (max-width: 767.98px) {
+  .label-batch-table, .label-batch-table tbody, .label-batch-table tr, .label-batch-table td { display: block; width: 100%; }
+  .label-batch-table thead { display: none; }
+  .label-batch-table tr + tr { border-top: .5rem solid var(--bs-tertiary-bg, #f4f7fa); }
+  .label-batch-table td { padding: .65rem .85rem; border: 0; }
+  .label-batch-table td[data-label]::before { content: attr(data-label); display: block; margin-bottom: .3rem; font-size: .78rem; color: var(--bs-secondary-color, #64748b); }
+  .label-batch-table td:first-child { padding-top: 1rem; }
+  .label-batch-table td:last-child { padding-bottom: 1rem; }
+}

@@ -1,0 +1,17 @@
+<section class="card shadow-sm mb-3 asset-transfer-review" aria-labelledby="transfer-review-title" data-transfer-summary>
+  <div class="card-header"><h2 class="h5 mb-0" id="transfer-review-title">保存前核对归属</h2></div>
+  <div class="card-body">
+    <p class="small text-secondary">当前状态：{{ asset.get_asset_status_display }}。本次办理更新归属并追加变动记录，资产状态保持不变。</p>
+    {% for row in transfer_review.rows %}
+      <div class="asset-transfer-review-row" data-transfer-field="{{ row.field_name }}" data-original-id="{{ row.original_id }}">
+        <div class="d-flex flex-wrap justify-content-between gap-2 mb-2"><h3 class="h6 mb-0">{{ row.label }}</h3><span class="badge {% if row.changed %}text-bg-primary{% elif row.state == 'missing' %}text-bg-warning{% else %}text-bg-secondary{% endif %}" data-transfer-state>{{ row.state_label }}</span></div>
+        <div class="row g-2">
+          <div class="col-12 col-md-6"><div class="small text-secondary">当前记录</div><div class="text-break">{{ row.original_label }}</div></div>
+          <div class="col-12 col-md-6"><div class="small text-secondary">待保存目标</div><div class="text-break" data-transfer-target>{{ row.target_label }}</div></div>
+        </div>
+      </div>
+    {% endfor %}
+    <p class="small mt-3 mb-0" role="status" aria-live="polite" aria-atomic="true" data-transfer-message>{% if transfer_review.missing_count %}还有 {{ transfer_review.missing_count }} 项待选择。换部门后，请重新选择该部门的责任人。{% elif transfer_review.changed_count %}将变更 {{ transfer_review.changed_count }} 项归属资料。请核对目标和下方原因后保存。{% else %}三项均保持不变。只修改实际变化的项目，再填写生效时间和原因。{% endif %}</p>
+    <noscript><p class="small text-secondary mt-2 mb-0">未启用实时提示。请直接核对下方目标选择；保存时系统会继续校验。</p></noscript>
+  </div>
+</section>

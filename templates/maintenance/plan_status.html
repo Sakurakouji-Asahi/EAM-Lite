@@ -1,1 +1,19 @@
-{% extends "base.html" %}{% block title %}保养计划状态{% endblock %}{% block content %}<div class="row justify-content-center"><div class="col-12 col-lg-7"><h1 class="h3">更新计划状态</h1><div class="alert alert-warning">终止计划后不可在普通页面恢复；处置联动由受控 Service 处理。</div><form method="post" class="card card-body">{% csrf_token %}<div class="mb-3"><label class="form-label" for="id_status">目标状态</label><select class="form-select" id="id_status" name="status" required><option value="active">启用</option><option value="suspended">暂停</option><option value="ended">终止</option></select></div><div class="mb-3"><label class="form-label" for="id_reason">原因</label><textarea class="form-control" id="id_reason" name="reason" required></textarea></div><button class="btn btn-warning">确认更新</button></form></div></div>{% endblock %}
+{% extends "base.html" %}
+{% block title %}保养计划状态{% endblock %}
+{% block content %}
+<div class="row justify-content-center"><div class="col-12 col-lg-7">
+  <h1 class="h3">更新计划状态</h1>
+  <div class="card card-body mb-3"><a href="{{ plan_detail_url }}">{{ plan.name }}</a><span class="small text-secondary">{{ plan.asset.asset_code }} / {{ plan.asset.asset_name }} · 当前{{ plan.get_status_display }} · 责任人 {{ plan.responsible_employee.name }}</span></div>
+  <div class="alert alert-warning">终止计划后不可在普通页面恢复。</div>
+  <form method="post" class="card card-body" data-unsaved-guard="{% if form.is_bound %}true{% else %}false{% endif %}">
+    {% if plan_return_to %}<input type="hidden" name="return_to" value="{{ plan_return_to }}">{% endif %}
+    {% include 'maintenance/_form_fields.html' %}
+    <p class="form-text">终止计划必须填写原因；启用或暂停时可按需填写。</p>
+    <div class="d-flex gap-2">
+      <button class="btn btn-warning" type="submit">确认更新</button>
+      <a class="btn btn-outline-secondary" href="{{ plan_detail_url }}">取消</a>
+      {% if plan_return_to %}<a class="btn btn-outline-secondary" href="{{ plan_list_url }}">返回原查询</a>{% endif %}
+    </div>
+  </form>
+</div></div>
+{% endblock %}
