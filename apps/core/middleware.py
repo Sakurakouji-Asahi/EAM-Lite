@@ -26,6 +26,12 @@ _INVENTORY_QR_BRIDGE_PATH = re.compile(
     r"^/inventory/tasks/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/scan/$"
 )
+_INVENTORY_SCAN_FORM_PATH = re.compile(
+    r"^/inventory/tasks/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/(?:scan/(?:context/[0-9a-f]{32}/)?|"
+    r"rows/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/supplement/)$"
+)
 
 
 class QrOpaqueOriginCsrfCompatibilityMiddleware:
@@ -37,10 +43,12 @@ class QrOpaqueOriginCsrfCompatibilityMiddleware:
     origin as absent for QR scan attachment and per-asset Web attachment POSTs,
     with the configured QR host, session cookie, CSRF cookie, submitted CSRF
     token and a short-lived signed bridge bound to the current session and
-    exact POST path all still required. The inventory scan path is accepted
-    only for its separate signed ``scan_bridge`` handoff rendered by a valid
-    QR page. Django's normal CsrfViewMiddleware performs the actual token
-    validation.
+    exact POST path all still required. Inventory entry, context and supplement
+    forms use that signed bridge too; the entry also retains its existing
+    ``scan_bridge`` handoff, which the inventory view verifies separately.
+    Verified inventory forms restore a same-origin header so HTTPS no-referrer
+    pages do not fall into Django's missing-Referer rejection. Django's normal
+    CsrfViewMiddleware still performs the actual cookie/token validation.
     """
 
     def __init__(self, get_response):
@@ -64,7 +72,10 @@ class QrOpaqueOriginCsrfCompatibilityMiddleware:
     def __call__(self, request):
         if self._is_compatible_request(request):
             request.qr_opaque_origin_csrf_compatibility = True
-            request.META.pop("HTTP_ORIGIN", None)
+            if _INVENTORY_SCAN_FORM_PATH.fullmatch(request.path_info):
+                request.META["HTTP_ORIGIN"] = f"{request.scheme}://{request.get_host()}"
+            else:
+                request.META.pop("HTTP_ORIGIN", None)
         return self.get_response(request)
 
     def _is_compatible_request(self, request):
@@ -80,9 +91,12 @@ class QrOpaqueOriginCsrfCompatibilityMiddleware:
         is_inventory_bridge = bool(
             _INVENTORY_QR_BRIDGE_PATH.fullmatch(request.path_info)
         )
-        if not is_qr_confirmation and not is_inventory_bridge:
+        is_inventory_form = bool(
+            _INVENTORY_SCAN_FORM_PATH.fullmatch(request.path_info)
+        )
+        if not is_qr_confirmation and not is_inventory_form:
             return False
-        endpoint_kind = "qr_confirmation" if is_qr_confirmation else "inventory_bridge"
+        endpoint_kind = "qr_confirmation" if is_qr_confirmation else "inventory_scan"
 
         def rejected(reason):
             logger.warning(
@@ -107,9 +121,18 @@ class QrOpaqueOriginCsrfCompatibilityMiddleware:
             return rejected("session_cookie_missing")
         if not request.COOKIES.get(settings.CSRF_COOKIE_NAME):
             return rejected("csrf_cookie_missing")
-        if is_inventory_bridge:
+        if is_inventory_form:
             try:
-                if not request.POST.get("scan_bridge", "").strip():
+                bridge = request.POST.get("opaque_origin_bridge", "").strip()
+                if bridge:
+                    if not validate_qr_opaque_origin_bridge(
+                        bridge,
+                        user_id=request.session.get("_auth_user_id"),
+                        session_key=request.session.session_key,
+                        path=request.path_info,
+                    ):
+                        return rejected("inventory_bridge_invalid")
+                elif not (is_inventory_bridge and request.POST.get("scan_bridge", "").strip()):
                     return rejected("inventory_bridge_missing")
             except (SuspiciousOperation, UnreadablePostError):
                 return rejected("post_unreadable")
@@ -150,7 +173,7 @@ class QrOpaqueOriginCsrfCompatibilityMiddleware:
                 )
                 if (
                     referer_origin not in self.expected_origins
-                    and is_inventory_bridge
+                    and is_inventory_form
                 ):
                     return rejected("inventory_referer_mismatch")
         return True

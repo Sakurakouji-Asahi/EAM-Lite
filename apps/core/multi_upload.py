@@ -3,6 +3,8 @@ from django.core.exceptions import ValidationError
 from django.core.files.storage import default_storage
 from django.db import transaction
 
+MAX_UPLOAD_FILES = 20
+MAX_UPLOAD_TOTAL_BYTES = 50 * 1024 * 1024
 
 class MultiFileInput(forms.ClearableFileInput):
     allow_multiple_selected = True
@@ -15,7 +17,7 @@ class MultiFileField(forms.FileField):
         files = data if isinstance(data, (list, tuple)) else ([data] if data else [])
         if not files:
             return super().clean(None, initial) or []
-        if len(files) > 20 or sum(getattr(file, 'size', 0) for file in files) > 50*1024*1024:
+        if len(files) > MAX_UPLOAD_FILES or sum(getattr(file, 'size', 0) for file in files) > MAX_UPLOAD_TOTAL_BYTES:
             raise ValidationError('每次最多 20 个文件，总大小不得超过 50 MB。')
         return [super(MultiFileField,self).clean(file, initial) for file in files]
 
