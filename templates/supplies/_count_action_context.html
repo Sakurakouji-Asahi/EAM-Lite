@@ -1,0 +1,6 @@
+<section class="card card-body shadow-sm mb-3" aria-label="当前盘点任务">
+  <div class="d-flex flex-wrap justify-content-between gap-2 mb-2"><strong>{{ task.task_no }} · {{ task.name }}</strong><span class="badge text-bg-secondary">{{ task.get_status_display }}</span></div>
+  <div>{{ task.get_count_domain_display }} · {% if task.warehouse %}{{ task.warehouse.code }} / {{ task.warehouse.name }}{% else %}{{ task.department.code }} / {{ task.department.name }}{% if task.employee %} · {{ task.employee.employee_no }} / {{ task.employee.name }}{% else %} · 全部门开放保管{% endif %}{% endif %}</div>
+  <div class="small text-secondary mt-1">计划日期：{{ task.planned_start }} 至 {{ task.planned_end }}</div>
+  {% if count_action_summary %}<div class="small mt-2">当前可查看范围 {{ count_action_summary.total }} 行 · 未录入 {{ count_action_summary.unrecorded }} 行 · 有差异 {{ count_action_summary.different }} 行{% if show_cost and task.count_domain == 'warehouse_stock' %} · 待补成本 {{ count_action_summary.needs_cost }} 行{% endif %}</div>{% endif %}
+</section>

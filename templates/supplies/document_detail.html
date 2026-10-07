@@ -1,22 +1,28 @@
 {% extends "base.html" %}
-{% load workflow_navigation %}
+{% load static %}
 {% block title %}{{ document.document_no }} - EAM-Lite{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/supply-document-print.css' %}?v=20261004"><script src="{% static 'js/supply-document-print.js' %}?v=20261004" defer></script>{% endblock %}
 {% block content %}
-{% if workflow_return_url %}<p><a href="{{ workflow_return_url }}">返回原清单</a></p>{% endif %}
+<article class="supply-document-sheet" aria-label="物资单据">
+<div class="supply-document-print-only supply-document-print-heading"><strong>{{ document.company.name }}</strong><span>物资单据 · 核对 / 签收</span></div>
+{% if workflow_return_url and not return_is_document_list %}<p class="supply-document-screen-only"><a href="{{ workflow_return_url }}">{% if stock_return_url %}{{ stock_return_label }}{% else %}返回原清单{% endif %}</a></p>{% endif %}
 <header class="app-page-header">
   <div><h1 class="h3 mb-1">{{ document.document_no }}</h1><p class="text-secondary mb-0">{{ document.get_document_type_display }} · {{ document.get_status_display }}</p></div>
-  <div class="d-flex flex-wrap gap-2">
+  <div class="d-flex flex-wrap gap-2 supply-document-screen-only">
+    <button class="btn btn-outline-primary" type="button" data-supply-document-print hidden>打印 / 保存为 PDF</button>
+    {% if document_copy_url %}<a class="btn btn-outline-primary" href="{{ document_copy_url }}">参考原单新开草稿</a>{% endif %}
     {% if document.status == 'draft' and can_manage %}
-      {% if can_edit %}<a class="btn btn-outline-primary" href="{% url 'supplies:document-edit' document.pk %}">编辑草稿</a>{% endif %}
-      <a class="btn btn-outline-danger" href="{% url 'supplies:document-cancel' document.pk %}">取消</a>
-      {% if can_post %}<a class="btn btn-primary" href="{% url 'supplies:document-post' document.pk %}?{% workflow_query %}">确认过账</a>{% endif %}
+      {% if can_edit %}<a class="btn btn-outline-primary" href="{% url 'supplies:document-edit' document.pk %}{% if document_navigation_query %}?{{ document_navigation_query }}{% endif %}">编辑草稿</a>{% endif %}
+      <a class="btn btn-outline-danger" href="{% url 'supplies:document-cancel' document.pk %}{% if document_navigation_query %}?{{ document_navigation_query }}{% endif %}">取消</a>
+      {% if can_post %}<a class="btn btn-primary" href="{% url 'supplies:document-post' document.pk %}{% if document_navigation_query %}?{{ document_navigation_query }}{% endif %}">确认过账</a>{% endif %}
     {% elif document.status == 'posted' and can_reverse and document.document_type != 'reversal' and document.document_type != 'count_adjustment' %}
       <a class="btn btn-danger" href="{% url 'supplies:document-reverse' document.pk %}">完整冲销</a>
     {% endif %}
-    <a class="btn btn-outline-secondary" href="{% url 'supplies:document-list' %}">返回</a>
+    <a class="btn btn-outline-secondary" href="{% if return_is_document_list %}{{ workflow_return_url }}{% else %}{% url 'supplies:document-list' %}{% endif %}">返回</a>
   </div>
 </header>
-{% if document.status == 'posted' %}<div class="alert alert-success">本单据已过账，库存余额与不可变流水已经形成；普通编辑和删除已被后端禁止。</div>
+<p class="supply-document-print-only supply-document-print-status">{% if document.status == 'draft' %}草稿 · 尚未过账，仅供核对，不作为出入库凭证。{% elif document.status == 'cancelled' %}已取消 · 不作为出入库凭证。{% elif document.status == 'reversed' %}已冲销 · 原单已撤销业务影响，仅供历史核对。{% elif document.document_type == 'reversal' %}冲销单 · 仅供冲销记录核对。{% else %}已过账 · 请按下列明细核对物品与数量。{% endif %}</p>
+{% if document.status == 'posted' %}<div class="alert alert-success supply-document-screen-only">本单据已过账，库存余额与不可变流水已经形成；普通编辑和删除已被后端禁止。</div>
 {% elif document.status == 'draft' %}<div class="alert alert-info">本单据仍为草稿，尚未影响库存余额、库存流水或保管记录。</div>
 {% elif document.status == 'cancelled' %}<div class="alert alert-secondary">本单据已取消，不可恢复。原因：{{ document.cancellation_reason }}</div>
 {% elif document.status == 'reversed' %}<div class="alert alert-warning">本单据已经完整冲销，原流水永久保留。{% if reversal_document %}冲销单：<a href="{% url 'supplies:document-detail' reversal_document.pk %}">{{ reversal_document.document_no }}</a>{% endif %}</div>{% endif %}
@@ -28,11 +34,12 @@
   <dt class="col-sm-2">外部参考号</dt><dd class="col-sm-4">{{ document.external_reference|default:'—' }}</dd><dt class="col-sm-2">来源单位</dt><dd class="col-sm-4">{{ document.counterparty_name|default:'—' }}</dd>
   <dt class="col-sm-2">创建时间</dt><dd class="col-sm-4">{{ document.created_at }}</dd><dt class="col-sm-2">过账时间</dt><dd class="col-sm-4">{{ document.posted_at|default:'—' }}</dd><dt class="col-sm-2">备注 / 原因</dt><dd class="col-sm-10">{{ document.remark|default:'—' }}</dd>
 </dl></div></section>
-{% include 'supplies/_posting_checks.html' %}
-{% include 'supplies/_posting_preview.html' %}
-<section class="card shadow-sm"><div class="card-body"><h2 class="h5">单据明细</h2><div class="table-responsive"><table class="table align-middle mb-0">
-  <thead><tr><th>行号</th><th>物品</th><th class="text-end">数量</th>{% if show_cost %}<th class="text-end">录入单价</th><th class="text-end">过账单价</th><th class="text-end">过账金额</th>{% endif %}<th>来源 / 备注</th><th>操作</th></tr></thead>
-  <tbody>{% for row in line_rows %}<tr><td>{{ row.line_no }}</td><td>{{ row.item }}</td><td class="text-end">{{ row.quantity }} {{ row.item.unit }}</td>{% if show_cost %}<td class="text-end">{{ row.entered_unit_cost|default_if_none:'—' }}</td><td class="text-end">{{ row.posted_unit_cost|default_if_none:'—' }}</td><td class="text-end">{{ row.posted_amount|default_if_none:'—' }}</td>{% endif %}<td>{% if row.source_custody %}<a href="{% url 'supplies:custody-detail' row.source_custody.pk %}">来源保管 {{ row.source_custody.pk }}</a><br>{% endif %}{% if row.source_issue_line %}<a href="{% url 'supplies:document-detail' row.source_issue_line.document_id %}">原领用 {{ row.source_issue_line.document.document_no }} #{{ row.source_issue_line.line_no }}</a><br>{% endif %}{{ row.line_remark|default:'—' }}</td><td>{% if document.document_type == 'issue' and document.status == 'posted' and can_manage and row.returnable_quantity > 0 %}<a href="{% url 'supplies:consumable-return-create' row.line_id %}">发起退回（可退 {{ row.returnable_quantity }}）</a>{% else %}<span class="text-secondary">—</span>{% endif %}</td></tr>{% endfor %}</tbody>
-  {% if show_cost and document.status == 'posted' %}<tfoot><tr><th colspan="5" class="text-end">合计</th><th class="text-end">{{ total_amount }}</th><th colspan="2"></th></tr></tfoot>{% endif %}
+<div class="supply-document-screen-only">{% include 'supplies/_posting_checks.html' %}{% include 'supplies/_posting_preview.html' %}</div>
+<section class="card shadow-sm"><div class="card-body"><h2 class="h5">单据明细</h2><div class="table-responsive"><table class="table align-middle mb-0 supply-document-lines">
+  <thead><tr><th>行号</th><th>物品 / 规格</th><th class="text-end">数量</th>{% if show_cost %}<th class="text-end">录入单价</th><th class="text-end">过账单价</th><th class="text-end">过账金额</th>{% endif %}<th>来源 / 备注</th><th class="supply-document-screen-only">操作</th></tr></thead>
+  <tbody>{% for row in line_rows %}<tr><td>{{ row.line_no }}</td><td>{{ row.item }}{% if row.item.specification %}<div class="small text-secondary">规格：{{ row.item.specification }}</div>{% endif %}{% if row.item.brand or row.item.model %}<div class="small text-secondary">品牌 / 型号：{{ row.item.brand|default:'—' }} / {{ row.item.model|default:'—' }}</div>{% endif %}</td><td class="text-end supply-document-quantity">{{ row.quantity }} {{ row.item.unit }}</td>{% if show_cost %}<td class="text-end">{{ row.entered_unit_cost|default_if_none:'—' }}</td><td class="text-end">{{ row.posted_unit_cost|default_if_none:'—' }}</td><td class="text-end">{{ row.posted_amount|default_if_none:'—' }}</td>{% endif %}<td>{% if row.source_custody %}<a href="{% url 'supplies:custody-detail' row.source_custody.pk %}">来源保管 {{ row.source_custody.pk }}</a><br>{% endif %}{% if row.source_issue_line %}<a href="{% url 'supplies:document-detail' row.source_issue_line.document_id %}">原领用 {{ row.source_issue_line.document.document_no }} #{{ row.source_issue_line.line_no }}</a><br>{% endif %}{{ row.line_remark|default:'—' }}</td><td class="supply-document-screen-only">{% if document.document_type == 'issue' and document.status == 'posted' and can_manage and row.returnable_quantity > 0 %}<a href="{% url 'supplies:consumable-return-create' row.line_id %}">发起退回（可退 {{ row.returnable_quantity }}）</a>{% else %}<span class="text-secondary">—</span>{% endif %}</td></tr>{% endfor %}</tbody>
+  {% if show_cost and document.status == 'posted' %}<tfoot><tr><th colspan="5" class="text-end">合计</th><th class="text-end">{{ total_amount }}</th><th></th><th class="supply-document-screen-only"></th></tr></tfoot>{% endif %}
 </table></div></div></section>
+<section class="supply-document-print-only supply-document-signatures" aria-label="纸面核对签字"><div>经办 / 核对：________________　日期：________________</div>{% if document.status == 'posted' and document.document_type != 'reversal' %}<div>接收 / 签收（适用时）：________________　日期：________________</div>{% endif %}<p>纸面签字用于核对{% if document.status == 'posted' and document.document_type != 'reversal' %}与签收{% endif %}，业务状态以系统记录为准。</p></section>
+</article>
 {% endblock %}

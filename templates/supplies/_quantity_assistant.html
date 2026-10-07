@@ -1,0 +1,4 @@
+<div class="mt-2" data-supply-quantity-assistant data-quantity-field="{{ form.quantity.id_for_label }}" data-remaining-label="{{ quantity_remaining_label }}" hidden>
+  {% if allow_fill_full_quantity %}<button class="btn btn-sm btn-outline-secondary mb-1" type="button" data-quantity-fill-all>填入全部可处理数量</button>{% endif %}
+  <p class="small mb-0 text-secondary" data-quantity-feedback role="status" aria-live="polite" aria-atomic="true"></p>
+</div>

@@ -1,12 +1,24 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}批量录入实盘 - EAM-Lite{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/supply-count-entry.css' %}?v=20261004">{% endblock %}
 {% block content %}
 <header class="app-page-header"><div><h1 class="h3 mb-1">批量录入实盘</h1><p class="text-secondary mb-0">{{ task.task_no }} · {{ task.name }}。空白不保存，盘为零请填 0；有差异须填原因。</p></div><a class="btn btn-outline-secondary" href="{% url 'supplies:count-task-detail' task.pk %}?{{ return_query }}">返回盘点任务</a></header>
-{% include '_list_filters.html' %}
+{% include 'supplies/_count_query.html' %}
 {% if save_error %}<div class="alert alert-danger">{{ save_error }}</div>{% endif %}
-{% if row_forms %}<form method="post" novalidate data-unsaved-guard="{% if request.method == 'POST' %}true{% else %}false{% endif %}">{% csrf_token %}<input type="hidden" name="line_manifest" value="{{ line_manifest }}">
-<div class="table-responsive card"><table class="table mb-0 align-middle"><thead><tr><th>物品 / 责任人</th><th class="text-end">应盘</th><th>实盘数量</th><th>差异原因 / 备注</th>{% if show_cost %}<th>零库存盘盈成本 / 0 成本原因</th>{% endif %}</tr></thead><tbody>{% for row in row_forms %}<tr><td>{{ row.line.item_code_snapshot }}<br>{{ row.line.item_name_snapshot }}{% if row.line.employee_snapshot %}<br>{{ row.line.employee_snapshot }}{% endif %}{{ row.expected_counted_at }}{{ row.non_field_errors }}</td><td class="text-end">{{ row.line.expected_quantity }} {{ row.line.item.unit }}</td><td><label class="visually-hidden" for="{{ row.counted_quantity.id_for_label }}">{{ row.line.item_name_snapshot }}实盘数量</label>{{ row.counted_quantity }}<small>{{ row.line.item.unit }}</small>{{ row.counted_quantity.errors }}</td><td>{{ row.remark }}{{ row.remark.errors }}</td>{% if show_cost %}<td>{% if row.adjustment_unit_cost %}{{ row.adjustment_unit_cost }}{{ row.adjustment_unit_cost.errors }}{{ row.zero_cost_reason }}{{ row.zero_cost_reason.errors }}{% else %}<span class="text-secondary">沿用快照</span>{% endif %}</td>{% endif %}</tr>{% endfor %}</tbody></table></div>
+{% if entry_error_rows %}<div class="alert alert-danger" role="alert"><strong>{{ entry_error_rows|length }} 行需要修正，当前输入已保留，本页尚未保存。</strong><div class="d-flex flex-wrap gap-2 mt-2">{% for row in entry_error_rows %}<a class="alert-link" href="#count-row-{{ row.line.pk }}">{{ row.line.item_code_snapshot }}{% if row.line.employee_snapshot %} · {{ row.line.employee_snapshot }}{% endif %}</a>{% endfor %}</div></div>{% endif %}
+{% if row_forms %}<form method="post" novalidate data-count-entry data-unsaved-guard="{% if request.method == 'POST' %}true{% else %}false{% endif %}">{% csrf_token %}<input type="hidden" name="line_manifest" value="{{ line_manifest }}">
+{% include 'supplies/_count_entry_preview.html' with bulk_entry=True %}
+<div class="table-responsive card supply-count-entry-table"><table class="table mb-0 align-middle"><thead><tr><th>物品 / 责任人</th><th class="text-end">应盘</th><th>实盘数量 / 核对</th><th>差异原因 / 备注</th>{% if show_cost %}<th>零库存盘盈成本 / 0 成本原因</th>{% endif %}</tr></thead><tbody>
+{% for row in row_forms %}<tr id="count-row-{{ row.line.pk }}" data-count-row data-count-expected="{{ row.line.expected_quantity }}" data-count-unit="{{ row.line.item.unit }}">
+  <td><strong>{{ row.line.item_code_snapshot }}</strong><div>{{ row.line.item_name_snapshot }}</div>{% if row.line.department_snapshot %}<small class="text-secondary">{{ row.line.department_snapshot }}</small>{% endif %}{% if row.line.employee_snapshot %}<div class="small text-secondary">{{ row.line.employee_snapshot }}</div>{% endif %}{{ row.expected_counted_at }}{{ row.non_field_errors }}</td>
+  <td class="text-end text-nowrap"><span class="supply-count-field-label" aria-hidden="true">应盘数量</span>{{ row.line.expected_quantity }} {{ row.line.item.unit }}</td>
+  <td><label class="visually-hidden" for="{{ row.counted_quantity.id_for_label }}">{{ row.line.item_name_snapshot }}实盘数量</label><span class="supply-count-field-label" aria-hidden="true">实盘数量 / 核对</span>{{ row.counted_quantity }}<small>{{ row.line.item.unit }}</small>{{ row.counted_quantity.errors }}<div class="small mt-1" data-count-feedback hidden></div></td>
+  <td><span class="supply-count-field-label" aria-hidden="true">差异原因 / 备注</span>{{ row.remark }}{{ row.remark.errors }}<small class="text-warning" data-count-reason-hint hidden>存在差异，请填写原因。</small></td>
+  {% if show_cost %}<td>{% if row.adjustment_unit_cost %}<span class="supply-count-field-label" aria-hidden="true">{{ row.adjustment_unit_cost.label }}</span>{{ row.adjustment_unit_cost }}{{ row.adjustment_unit_cost.errors }}<span class="supply-count-field-label" aria-hidden="true">{{ row.zero_cost_reason.label }}</span>{{ row.zero_cost_reason }}{{ row.zero_cost_reason.errors }}{% else %}<span class="supply-count-field-label" aria-hidden="true">零库存盘盈成本</span><span class="text-secondary">沿用快照</span>{% endif %}</td>{% endif %}
+</tr>{% endfor %}</tbody></table></div>
 <div class="app-form-actions"><button class="btn btn-primary" type="submit">保存本页已填写行</button></div>
-</form>{% endif %}
+</form>{% else %}<div class="card card-body app-empty-state"><strong>当前筛选下没有可录入的明细</strong><span>可调整物品搜索和查看范围，或返回任务查看已录入结果。</span><a class="btn btn-outline-primary" href="{% url 'supplies:count-task-bulk-entry' task.pk %}">清除筛选</a></div>{% endif %}
 {% include '_pagination.html' %}
+<script src="{% static 'js/supply-count-entry.js' %}?v=20261004" defer></script>
 {% endblock %}

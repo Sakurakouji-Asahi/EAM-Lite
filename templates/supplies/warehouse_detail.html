@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}{{ warehouse.code }} · 仓库业务 - EAM-Lite{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/supply-warehouse-workspace.css' %}?v=20261004">{% endblock %}
+{% block content %}
+<div class="supply-warehouse-detail">
+<header class="app-page-header"><div><h1 class="h3 mb-1">{{ warehouse.name }}</h1><p class="text-secondary mb-0">{{ warehouse.code }} · 仓库业务</p></div><div class="d-flex flex-wrap gap-2">{% if can_manage %}<a class="btn btn-outline-primary" href="{% url 'supplies:warehouse-edit' warehouse.pk %}">编辑仓库</a>{% endif %}{% if stock_return_url %}<a class="btn btn-outline-secondary" href="{{ stock_return_url }}">{{ stock_return_label }}</a>{% endif %}<a class="btn btn-outline-secondary" href="{{ warehouse_list_url }}">返回仓库清单</a></div></header>
+{% if not warehouse.is_active %}<div class="alert alert-secondary">仓库已停用，历史库存、流水和盘点仍可在授权范围内查询。</div>{% endif %}
+{% if warehouse.count_frozen %}<section class="alert alert-warning" aria-label="当前盘点冻结"><h2 class="h5">盘点冻结中</h2><p class="mb-2">涉及该仓库的常规库存业务暂不能过账；当前仓库盘点关闭或取消后解除冻结。</p>{% if warehouse_business.freeze_task %}<p class="mb-1"><a class="fw-semibold" href="{{ warehouse_business.freeze_task_url }}">{{ warehouse_business.freeze_task.task_no }} · {{ warehouse_business.freeze_task.name }}</a></p><p class="small mb-0">{{ warehouse_business.freeze_task.get_status_display }} · 计划 {{ warehouse_business.freeze_task.planned_start }} 至 {{ warehouse_business.freeze_task.planned_end }}</p>{% else %}<p class="mb-0">当前冻结任务不在可查看范围内。</p>{% endif %}</section>{% else %}<div class="alert alert-success">当前无仓库盘点冻结。仓库启用状态和其他业务条件仍需按具体办理流程核对。</div>{% endif %}
+<section class="card shadow-sm mb-3"><div class="card-header"><h2 class="h5 mb-0">仓库档案</h2></div><div class="card-body"><dl class="row mb-0">
+<dt class="col-sm-3 text-secondary">编码 / 状态</dt><dd class="col-sm-9">{{ warehouse.code }} <span class="badge {% if warehouse.is_active %}text-bg-success{% else %}text-bg-secondary{% endif %}">{% if warehouse.is_active %}启用{% else %}停用{% endif %}</span></dd>
+<dt class="col-sm-3 text-secondary">位置</dt><dd class="col-sm-9">{{ warehouse.location|default:'未设置' }}</dd>
+<dt class="col-sm-3 text-secondary">负责人</dt><dd class="col-sm-9">{{ warehouse.manager_employee|default:'未设置' }}{% if warehouse.manager_employee %}<div class="small text-secondary">{{ warehouse.manager_employee.department }}</div>{% endif %}</dd>
+<dt class="col-sm-3 text-secondary">创建 / 更新时间</dt><dd class="col-sm-9">{{ warehouse.created_at|date:'Y-m-d H:i' }} / {{ warehouse.updated_at|date:'Y-m-d H:i' }}</dd>
+{% if warehouse.remark %}<dt class="col-sm-3 text-secondary">备注</dt><dd class="col-sm-9">{{ warehouse.remark|linebreaksbr }}</dd>{% endif %}
+</dl></div></section>
+<section class="card card-body shadow-sm" aria-label="仓库业务查询"><h2 class="h5 mb-3">业务查询</h2><div class="d-flex flex-wrap gap-2">{% if warehouse_business.links.stock %}<a class="btn btn-outline-primary" href="{{ warehouse_business.links.stock }}">库存余额</a><a class="btn btn-outline-primary" href="{{ warehouse_business.links.ledger }}">出入库流水</a>{% endif %}{% if warehouse_business.links.counts %}<a class="btn btn-outline-primary" href="{{ warehouse_business.links.counts }}">仓库盘点任务</a>{% endif %}</div><p class="small text-secondary mt-3 mb-0">入口已选择当前仓库，只展示各页面授权范围内的记录；库存数量按物品及单位分别查看。</p></section>
+</div>
+{% endblock %}

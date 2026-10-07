@@ -1,7 +1,47 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}当前库存 - EAM-Lite{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/supply-stock-navigation.css' %}?v=20261004">{% endblock %}
 {% block content %}
-<header class="app-page-header"><div><h1 class="h3 mb-1">当前库存</h1><p class="text-secondary mb-0">按仓库和物品查看当前数量；业务历史可从出入库明细核对。</p></div><div class="d-flex gap-2"><a class="btn btn-outline-primary" href="{% url 'supplies:stock-ledger-list' %}">出入库明细</a><a class="btn btn-outline-secondary" href="{% url 'supplies:reconciliation-help' %}">库存核对帮助</a></div></header>
-<form method="get" class="card shadow-sm mb-3"><div class="card-body row g-2"><div class="col-md-4"><label class="form-label">仓库/物品</label><input class="form-control" name="q" value="{{ query }}"></div><div class="col-md-3"><label class="form-label">仓库</label><select class="form-select" name="warehouse"><option value="">全部</option>{% for value in warehouses %}<option value="{{ value.pk }}"{% if selected_warehouse == value.pk|stringformat:'s' %} selected{% endif %}>{{ value }}</option>{% endfor %}</select></div><div class="col-md-3"><label class="form-label">物品编码</label><input class="form-control" name="item" value="{{ selected_item }}" placeholder="精确编码"></div><div class="col-md-auto align-self-end"><button class="btn btn-primary">筛选</button><a class="btn btn-link" href="{% url 'supplies:stock-balance-list' %}">清空</a></div></div></form>
-<div class="table-responsive card shadow-sm"><table class="table table-hover align-middle mb-0"><thead><tr><th>仓库</th><th>物品编码</th><th>物品名称</th><th>单位</th><th class="text-end">库存数量</th>{% if show_cost %}<th class="text-end">移动平均成本</th><th class="text-end">库存金额</th>{% endif %}<th>更新时间</th></tr></thead><tbody>{% for object in page_obj %}<tr><td>{{ object.warehouse }}</td><td>{{ object.item.item_code }}</td><td>{{ object.item.name }}</td><td>{{ object.item.unit }}</td><td class="text-end">{{ object.quantity_on_hand }}</td>{% if show_cost %}<td class="text-end">{{ object.average_unit_cost }}</td><td class="text-end">{{ object.amount_on_hand }}</td>{% endif %}<td>{{ object.updated_at }}</td></tr>{% empty %}<tr><td colspan="8" class="text-center text-secondary py-4">暂无库存余额；草稿或未过账导入不会出现在这里。</td></tr>{% endfor %}</tbody></table></div>{% include "supplies/_pagination.html" %}
+<header class="app-page-header">
+  <div><h1 class="h3 mb-1">当前库存</h1><p class="text-secondary mb-0">按仓库和物品查看当前数量；点击一行的明细可追溯该物品的每次出入库。</p></div>
+  <div class="d-flex flex-wrap gap-2">{% if stock_return_url %}<a class="btn btn-outline-secondary" href="{{ stock_return_url }}">{{ stock_return_label }}</a>{% endif %}<a class="btn btn-outline-primary" href="{{ ledger_url }}">按当前条件查看出入库</a><a class="btn btn-outline-secondary" href="{{ stock_full_low_report_url }}">完整低库存预警</a><a class="btn btn-outline-secondary" href="{% url 'supplies:reconciliation-help' %}">库存核对帮助</a></div>
+</header>
+<form method="get" class="card shadow-sm mb-3">
+  {% if stock_return_url %}<input type="hidden" name="return_to" value="{{ stock_return_url }}">{% endif %}
+  <div class="card-body row g-2">
+    <div class="col-md-4"><label class="form-label" for="stock-search">仓库/物品</label><input class="form-control" type="search" id="stock-search" name="q" value="{{ query }}" placeholder="仓库编码、物品编码或名称"></div>
+    <div class="col-md-3"><label class="form-label" for="stock-warehouse">仓库</label><select class="form-select" id="stock-warehouse" name="warehouse"><option value="">全部</option>{% for value in warehouses %}<option value="{{ value.pk }}"{% if selected_warehouse == value.pk|stringformat:'s' %} selected{% endif %}>{{ value }}</option>{% endfor %}</select></div>
+    <div class="col-md-3"><label class="form-label" for="stock-item">物品编码</label><input class="form-control" id="stock-item" name="item" value="{{ selected_item }}" placeholder="精确编码"></div>
+    <div class="col-md-3"><label class="form-label" for="stock-item-type">管理模式</label><select class="form-select" id="stock-item-type" name="item_type"><option value="">全部模式</option>{% for value,label in item_types %}<option value="{{ value }}"{% if selected_item_type == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <div class="col-md-3"><label class="form-label" for="stock-quantity-state">库存状态</label><select class="form-select" id="stock-quantity-state" name="quantity_state"><option value="">全部余额</option><option value="available"{% if selected_quantity_state == 'available' %} selected{% endif %}>有库存</option><option value="zero"{% if selected_quantity_state == 'zero' %} selected{% endif %}>零库存</option><option value="low"{% if selected_quantity_state == 'low' %} selected{% endif %}>默认仓低库存</option></select></div>
+    <div class="col-md-auto align-self-end"><button class="btn btn-primary" type="submit">筛选</button><a class="btn btn-link" href="{% url 'supplies:stock-balance-list' %}">清空</a></div>
+  </div>
+</form>
+{% if selected_quantity_state == 'low' %}<div class="d-flex flex-wrap align-items-center gap-2 mb-3"><span class="badge text-bg-warning">默认仓低库存</span><a href="{{ stock_low_remove_url }}">移除此条件</a><span class="small text-secondary">保留其他查询条件，重新显示符合条件的全部余额。</span></div>{% endif %}
+<section class="card shadow-sm mb-3" aria-label="当前筛选结果汇总">
+  <div class="card-body d-flex flex-wrap gap-4 align-items-center">
+    <div><span class="text-secondary small d-block">库存余额</span><strong class="fs-5">{{ stock_summary.balance_count }}</strong> <span class="text-secondary small">条</span></div>
+    <div><span class="text-secondary small d-block">物品品种</span><strong class="fs-5">{{ stock_summary.item_count }}</strong> <span class="text-secondary small">种</span></div>
+    <div><span class="text-secondary small d-block">涉及仓库</span><strong class="fs-5">{{ stock_summary.warehouse_count }}</strong> <span class="text-secondary small">个</span></div>
+    <div><span class="text-secondary small d-block">零库存余额</span><strong class="fs-5">{{ stock_summary.zero_count }}</strong> <span class="text-secondary small">条</span></div>
+    <a class="text-decoration-none" href="{{ stock_low_url }}"><span class="text-secondary small d-block">默认仓低库存</span><strong class="fs-5">{{ stock_summary.low_count }}</strong> <span class="text-secondary small">条 · 查看</span></a>
+    {% if show_cost %}<div><span class="text-secondary small d-block">库存金额</span><strong class="fs-5">{{ stock_summary.amount|floatformat:2 }}</strong></div>{% endif %}
+  </div>
+  <div class="card-footer text-secondary small">汇总包含符合筛选的全部结果。低库存沿用启用物品的默认仓库、最低库存大于 0 且当前数量低于最低值的预警规则，缺口按行和单位核对。零库存与本页预警只包含已有余额；尚未入库的物品请查<a href="{{ stock_full_low_report_url }}">完整预警表</a>。</div>
+</section>
+<div class="table-responsive card shadow-sm" data-scroll-table role="region" aria-label="当前库存表格">
+  <table class="table table-hover align-middle mb-0 supply-stock-balance-table">
+    <thead><tr><th scope="col">仓库</th><th scope="col">物品编码</th><th scope="col">物品名称</th><th scope="col">单位</th><th scope="col" class="text-end">库存数量</th>{% if show_cost %}<th scope="col" class="text-end">移动平均成本</th><th scope="col" class="text-end">库存金额</th>{% endif %}<th scope="col">更新时间</th><th scope="col">追溯 / 开单</th></tr></thead>
+    <tbody>
+      {% for object in page_obj %}<tr>
+        <td>{% if object.warehouse_detail_url %}<a href="{{ object.warehouse_detail_url }}">{{ object.warehouse }}</a>{% else %}{{ object.warehouse }}{% endif %}</td><td>{% if object.item_detail_url %}<a href="{{ object.item_detail_url }}">{{ object.item.item_code }}</a>{% else %}{{ object.item.item_code }}{% endif %}</td><td>{{ object.item.name }}<span class="d-block small text-secondary">{{ object.item.get_item_type_display }}</span></td><td>{{ object.item.unit }}</td>
+        <td class="text-end">{% if object.quantity_on_hand == 0 %}<span class="badge text-bg-secondary">零库存</span>{% else %}{{ object.quantity_on_hand }}{% endif %}{% if object.is_low_stock %}<div class="mt-1"><span class="badge text-bg-warning">低库存</span></div><small class="d-block text-secondary text-nowrap">最低 {{ object.item.minimum_stock_quantity }} {{ object.item.unit }}</small><small class="d-block text-nowrap">缺口 {{ object.low_stock_shortage }} {{ object.item.unit }}</small>{% endif %}</td>
+        {% if show_cost %}<td class="text-end">{{ object.average_unit_cost }}</td><td class="text-end">{{ object.amount_on_hand }}</td>{% endif %}<td>{{ object.updated_at }}</td>
+        <td><div class="d-flex flex-wrap gap-1"><a class="btn btn-sm btn-outline-primary text-nowrap" href="{{ object.ledger_url }}" aria-label="查看 {{ object.warehouse.name }} 中 {{ object.item.name }} 的出入库明细">出入库明细</a>{% if object.issue_draft_url %}<a class="btn btn-sm btn-outline-primary text-nowrap" href="{{ object.issue_draft_url }}">新建领用草稿</a><a class="btn btn-sm btn-outline-primary text-nowrap" href="{{ object.transfer_draft_url }}">新建调拨草稿</a>{% endif %}</div></td>
+      </tr>{% empty %}<tr><td colspan="{% if show_cost %}9{% else %}7{% endif %}"><div class="app-empty-state"><strong>没有符合条件的库存余额</strong><span>可清除筛选重新查看；草稿或未过账导入不会出现在这里。</span><a class="btn btn-sm btn-outline-secondary" href="{% url 'supplies:stock-balance-list' %}">清除筛选</a></div></td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% include "supplies/_pagination.html" %}
 {% endblock %}

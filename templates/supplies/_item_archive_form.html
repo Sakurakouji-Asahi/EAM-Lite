@@ -1,0 +1,7 @@
+{% if form.non_field_errors %}<div class="alert alert-danger" role="alert"><strong>保存失败，请检查：</strong>{{ form.non_field_errors }}</div>{% endif %}
+<form method="post" novalidate data-unsaved-guard="{% if form.errors %}true{% else %}false{% endif %}">
+  {% csrf_token %}<input type="hidden" name="return_to" value="{{ item_list_url }}">
+  {% if copy_source %}<input type="hidden" name="copy_from" value="{{ copy_source.pk }}">{% endif %}
+  {% for field in form %}{% if field.is_hidden %}{{ field }}{% else %}<div class="mb-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %}<span class="required-mark" aria-hidden="true">*</span>{% endif %}</label>{{ field }}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}{% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>{% endif %}{% endfor %}
+  <div class="app-form-actions app-form-actions-contained"><button class="btn btn-primary" type="submit">{% if copy_source %}保存新物品{% else %}保存{% endif %}</button><a class="btn btn-outline-secondary" href="{{ item_list_url }}">取消</a></div>
+</form>

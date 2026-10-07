@@ -1,0 +1,18 @@
+<p class="small text-secondary">本保管共 {{ movements|length }} 次变化，按实际记录时间排列；业务日期单独展示，其他保管来源须进入对应记录查看。</p>
+<ol class="supply-custody-timeline" aria-label="保管责任变化时间线">
+  {% for movement in movements %}
+  <li id="{{ movement.history_anchor }}">
+    <div class="d-flex flex-wrap justify-content-between gap-2 align-items-center mb-2"><div><span class="small text-secondary">第 {{ movement.history_index }} 次</span> <strong>{{ movement.get_action_display }}</strong></div><strong class="supply-custody-timeline-quantity">{{ movement.quantity }} {{ custody.item.unit }}</strong></div>
+    <div class="small text-secondary mb-3">业务日期 {{ movement.business_date|date:'Y-m-d' }} <span class="d-block">记录时间 {{ movement.created_at|date:'Y-m-d H:i:s' }}</span></div>
+    <div class="supply-custody-timeline-flow">
+      <div><span class="small text-secondary d-block">转出方 / 来源</span>{% if movement.history_from.url %}<a href="{{ movement.history_from.url }}">{{ movement.history_from.label }}</a>{% else %}<span>{{ movement.history_from.label }}</span>{% endif %}{% if movement.history_from.current %}<span class="badge text-bg-light border ms-1">当前保管</span>{% endif %}</div>
+      <span class="text-secondary supply-custody-timeline-arrow" aria-hidden="true">→</span>
+      <div><span class="small text-secondary d-block">转入方 / 去向</span>{% if movement.history_to.url %}<a href="{{ movement.history_to.url }}">{{ movement.history_to.label }}</a>{% else %}<span>{{ movement.history_to.label }}</span>{% endif %}{% if movement.history_to.current %}<span class="badge text-bg-light border ms-1">当前保管</span>{% endif %}</div>
+    </div>
+    {% if movement.history_original %}<div class="alert alert-info py-2 small mt-3 mb-0">本次冲销对应 <a class="alert-link" href="{{ movement.history_original.url }}">{{ movement.history_original.label }}</a>。</div>{% endif %}
+    {% if movement.history_reversal %}<div class="alert alert-secondary py-2 small mt-3 mb-0">该动作已冲销，查看 <a class="alert-link" href="{{ movement.history_reversal.url }}">{{ movement.history_reversal.label }}</a>。原记录保留供核对。</div>{% endif %}
+    {% if movement.reason %}<p class="mb-0 mt-3 small"><strong>原因：</strong>{{ movement.reason|linebreaksbr }}</p>{% endif %}
+    <div class="small text-secondary mt-3">{% if movement.source_document_line %}来源单据 <a href="{% url 'supplies:document-detail' movement.source_document_line.document_id %}">{{ movement.source_document_line.document.document_no }} #{{ movement.source_document_line.line_no }}</a> · {% endif %}操作人 {{ movement.created_by|default:'未记录' }}</div>
+  </li>
+  {% empty %}<li class="text-secondary">暂无已确认的保管流水；归还草稿不列入此处。</li>{% endfor %}
+</ol>
