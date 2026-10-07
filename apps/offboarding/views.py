@@ -42,6 +42,7 @@ from apps.offboarding.models import (
     EmployeeAssetClearance,
     EmployeeAssetClearanceItem,
 )
+from apps.offboarding.domain import RESOLVED_ITEM_RESOLUTIONS, UNRESOLVED_ITEM_RESOLUTIONS
 from apps.offboarding.permissions import (
     can_complete_clearance,
     can_create_supplemental_clearance,
@@ -179,6 +180,7 @@ def _render_action(
     button_label="确认",
     danger=False,
     multipart=False,
+    item_context=None,
 ):
     return render(
         request,
@@ -191,6 +193,7 @@ def _render_action(
             "button_label": button_label,
             "danger": danger,
             "multipart": multipart,
+            "item_context": item_context,
         },
     )
 
@@ -214,6 +217,17 @@ def _location_path(location):
         names.append(current.name)
         current = current.parent
     return " / ".join(reversed(names)) or "—"
+
+
+def _item_action_context(item, loan=None):
+    """Only use the item already authorized by the action boundary."""
+    return {
+        "item": item,
+        "asset": item.asset,
+        "employee": item.clearance.employee,
+        "location_path": _location_path(item.asset.location),
+        "loan": loan,
+    }
 
 
 def _visible_attachments(user, clearance, items):
@@ -352,9 +366,9 @@ def clearance_detail(request, pk):
         if query:
             items_query = items_query.filter(Q(asset__asset_code__icontains=query)|Q(asset__asset_name__icontains=query)|Q(asset__equipment_number__icontains=query)|Q(asset_code_snapshot__icontains=query)|Q(asset_name_snapshot__icontains=query))
         if form.cleaned_data["resolution"] == "pending":
-            items_query = items_query.filter(resolution="pending")
+            items_query = items_query.filter(resolution__in=UNRESOLVED_ITEM_RESOLUTIONS)
         elif form.cleaned_data["resolution"] == "resolved":
-            items_query = items_query.exclude(resolution="pending")
+            items_query = items_query.filter(resolution__in=RESOLVED_ITEM_RESOLUTIONS)
     else:
         items_query = items_query.none()
     items, item_query = paginate_query(request,items_query.order_by("asset__asset_code","pk"))
@@ -476,6 +490,8 @@ def clearance_detail(request, pk):
         employee=clearance.employee,
         status__in=("open", "blocked"),
     ).exclude(pk=clearance.pk).first()
+    detail_view_query = request.GET.copy()
+    detail_view_query["view"] = ""
     return render(
         request,
         "offboarding/clearance_detail.html",
@@ -483,6 +499,8 @@ def clearance_detail(request, pk):
             "clearance": clearance,
             "maintenance_handover": employee_maintenance_handover(request.user, clearance.employee),
             "item_rows": item_rows, "filter_form":form, "asset_page":items, "asset_pagination_query":item_query,
+            "compact_view": valid and form.cleaned_data["view"] == "compact",
+            "detail_view_query": detail_view_query.urlencode(),
             "supply_page":supply_items, "supply_pagination_query":supply_pagination_query,
             "clearance_attachments": clearance_attachments,
             "is_hr": "hr" in roles,
@@ -749,8 +767,10 @@ def clearance_item_return(request, clearance_pk, pk):
         request,
         form=form,
         title=f"清退归还：{item.asset_code_snapshot}",
-        description="本操作将生成正式借出归还记录和 AssetMovement；不会直接清空责任人。",
+        description=("本操作将完成内部借用归还并生成正式流转记录。" if active_loan else
+                     "本操作将办理责任归还并生成正式流转记录。") + "请明确选择归还后的部门、责任人、位置和状态。",
         button_label="确认归还",
+        item_context=_item_action_context(item, active_loan),
         cancel_url=(
             reverse("offboarding:clearance-detail", args=[clearance.pk])
             if scoped_clearances(request.user, item.company).filter(
@@ -813,6 +833,7 @@ def clearance_item_transfer(request, clearance_pk, pk):
         description="目标员工必须为同公司在职启用人员；部门经理的来源与目标部门都必须在授权范围内。",
         button_label="确认转交",
         cancel_url=reverse("offboarding:clearance-detail", args=[clearance.pk]),
+        item_context=_item_action_context(item),
     )
 
 
