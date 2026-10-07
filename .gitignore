@@ -23,6 +23,7 @@ media/
 *.log
 *.zip
 /dist/
+/output/
 /outputs/
 .idea/
 .vscode/
