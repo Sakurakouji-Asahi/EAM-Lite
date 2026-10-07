@@ -1,0 +1,21 @@
+<dialog class="app-command-dialog" id="quick-navigation" aria-labelledby="quick-navigation-title" data-quick-navigation data-preference-scope="{{ request.user.pk }}" data-company-scope="{{ current_company.pk|default:'none' }}">
+  <header class="app-command-header">
+    <div><h2 class="h5 mb-1" id="quick-navigation-title">快速找到要做的工作</h2><p class="small text-secondary mb-0">查找功能菜单，直接进入对应页面。</p></div>
+    <button class="btn-close" type="button" data-quick-navigation-close aria-label="关闭查找功能"></button>
+  </header>
+  <div class="app-command-search">
+    <label class="visually-hidden" for="quick-navigation-query">查找功能或资产</label>
+    <input class="form-control" id="quick-navigation-query" type="search" name="q" autocomplete="off" placeholder="输入功能名称，例如：盘点、库存、财务" data-quick-navigation-query{% if app_navigation.show_assets or app_navigation.tasks.can_view_my_assets %} form="quick-navigation-asset-search"{% endif %} aria-controls="quick-navigation-results" aria-describedby="quick-navigation-help">
+  </div>
+  <div class="app-command-preferences"><button class="btn btn-sm btn-outline-primary" type="button" data-quick-navigation-pinned-only aria-pressed="false">只看固定</button><span class="small text-secondary" data-quick-navigation-pinned-count></span></div>
+  <p class="app-command-pin-feedback small" data-quick-navigation-pin-feedback role="status" aria-live="polite" hidden></p>
+  <div class="app-command-result-heading"><span data-quick-navigation-heading>功能菜单</span><span class="small text-secondary" role="status" aria-live="polite" data-quick-navigation-count></span></div>
+  <ul class="app-command-results" id="quick-navigation-results" data-quick-navigation-results aria-label="匹配的功能"></ul>
+  <p class="app-command-empty" data-quick-navigation-empty hidden><span data-quick-navigation-empty-message>没有匹配的功能，请换个关键词。</span>{% if app_navigation.show_assets or app_navigation.tasks.can_view_my_assets %}查找编号或名称可使用下方资产搜索。{% endif %}</p>
+  <footer class="app-command-footer">
+    <span class="small text-secondary" id="quick-navigation-help">↑ ↓ 选择 · Tab 切换操作 · Enter 确认 · Esc 关闭</span>
+    {% if app_navigation.show_assets or app_navigation.tasks.can_view_my_assets %}
+      <form method="get" action="{% url 'assets:asset-list' %}" id="quick-navigation-asset-search" data-quick-navigation-asset-search><button type="submit" class="btn btn-outline-primary btn-sm">搜索资产编号或名称</button></form>
+    {% endif %}
+  </footer>
+</dialog>

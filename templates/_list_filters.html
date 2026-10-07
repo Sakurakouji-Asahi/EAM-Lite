@@ -1,7 +1,9 @@
-<form method="get" class="card card-body shadow-sm mb-3 app-filter-card" novalidate>
+<form method="get" class="card card-body shadow-sm mb-3 app-filter-card" data-mobile-filters data-query-presets data-preset-company="{{ current_company.pk }}" data-preset-errors="{{ filter_form.errors|yesno:'true,false' }}" novalidate>
+  {% for name,value in filter_hidden_fields.items %}{% if value %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endif %}{% endfor %}
   {% if filter_form.non_field_errors %}<div class="alert alert-danger" role="alert">{{ filter_form.non_field_errors }}</div>{% endif %}
   <div class="row g-3 align-items-end">
     {% for field in filter_form %}<div class="col-12 col-md-6 col-xl-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}{% for error in field.errors %}<div class="text-danger small" role="alert">{{ error }}</div>{% endfor %}</div>{% endfor %}
-    <div class="col-auto d-flex gap-2"><button class="btn btn-primary" type="submit">查询</button><a class="btn btn-outline-secondary" href="{{ request.path }}">重置</a></div>
+    <div class="col-auto d-flex gap-2"><button class="btn btn-primary" type="submit">查询</button><a class="btn btn-outline-secondary" href="{{ filter_reset_url|default:request.path }}">重置</a></div>
   </div>
+  {% include '_query_presets.html' with preset_errors=filter_form.errors %}
 </form>
