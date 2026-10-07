@@ -14,8 +14,12 @@ from django.views.decorators.http import require_GET, require_http_methods
 
 from apps.audit.services import request_audit_context, write_business_audit_log
 from apps.imports.forms import ImportUploadForm, ImportHistoryFilterForm, ImportRowFilterForm
-from apps.imports.presentation import asset_import_context, opening_stock_import_context
+from apps.imports.presentation import asset_import_context, opening_stock_import_context, created_results_context
+from apps.imports.workspace import detail_context, filter_import_history, history_context, history_navigation, import_detail_url
+from apps.imports.field_guide import template_field_guide
 from apps.imports.services import (
+    ASSET_FINANCE_KEYS,
+    MAX_IMPORT_ROWS,
     TEMPLATE_REGISTRY,
     build_template_workbook,
     cancel_import_batch,
@@ -93,19 +97,11 @@ def import_home(request):
             condition &= Q(uploaded_by=request.user)
         permitted |= condition
     batches = ImportBatch.objects.filter(company=company).filter(permitted).select_related("uploaded_by", "file_attachment")
+    visible_batches = batches
     form = ImportHistoryFilterForm(request.GET, definitions=allowed)
     valid = form.is_valid()
     if valid:
-        query = form.cleaned_data["q"]
-        if query:
-            condition = Q(file_attachment__original_filename__icontains=query)
-            if query.isdecimal() and 0 < int(query) <= 9223372036854775807:
-                condition |= Q(pk=int(query))
-            batches = batches.filter(condition)
-        if form.cleaned_data["import_type"]:
-            batches = batches.filter(import_type=form.cleaned_data["import_type"])
-        if form.cleaned_data["status"]:
-            batches = batches.filter(status=form.cleaned_data["status"])
+        batches = filter_import_history(batches, form.cleaned_data)
     else:
         batches = batches.none()
     batches = batches.order_by("-uploaded_at", "-pk")
@@ -114,7 +110,7 @@ def import_home(request):
     query.pop("page", None)
     return render(request, "imports/home.html", {"company": company, "definitions": allowed,
                   "recent_batches": page.object_list, "page_obj": page, "filter_form": form,
-                  "pagination_query": query.urlencode()}, status=200 if valid else 400)
+                  "pagination_query": query.urlencode(), **history_context(request, form=form, queryset=visible_batches, page=page)}, status=200 if valid else 400)
 
 
 @never_cache
@@ -160,7 +156,9 @@ def upload_import(request, import_type):
     return render(
         request,
         "imports/upload.html",
-        {"form": form, "definition": definition, "company": company},
+        {"form": form, "definition": definition, "company": company,
+         "field_guide": template_field_guide(definition, finance_keys=ASSET_FINANCE_KEYS if import_type == "asset_initialization" else ()),
+         "max_import_rows": MAX_IMPORT_ROWS},
     )
 
 
@@ -177,7 +175,7 @@ def batch_detail(request, pk):
         company=company,
     )
     _require_batch(request.user, batch)
-    if set(request.GET) - {"page", "row_view", "row_number"}:
+    if set(request.GET) - {"page", "row_view", "row_number", "history_query"}:
         return HttpResponse("包含不支持的导入预览参数。", status=400)
     form = ImportRowFilterForm(request.GET)
     valid = form.is_valid()
@@ -209,7 +207,6 @@ def batch_detail(request, pk):
         {
             "batch": batch,
             "rows": rows,
-            "error_row_count": batch.rows.exclude(errors_json=[]).count(),
             "page_obj": page_obj,
             "filter_form": form,
             "pagination_query": query.urlencode(),
@@ -220,6 +217,8 @@ def batch_detail(request, pk):
             "is_opening_custody": batch.import_type == "opening_custody",
             **progress,
             **opening_stock_import_context(actor=request.user, batch=batch, rows=rows),
+            **created_results_context(actor=request.user, batch=batch, rows=rows),
+            **detail_context(request, batch=batch, form=form, rows=rows),
         },
         status=200 if valid else 400,
     )
@@ -235,16 +234,17 @@ def confirm_batch(request, pk):
     company = _company_or_404()
     batch = get_object_or_404(ImportBatch, pk=pk, company=company)
     _require_batch(request.user, batch)
+    return_url = import_detail_url(batch, history_navigation(request)["history_query"], row_values=request.GET)
     if request.POST.get("confirm") != "1":
         messages.error(request, "请勾选确认后再执行整批导入。")
-        return redirect("imports:batch_detail", pk=batch.pk)
+        return redirect(return_url)
     try:
         confirm_import_batch(actor=request.user, batch=batch, request=request)
     except ValidationError as exc:
         messages.error(request, "; ".join(exc.messages))
     else:
         messages.success(request, "导入已整批确认成功。")
-    return redirect("imports:batch_detail", pk=batch.pk)
+    return redirect(return_url)
 
 
 @never_cache
@@ -257,6 +257,7 @@ def cancel_batch(request, pk):
     company = _company_or_404()
     batch = get_object_or_404(ImportBatch, pk=pk, company=company)
     _require_batch(request.user, batch)
+    return_url = import_detail_url(batch, history_navigation(request)["history_query"], row_values=request.GET)
     try:
         cancel_import_batch(
             actor=request.user,
@@ -268,7 +269,7 @@ def cancel_batch(request, pk):
         messages.error(request, "; ".join(exc.messages))
     else:
         messages.success(request, "导入批次已取消，未创建业务数据。")
-    return redirect("imports:batch_detail", pk=batch.pk)
+    return redirect(return_url)
 
 
 @never_cache
