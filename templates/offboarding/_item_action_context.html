@@ -1,0 +1,15 @@
+<section class="card card-body shadow-sm mb-3" aria-labelledby="clearance-item-context-title">
+  <h2 class="h6" id="clearance-item-context-title">本次清退项目</h2>
+  <div class="fw-semibold text-break mb-2">{{ action_info.asset.asset_code|default:action_info.item.asset_code_snapshot }} · {{ action_info.asset.asset_name }}</div>
+  {% if action_info.asset.equipment_number %}<div class="small text-secondary text-break mb-2">设备编号：{{ action_info.asset.equipment_number }}</div>{% endif %}
+  <dl class="row small mb-0">
+    <dt class="col-4 col-sm-3 text-secondary">离职人员</dt><dd class="col-8 col-sm-9 text-break">{{ action_info.employee.employee_no }} / {{ action_info.employee.name }}</dd>
+    <dt class="col-4 col-sm-3 text-secondary">清退来源</dt><dd class="col-8 col-sm-9">{{ action_info.item.get_source_type_display }}</dd>
+    <dt class="col-4 col-sm-3 text-secondary">当前状态</dt><dd class="col-8 col-sm-9">{{ action_info.asset.get_asset_status_display }}</dd>
+    <dt class="col-4 col-sm-3 text-secondary">当前部门</dt><dd class="col-8 col-sm-9 text-break">{{ action_info.asset.department|default:"—" }}</dd>
+    <dt class="col-4 col-sm-3 text-secondary">当前责任人</dt><dd class="col-8 col-sm-9 text-break">{{ action_info.asset.responsible_employee|default:"—" }}</dd>
+    <dt class="col-4 col-sm-3 text-secondary">当前位置</dt><dd class="col-8 col-sm-9 text-break">{{ action_info.location_path }}</dd>
+    {% if action_info.loan %}<dt class="col-4 col-sm-3 text-secondary">借用期间</dt><dd class="col-8 col-sm-9">{{ action_info.loan.loan_date|date:"Y-m-d" }} 至 {{ action_info.loan.expected_return_date|date:"Y-m-d" }}（预计）</dd>{% endif %}
+  </dl>
+  {% if action_info.loan %}<p class="small text-secondary mb-0 mt-2">内部借用人是离职人员，当前责任人可能是另一名员工。请分别核对实际签收人和归还后责任人。</p>{% endif %}
+</section>
