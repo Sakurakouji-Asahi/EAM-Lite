@@ -219,6 +219,9 @@ def test_maintenance_date_preview_and_handover_do_not_mutate_or_expand_rights(cl
     data = {'asset':plan.asset_id,'name':plan.name,'cycle_value':2,'cycle_unit':'month',
         'responsible_employee':ctx['responsible'].pk,'advance_notice_days':3,'standard_content':plan.standard_content,
         'first_due_date':plan.first_due_date.isoformat(),'action':'preview'}
+    page = client.get(url)
+    assert page.status_code == 200
+    data['expected_revision'] = page.context['form']['expected_revision'].value()
     response = client.post(url,data)
     assert response.status_code == 200 and response.context['date_preview']['next_date'] == date(2026,3,31)
     plan.refresh_from_db();assert plan.next_maintenance_date == date(2026,2,28)
