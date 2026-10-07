@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
+from urllib.parse import urlencode
 
 from apps.core.return_navigation import safe_return_url
 from apps.maintenance.handover import employee_maintenance_handover
 from apps.masterdata.reference_preview import reference_preview
+from apps.masterdata.permission_workspace import permission_detail_url, render_permissions_detail
 from django.contrib import messages
 from apps.core.pagination import paginate_query
 from django.contrib.auth import get_user_model
@@ -446,6 +448,7 @@ def department_list(request):
 @login_required
 def employee_list(request):
     from apps.masterdata.directory import employee_department_tree, prepare_employee_directory
+    from apps.masterdata.employee_workspace import employee_filter_context
 
     require_view_masterdata(request.user, "employee")
     company = _company_or_404()
@@ -507,6 +510,9 @@ def employee_list(request):
             "q": q,
             "status": status,
             "employment_status": employment_status,
+            **employee_filter_context(query={"q": q, "department": selected_department, "position": position,
+                "source_mark": source_mark, "status": status, "employment_status": employment_status},
+                department_options=department_options),
             "company": company,
             "can_manage": can_manage_masterdata(request.user, "employee"),
             "show_user_link": can_manage_masterdata(
@@ -518,24 +524,55 @@ def employee_list(request):
 
 @login_required
 def location_list(request):
+    from apps.masterdata.location_tree import LocationTree
+
     require_view_masterdata(request.user, "location")
     company = _company_or_404()
     queryset = Location.objects.filter(company=company).select_related("parent")
     ancestors = list(queryset)
+    tree = LocationTree(company, nodes=ancestors)
+    branch_options = tree.options(tree.nodes)
+    selected_branch = request.GET.get("branch", "").strip()
+    branch_path = ""
+    filter_errors = []
+    if selected_branch:
+        allowed = {str(pk): pk for pk in tree.nodes}
+        if selected_branch not in allowed:
+            filter_errors.append("所选位置无效或不属于当前公司，请重新选择区域。")
+            queryset = queryset.none()
+        else:
+            identifier = allowed[selected_branch]
+            branch_path = tree.path(identifier)
+            queryset = queryset.filter(pk__in=tree.descendants(identifier))
     q = request.GET.get("q", "").strip()
     if q:
         queryset = queryset.filter(Q(code__icontains=q) | Q(name__icontains=q))
     queryset, status = _status_filter(queryset, request)
+    rows = _tree_rows(queryset, level_attr="level", ancestors=ancestors)
+    for row in rows:
+        row["has_children"] = bool(tree.children[row["object"].pk])
+        row["branch_url"] = reverse("masterdata:location-list") + "?" + urlencode({
+            "branch": row["object"].pk, "status": status,
+        })
+    clear_branch_filters = {"status": status}
+    if q:
+        clear_branch_filters["q"] = q
     return render(
         request,
         "masterdata/location_list.html",
         {
-            "rows": _tree_rows(queryset, level_attr="level", ancestors=ancestors),
+            "rows": rows,
+            "branch_options": branch_options,
+            "selected_branch": selected_branch,
+            "branch_path": branch_path,
+            "filter_errors": filter_errors,
+            "clear_branch_url": reverse("masterdata:location-list") + "?" + urlencode(clear_branch_filters),
             "q": q,
             "status": status,
             "company": company,
             "can_manage": can_manage_masterdata(request.user, "location"),
         },
+        status=400 if filter_errors else 200,
     )
 
 
@@ -760,6 +797,8 @@ def _company_object_or_404(model, pk, company):
 
 @login_required
 def department_detail(request, pk):
+    from apps.masterdata.department_workspace import department_business_context
+
     require_view_masterdata(request.user, "department")
     company = _company_or_404()
     obj = get_object_or_404(scoped_departments(request.user, company), pk=pk)
@@ -768,14 +807,17 @@ def department_detail(request, pk):
         "department",
         obj,
         ("code", "name", "parent", "manager_employee", "is_active"),
+        department_business=department_business_context(request.user, company, obj),
     )
 
 
 @login_required
 def employee_detail(request, pk):
+    from apps.masterdata.employee_workspace import employee_profile_context
+
     require_view_masterdata(request.user, "employee")
     company = _company_or_404()
-    obj = get_object_or_404(scoped_employees(request.user, company), pk=pk)
+    obj = get_object_or_404(scoped_employees(request.user, company).select_related("department", "user", "company"), pk=pk)
     fields = [
         "employee_no",
         "name",
@@ -783,7 +825,6 @@ def employee_detail(request, pk):
         "employment_status",
         "hire_date",
         "termination_date",
-        "mobile",
         "remark",
         "is_active",
     ]
@@ -832,6 +873,7 @@ def employee_detail(request, pk):
         ),
         clearance_url=clearance_url,
         clearance_label=clearance_label,
+        employee_directory=employee_profile_context(request.user, obj),
     )
 
 
@@ -877,8 +919,12 @@ def _render_master_detail(
     technical_link_url=None,
     clearance_url=None,
     clearance_label=None,
+    employee_directory=None,
+    department_business=None,
 ):
     slug = "category" if resource == "asset_category" else resource
+    source = safe_return_url(request, "")
+    edit_query = "?" + urlencode({"return_to": source}) if source else ""
     return render(
         request,
         "masterdata/detail.html",
@@ -893,14 +939,20 @@ def _render_master_detail(
                 resource == "employee"
                 and obj.employment_status in {"leaving", "resigned"}
             ),
-            "edit_url": reverse(f"masterdata:{slug}-edit", args=[obj.pk]),
+            "edit_url": reverse(f"masterdata:{slug}-edit", args=[obj.pk]) + edit_query,
             "status_url": reverse(f"masterdata:{slug}-status", args=[obj.pk]),
             "back_url": safe_return_url(request, reverse(f"masterdata:{slug}-list")),
+            "location_branch_url": (
+                reverse("masterdata:location-list") + "?" + urlencode({"branch": obj.pk, "status": "all"})
+                if resource == "location" else None
+            ),
             "maintenance_handover": employee_maintenance_handover(request.user, obj) if resource == "employee" else None,
             "reference_preview": reference_preview(request.user,resource,obj) if obj.is_active and can_manage_masterdata(request.user,resource) else [],
             "technical_link_url": technical_link_url,
             "clearance_url": clearance_url,
             "clearance_label": clearance_label,
+            "employee_directory": employee_directory,
+            "department_business": department_business,
         },
     )
 
@@ -914,6 +966,9 @@ def _master_form_view(
     update_service,
     update_kwarg,
 ):
+    from .form_choices import configure_relationship_choices
+    from .form_workspace import apply_create_context, next_create_url
+
     require_manage_masterdata(request.user, resource)
     company = _company_or_404()
     original_parent_id = (
@@ -929,8 +984,10 @@ def _master_form_view(
         actor=request.user,
         company=company,
     )
+    configure_relationship_choices(form)
     if instance is None:
         form.instance.company = company
+    context_warning = apply_create_context(request, form, resource) if instance is None else ""
     if request.method == "POST" and form.is_valid():
         new_parent = form.cleaned_data.get("parent")
         parent_changed = (
@@ -993,6 +1050,9 @@ def _master_form_view(
                     request,
                     f"{RESOURCE_CONFIG[resource]['label']}资料已{'新增' if instance is None else '更新'}。",
                 )
+                if instance is None and request.POST.get("action") == "continue":
+                    messages.info(request, f"已保存：{obj}。新表单仅沿用所属部门或上级，编号留空可自动生成。")
+                    return redirect(next_create_url(request, resource, obj))
                 if getattr(obj, "scope_impact", None):
                     messages.warning(
                         request,
@@ -1009,6 +1069,9 @@ def _master_form_view(
             "title": f"{'新增' if instance is None else '编辑'}{RESOURCE_CONFIG[resource]['label']}",
             "cancel_url": safe_return_url(request, reverse(f"masterdata:{slug}-detail", args=[instance.pk]) if instance else reverse(f"masterdata:{slug}-list")),
             "department_scope_impact": department_scope_impact,
+            "masterdata_return_to": safe_return_url(request, ""),
+            "masterdata_can_continue": instance is None,
+            "masterdata_context_warning": context_warning,
         },
     )
 
@@ -1306,7 +1369,7 @@ def user_permissions_list(request):
     return render(
         request,
         "masterdata/user_permissions_list.html",
-        {"rows": rows, "company": company, "page_obj":page, "pagination_query":pagination_query, "query":query, "selected_role":role, "selected_active":active, "role_options":ROLE_LABELS.items()},
+        {"rows": rows, "company": company, "page_obj":page, "pagination_query":pagination_query, "query":query, "selected_role":role, "selected_active":active, "role_options":ROLE_LABELS.items(), "permission_return_query":urlencode({"return_to":request.get_full_path()})},
     )
 
 
@@ -1354,27 +1417,7 @@ def user_permissions_detail(request, user_id):
     company = _company_or_404()
     User = get_user_model()
     target = get_object_or_404(User, pk=user_id, is_superuser=False)
-    assigned_role_names = sorted(assigned_role_names_for(target))
-    role_form = UserRoleForm(
-        actor=request.user,
-        initial={"roles": assigned_role_names},
-    )
-    scope_form = ScopeAssignForm(actor=request.user, company=company)
-    scopes = UserDepartmentScope.objects.filter(
-        company=company, user=target, is_active=True
-    ).select_related("department")
-    return render(
-        request,
-        "masterdata/user_permissions_detail.html",
-        {
-            "target_user": target,
-            "role_form": role_form,
-            "scope_form": scope_form,
-            "scopes": scopes,
-            "assigned_roles": [ROLE_LABELS[name] for name in assigned_role_names],
-            "finance_fields_visible": "finance" in assigned_role_names,
-        },
-    )
+    return render_permissions_detail(request, company, target)
 
 
 @login_required
@@ -1397,12 +1440,12 @@ def user_roles_update(request, user_id):
                 request=request,
             )
         except ValidationError as exc:
-            messages.error(request, "; ".join(exc.messages))
+            _service_error(form, exc)
         else:
             messages.success(request, "固定角色已更新。")
-    else:
-        messages.error(request, "角色变更表单校验失败，请检查原因和身份确认。")
-    return redirect("masterdata:user-permissions-detail", user_id=target.pk)
+            return redirect(permission_detail_url(request, target))
+    return render_permissions_detail(request, company, target, role_form=form,
+                                     failed_form=form, failed_action="角色变更")
 
 
 @login_required
@@ -1425,12 +1468,12 @@ def user_scope_assign(request, user_id):
                 request=request,
             )
         except ValidationError as exc:
-            messages.error(request, "; ".join(exc.messages))
+            _service_error(form, exc)
         else:
             messages.success(request, "部门数据范围已分配。")
-    else:
-        messages.error(request, "部门范围表单校验失败。")
-    return redirect("masterdata:user-permissions-detail", user_id=target.pk)
+            return redirect(permission_detail_url(request, target))
+    return render_permissions_detail(request, company, target, scope_form=form,
+                                     failed_form=form, failed_action="部门范围分配")
 
 
 @login_required
@@ -1457,12 +1500,13 @@ def user_scope_revoke(request, user_id, scope_id):
                 request=request,
             )
         except ValidationError as exc:
-            messages.error(request, "; ".join(exc.messages))
+            _service_error(form, exc)
         else:
             messages.success(request, "部门数据范围已撤销并保留历史。")
-    else:
-        messages.error(request, "撤销范围必须填写原因。")
-    return redirect("masterdata:user-permissions-detail", user_id=target.pk)
+            return redirect(permission_detail_url(request, target))
+    return render_permissions_detail(request, company, target, revoke_form=form,
+                                     revoke_scope_id=scope.pk, failed_form=form,
+                                     failed_action="部门范围撤销")
 
 
 SETUP_STEPS = {
