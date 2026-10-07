@@ -1,3 +1,31 @@
-{% extends "base.html" %}{% block title %}待保养{% endblock %}{% block content %}
-<header class="app-page-header"><div><h1 class="h3 mb-1">待保养</h1><p class="text-secondary mb-0">集中处理即将到期、今日到期和逾期的保养事项。</p></div></header>{% include '_list_filters.html' %}<div class="maintenance-card-grid mb-3"><div class="alert alert-info mb-0">即将到期：{{ counts.upcoming }}</div><div class="alert alert-warning mb-0">今日到期：{{ counts.due_today }}</div><div class="alert alert-danger mb-0">逾期：{{ counts.overdue }}</div></div>
-<div class="table-responsive shadow-sm"><table class="table table-hover align-middle mb-0"><thead><tr><th>到期状态</th><th>计划日期</th><th>资产</th><th>计划/责任人</th><th></th></tr></thead><tbody>{% for item in items %}<tr><td><span class="badge text-bg-{% if item.due_status == 'overdue' %}danger{% elif item.due_status == 'due_today' %}warning{% else %}info{% endif %}">{{ item.due_label }}</span></td><td>{{ item.plan.next_maintenance_date|date:'Y-m-d' }}</td><td>{{ item.plan.asset.asset_code }}<br>{{ item.plan.asset.asset_name }}</td><td>{{ item.plan.name }}<br>{{ item.plan.responsible_employee.name }}</td><td>{% if item.can_complete %}<a class="btn btn-success maintenance-mobile-action" href="{% url 'maintenance:plan-complete' item.plan.pk %}">完成保养</a>{% else %}<a class="btn btn-outline-primary" href="{% url 'maintenance:plan-detail' item.plan.pk %}">查看</a>{% endif %}</td></tr>{% empty %}<tr><td colspan="5"><div class="app-empty-state"><strong>当前没有待保养事项</strong><span>即将到期、今日到期和逾期项目会出现在这里。</span></div></td></tr>{% endfor %}</tbody></table></div>{% include "_pagination.html" %}{% endblock %}
+{% extends "base.html" %}
+{% load static %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/maintenance-agenda.css' %}?v=20261004">{% endblock %}
+{% block title %}待保养{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3 mb-1">待保养</h1><p class="text-secondary mb-0">集中处理即将到期、今日到期和逾期的保养事项。</p></div></header>
+{% include '_list_filters.html' %}
+<div class="maintenance-card-grid mb-2" aria-label="待保养状态汇总">
+  <a class="alert alert-info mb-0 text-decoration-none" href="{{ due_links.upcoming }}">即将到期：{{ counts.upcoming }}</a>
+  <a class="alert alert-warning mb-0 text-decoration-none" href="{{ due_links.due_today }}">今日到期：{{ counts.due_today }}</a>
+  <a class="alert alert-danger mb-0 text-decoration-none" href="{{ due_links.overdue }}">逾期：{{ counts.overdue }}</a>
+</div>
+<p class="small text-secondary">点击汇总快速筛选；数量按当前设备、部门和负责人范围统计，不受计划日期和到期情况筛选影响。</p>
+<section id="maintenance-agenda" aria-label="待保养日期视图" class="mb-3">
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2"><div class="btn-group" aria-label="待保养显示方式"><a class="btn btn-sm {% if due_view == 'agenda' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ due_view_links.agenda }}"{% if due_view == 'agenda' %} aria-current="page"{% endif %}>按日期日程</a><a class="btn btn-sm {% if due_view == 'list' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ due_view_links.list }}"{% if due_view == 'list' %} aria-current="page"{% endif %}>明细列表</a></div><a class="btn btn-sm btn-outline-secondary" href="{{ agenda_today_url }}">今日事项 {{ agenda_today_count }}</a>{% if selected_due_date %}<a class="btn btn-sm btn-outline-secondary" href="{{ agenda_all_dates_url }}">取消日期 {{ selected_due_date|date:'Y-m-d' }}</a>{% endif %}</div>
+<p class="small text-secondary mb-0">按计划的下一次到期日安排；仅包含已进入原提醒窗口的待保养事项。当前条件涉及 {{ agenda_total_days }} 个日期{% if selected_due_date %}，正在查看 {{ selected_due_date|date:'Y-m-d' }}{% endif %}。</p>
+</section>
+{% if due_view == 'agenda' %}{% include 'maintenance/_due_agenda.html' %}{% else %}
+<div class="table-responsive shadow-sm"><table class="table table-hover align-middle mb-0">
+  <thead><tr><th>到期状态</th><th>计划日期</th><th>资产 / 设备编号</th><th>计划 / 责任人</th><th></th></tr></thead>
+  <tbody>{% for item in items %}<tr>
+    <td><span class="badge text-bg-{% if item.due_status == 'overdue' %}danger{% elif item.due_status == 'due_today' %}warning{% else %}info{% endif %}">{{ item.due_label }}</span></td>
+    <td class="text-nowrap">{{ item.plan.next_maintenance_date|date:'Y-m-d' }}<div class="small {% if item.due_status == 'overdue' %}text-danger{% else %}text-secondary{% endif %}">{{ item.due_timing }}</div></td>
+    <td>{{ item.plan.asset.asset_code }}<br>{{ item.plan.asset.asset_name }}{% if item.plan.asset.equipment_number %}<div class="small text-secondary">设备：{{ item.plan.asset.equipment_number }}</div>{% endif %}</td>
+    <td><a href="{% url 'maintenance:plan-detail' item.plan.pk %}">{{ item.plan.name }}</a><br>{{ item.plan.responsible_employee.name }}</td>
+    <td>{% if item.can_complete %}<a class="btn btn-success maintenance-mobile-action" href="{% url 'maintenance:plan-complete' item.plan.pk %}">完成保养</a>{% else %}<a class="btn btn-outline-primary" href="{% url 'maintenance:plan-detail' item.plan.pk %}">查看</a>{% endif %}</td>
+  </tr>{% empty %}<tr><td colspan="5"><div class="app-empty-state"><strong>当前没有待保养事项</strong><span>即将到期、今日到期和逾期项目会出现在这里。</span></div></td></tr>{% endfor %}</tbody>
+</table></div>
+{% endif %}
+{% include "_pagination.html" %}
+{% endblock %}

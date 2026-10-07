@@ -1,1 +1,19 @@
-{% extends "base.html" %}{% block title %}{{ title }}{% endblock %}{% block content %}<div class="app-narrow-page"><header class="app-page-header"><div><h1 class="h3 mb-1">{{ title }}</h1><p class="text-secondary mb-0">请核对当前计划和实际处理信息。</p></div></header>{% if description %}<div class="alert alert-warning">{{ description }}</div>{% endif %}<form method="post" enctype="multipart/form-data" class="card shadow-sm"><div class="card-body">{% include 'maintenance/_form_fields.html' %}</div><div class="card-footer d-flex gap-2"><button class="btn btn-{{ button_style|default:'primary' }} maintenance-mobile-action" type="submit">{{ button_label|default:'确认' }}</button><a class="btn btn-outline-secondary" href="{{ cancel_url }}">取消</a></div></form></div>{% endblock %}
+{% extends "base.html" %}
+{% load static %}
+{% block title %}{{ title }}{% endblock %}
+{% block extra_head %}{% if problem and form.closure_note %}<script src="{% static 'js/maintenance-error-navigation.js' %}" defer></script>{% endif %}{% endblock %}
+{% block content %}
+<div class="app-narrow-page">
+  <header class="app-page-header"><div><h1 class="h3 mb-1">{{ title }}</h1><p class="text-secondary mb-0">{% if problem %}请核对来源保养记录、问题及当前跟进安排。{% else %}请核对当前计划和实际处理信息。{% endif %}</p></div></header>
+  {% if problem and form.closure_note %}{% include 'maintenance/_form_error_summary.html' %}{% endif %}
+  {% if problem %}{% include 'maintenance/_problem_context.html' %}{% endif %}
+  {% if description %}<div class="alert alert-warning">{{ description }}</div>{% endif %}
+  <form method="post" enctype="multipart/form-data" class="card shadow-sm" {% if problem and form.closure_note %}data-maintenance-error-navigation{% endif %} data-unsaved-guard="{% if form.is_bound %}true{% else %}false{% endif %}">
+    <div class="card-body">
+      {% if problem_return_to %}<input type="hidden" name="return_to" value="{{ problem_return_to }}">{% endif %}
+      {% if problem and form.closure_note %}{% include 'maintenance/_form_fields.html' with error_summary=True %}{% else %}{% include 'maintenance/_form_fields.html' %}{% endif %}
+    </div>
+    <div class="card-footer d-flex gap-2"><button class="btn btn-{{ button_style|default:'primary' }} maintenance-mobile-action" type="submit">{{ button_label|default:'确认' }}</button><a class="btn btn-outline-secondary" href="{{ cancel_url }}">取消</a></div>
+  </form>
+</div>
+{% endblock %}

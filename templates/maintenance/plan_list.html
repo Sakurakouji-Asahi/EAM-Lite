@@ -1,8 +1,49 @@
 {% extends "base.html" %}
 {% block title %}保养计划{% endblock %}
 {% block content %}
-<header class="app-page-header"><div><h1 class="h3 mb-1">保养计划</h1><p class="text-secondary mb-0">预防性保养周期与责任人。</p></div>{% if can_manage %}<a class="btn btn-primary" href="{% url 'maintenance:plan-create' %}">新建计划</a>{% endif %}</header>
+<header class="app-page-header">
+  <div><h1 class="h3 mb-1">保养计划</h1><p class="text-secondary mb-0">查找设备的预防性保养周期、标准和责任人。</p></div>
+  {% if can_manage %}<a class="btn btn-primary" href="{% url 'maintenance:plan-create' %}?{{ plan_return_query }}">新建计划</a>{% endif %}
+</header>
 {% include '_list_filters.html' %}
-<div class="table-responsive shadow-sm"><table class="table table-hover align-middle mb-0"><thead><tr><th>资产</th><th>计划</th><th>周期</th><th>责任人</th><th>下次日期</th><th>状态</th></tr></thead><tbody>{% for plan in plans %}<tr><td><a href="{% url 'assets:asset-detail' plan.asset_id %}">{{ plan.asset.asset_code }}</a><br>{{ plan.asset.asset_name }}</td><td><a href="{% url 'maintenance:plan-detail' plan.pk %}">{{ plan.name }}</a></td><td>{{ plan.cycle_value }} {{ plan.get_cycle_unit_display }}</td><td>{{ plan.responsible_employee.name }}</td><td>{{ plan.next_maintenance_date|date:'Y-m-d' }}</td><td>{{ plan.get_status_display }}</td></tr>{% empty %}<tr><td colspan="6"><div class="app-empty-state"><strong>当前没有保养计划</strong><span>调整筛选条件后仍无结果。{% if can_manage %}可以为现有资产建立保养计划。{% endif %}</span>{% if can_manage %}<a class="btn btn-sm btn-primary" href="{% url 'maintenance:plan-create' %}">新建计划</a>{% endif %}</div></td></tr>{% endfor %}</tbody></table></div>
+<section class="mb-3" aria-label="查找范围内的计划状态">
+  <div class="row g-2">
+    {% for card in plan_status_cards %}
+    <div class="col-6 col-lg-3"><a class="card card-body h-100 text-decoration-none {% if card.active %}border-primary{% endif %}" href="{{ card.url }}"{% if card.active %} aria-current="page"{% endif %}>
+      <span class="text-secondary">{{ card.label }}</span><strong class="fs-4 text-{{ card.tone }}">{{ card.count }}</strong>
+    </a></div>
+    {% endfor %}
+  </div>
+  <p class="small text-secondary mt-2 mb-0">汇总按当前设备、部门和责任人条件统计；点击状态继续查找。</p>
+</section>
+<div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+  <span class="small text-secondary">符合条件 {{ page_obj.paginator.count }} 个计划</span>
+  {% for chip in plan_filter_chips %}<a class="badge rounded-pill text-bg-light border text-decoration-none" href="{{ chip.url }}" aria-label="清除{{ chip.label }}：{{ chip.value }}">{{ chip.label }}：{{ chip.value }} <span aria-hidden="true">×</span></a>{% endfor %}
+  {% if plan_filter_chips %}<a class="small" href="{% url 'maintenance:plan-list' %}">清除全部条件</a>{% endif %}
+</div>
+<div class="table-responsive shadow-sm">
+  <table class="table table-hover align-middle mb-0">
+    <thead><tr><th>资产 / 设备</th><th>计划</th><th>周期</th><th>责任人</th><th>下次日期</th><th>状态</th>{% if can_manage %}<th>维护</th>{% endif %}</tr></thead>
+    <tbody>
+      {% for plan in plans %}
+      <tr>
+        <td><a href="{% url 'assets:asset-detail' plan.asset_id %}">{{ plan.asset.asset_code }}</a><br>{{ plan.asset.asset_name }}{% if plan.asset.equipment_number %}<div class="small text-secondary">设备编号 {{ plan.asset.equipment_number }}</div>{% endif %}</td>
+        <td><a href="{% url 'maintenance:plan-detail' plan.pk %}?{{ plan_return_query }}">{{ plan.name }}</a></td>
+        <td>{{ plan.cycle_value }} {{ plan.get_cycle_unit_display }}</td>
+        <td>{{ plan.responsible_employee.name }}</td>
+        <td>{{ plan.next_maintenance_date|date:'Y-m-d' }}</td>
+        <td><span class="badge {% if plan.status == 'active' %}text-bg-success{% elif plan.status == 'suspended' %}text-bg-warning{% else %}text-bg-secondary{% endif %}">{{ plan.get_status_display }}</span></td>
+        {% if can_manage %}<td>{% if plan.status != 'ended' %}<a class="btn btn-sm btn-outline-primary" href="{% url 'maintenance:plan-edit' plan.pk %}?{{ plan_return_query }}">编辑</a>{% else %}<span class="small text-secondary">查看历史</span>{% endif %}</td>{% endif %}
+      </tr>
+      {% empty %}
+      <tr><td colspan="{% if can_manage %}7{% else %}6{% endif %}"><div class="app-empty-state">
+        {% if plan_filter_chips or filter_form.errors %}<strong>没有符合当前条件的保养计划</strong><span>可以清除上方单个条件，或返回全部可访问计划。</span><a class="btn btn-sm btn-outline-primary" href="{% url 'maintenance:plan-list' %}">查看全部计划</a>
+        {% else %}<strong>当前没有保养计划</strong><span>{% if can_manage %}可以为需要保养的现有资产建立计划。{% else %}当前访问范围内暂无计划。{% endif %}</span>{% endif %}
+        {% if can_manage %}<a class="btn btn-sm btn-primary" href="{% url 'maintenance:plan-create' %}?{{ plan_return_query }}">新建计划</a>{% endif %}
+      </div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 {% include "_pagination.html" %}
 {% endblock %}

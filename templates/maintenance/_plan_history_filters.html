@@ -1,0 +1,21 @@
+{# Keep the source list when filtering the plan's execution history. #}
+<form method="get" class="card card-body shadow-sm mb-3 app-filter-card" data-query-presets data-preset-company="{{ current_company.pk }}" data-preset-errors="{{ filter_form.errors|yesno:'true,false' }}" novalidate>
+  {% if plan_return_to %}<input type="hidden" name="return_to" value="{{ plan_return_to }}">{% endif %}
+  {% if filter_form.non_field_errors %}<div class="alert alert-danger" role="alert">{{ filter_form.non_field_errors }}</div>{% endif %}
+  <div class="row g-3 align-items-end">
+    {% for field in filter_form %}<div class="col-12 col-md-6 col-xl-3"><label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}{% for error in field.errors %}<div class="text-danger small" role="alert">{{ error }}</div>{% endfor %}</div>{% endfor %}
+    <div class="col-auto d-flex gap-2"><button class="btn btn-primary" type="submit">查询</button><a class="btn btn-outline-secondary" href="{{ plan_detail_url }}">重置</a></div>
+  </div>
+  <details class="app-query-presets mt-3" data-query-preset-controls hidden>
+    <summary class="small">常用查询 <span class="text-secondary">· 本浏览器</span></summary>
+    <div class="mt-2">
+      <p class="small text-secondary mb-2">记住本页已经应用的查询条件。修改条件后，请先点击“查询”。</p>
+      <ul class="list-unstyled d-flex flex-wrap gap-2 mb-2" data-query-preset-list aria-label="已保存的常用查询"></ul>
+      <div class="d-flex flex-wrap gap-2 align-items-center">
+        <label class="small">查询名称 <input class="form-control form-control-sm d-inline-block app-query-preset-name" type="text" maxlength="40" placeholder="例如：车间待处理" data-query-preset-name></label>
+        <button type="button" class="btn btn-sm btn-outline-primary" data-query-preset-save{% if filter_form.errors %} disabled{% endif %}>记住当前查询</button>
+      </div>
+      <p class="small text-secondary mb-0 mt-2" data-query-preset-status role="status" aria-live="polite"></p>
+    </div>
+  </details>
+</form>

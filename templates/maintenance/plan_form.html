@@ -1,1 +1,27 @@
-{% extends "base.html" %}{% block title %}{{ title }}{% endblock %}{% block content %}<div class="app-narrow-page"><header class="app-page-header"><div><h1 class="h3 mb-1">{{ title }}</h1><p class="text-secondary mb-0">维护现有预防性保养周期、内容和责任人。</p></div></header>{% if not has_eligible_assets %}<div class="alert alert-warning"><strong>当前没有可建立保养计划的资产。</strong>资产需要勾选“需要保养”，并完成财务确认和贴标，进入在用、闲置、借出或维修中状态。请先前往<a class="alert-link" href="{% url 'assets:label-queue' %}">标签与二维码</a>完成贴标，或在<a class="alert-link" href="{% url 'assets:asset-list' %}">资产台账</a>检查资产状态。</div>{% endif %}{% if date_preview %}<div class="alert alert-info">原下次到期：{{ date_preview.old_next_date|date:"Y-m-d" }}；调整后：<strong>{{ date_preview.next_date|date:"Y-m-d" }}</strong>。{% if date_preview.last_date %}按最近有效完成日期 {{ date_preview.last_date|date:"Y-m-d" }} 和新周期推算。{% else %}尚无有效完成记录，按首次到期日安排。{% endif %}尚未保存。</div>{% endif %}<form method="post" class="card shadow-sm"><div class="card-body">{% include 'maintenance/_form_fields.html' %}</div><div class="card-footer d-flex gap-2">{% if editing %}<button class="btn btn-outline-primary" name="action" value="preview" type="submit">预览下次到期日</button>{% endif %}<button class="btn btn-primary" type="submit"{% if not has_eligible_assets %} disabled{% endif %}>保存</button><a class="btn btn-outline-secondary" href="{% url 'maintenance:plan-list' %}">取消</a></div></form></div>{% endblock %}
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="app-narrow-page">
+  <header class="app-page-header"><div><h1 class="h3 mb-1">{{ title }}</h1><p class="text-secondary mb-0">维护预防性保养周期、内容和责任人。</p></div>{% if plan_return_to %}<a class="btn btn-outline-secondary" href="{{ plan_list_url }}">返回原查询</a>{% endif %}</header>
+  {% if plan %}<div class="card card-body mb-3"><a href="{{ plan_detail_url }}">{{ plan.name }}</a><span class="small text-secondary">{{ plan.asset.asset_code }} / {{ plan.asset.asset_name }} · 当前{{ plan.get_status_display }} · 下次到期 {{ plan.next_maintenance_date|date:'Y-m-d' }}</span></div>{% endif %}
+  {% if reference_source %}<section class="card card-body mb-3" aria-labelledby="plan-reference-title">
+    <h2 class="h6" id="plan-reference-title">参考来源 · {{ reference_source.get_status_display }}</h2>
+    <a class="text-break" href="{{ reference_source_url }}">{{ reference_source.name }}</a>
+    <div class="small text-secondary text-break">{{ reference_source.asset.asset_code }} / {{ reference_source.asset.asset_name }}</div>
+    <p class="small text-secondary mb-0 mt-2">已带入计划名称、当前标准、周期和提醒天数，请核对适用性。资产、责任人和首次到期日须重新选择；保存后才按新日期启用，完成记录、问题及原排期保留在来源计划。</p>
+  </section>{% endif %}
+  {% if not has_eligible_assets %}<div class="alert alert-warning"><strong>当前没有可建立保养计划的资产。</strong>资产需要勾选“需要保养”，并完成财务确认和贴标，进入在用、闲置、借出或维修中状态。请先前往<a class="alert-link" href="{% url 'assets:label-queue' %}">标签与二维码</a>完成贴标，或在<a class="alert-link" href="{% url 'assets:asset-list' %}">资产台账</a>检查资产状态。</div>{% endif %}
+  {% if date_preview %}<div class="alert alert-info">原下次到期：{{ date_preview.old_next_date|date:"Y-m-d" }}；调整后：<strong>{{ date_preview.next_date|date:"Y-m-d" }}</strong>。{% if date_preview.last_date %}按最近有效完成日期 {{ date_preview.last_date|date:"Y-m-d" }} 和新周期推算。{% else %}尚无有效完成记录，按首次到期日安排。{% endif %}尚未保存。</div>{% endif %}
+  {% if edit_revision_error %}<div class="alert alert-danger" role="alert">{{ form.expected_revision.errors }}<a class="alert-link" href="{{ reopen_url }}">重新打开最新编辑页面</a></div>{% endif %}
+  <form method="post" class="card shadow-sm" data-unsaved-guard="{% if form.is_bound %}true{% else %}false{% endif %}">
+    {% if reference_source %}<input type="hidden" name="reference_plan" value="{{ reference_source.pk }}">{% endif %}
+    {% if plan_return_to %}<input type="hidden" name="return_to" value="{{ plan_return_to }}">{% endif %}
+    <div class="card-body">{% include 'maintenance/_form_fields.html' %}</div>
+    <div class="card-footer d-flex flex-wrap gap-2">
+      {% if editing %}<button class="btn btn-outline-primary" name="action" value="preview" type="submit">预览下次到期日</button>{% endif %}
+      <button class="btn btn-primary" type="submit"{% if not has_eligible_assets %} disabled{% endif %}>{% if plan_return_to %}保存并返回清单{% else %}保存{% endif %}</button>
+      <a class="btn btn-outline-secondary" href="{% if editing %}{{ plan_detail_url }}{% else %}{{ plan_list_url }}{% endif %}">取消</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

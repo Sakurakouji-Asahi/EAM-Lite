@@ -3,6 +3,13 @@
 {% block content %}
 <header class="app-page-header"><div><h1 class="h3 mb-1">保养问题跟进</h1><p class="text-secondary mb-0">待跟进事项优先显示，按目标日期优先排列，未设期限时按保养日期排列；已关闭记录保留处理结果。</p></div></header>
 {% include "_list_filters.html" %}
+<div class="d-flex flex-wrap gap-2 mb-2" aria-label="问题期限汇总">
+  <a class="btn btn-outline-danger" href="{{ attention_links.overdue }}">已逾期：{{ attention_counts.overdue }}</a>
+  <a class="btn btn-outline-warning" href="{{ attention_links.today }}">今日到期：{{ attention_counts.today }}</a>
+  <a class="btn btn-outline-primary" href="{{ attention_links.week }}">未来 7 天：{{ attention_counts.week }}</a>
+  <a class="btn btn-outline-secondary" href="{{ attention_links.unassigned }}">责任人 / 期限待补：{{ attention_counts.unassigned }}</a>
+</div>
+<p class="small text-secondary">期限汇总按设备、负责人和保养日期范围统计，不受跟进状态和期限选项限制。</p>
 <div class="d-flex flex-wrap gap-2 mb-2" aria-label="问题状态汇总">
   <a class="btn btn-outline-warning" href="{{ problem_links.open }}">待跟进：{{ problem_counts.open }}</a>
   <a class="btn btn-outline-success" href="{{ problem_links.closed }}">已关闭：{{ problem_counts.closed }}</a>
@@ -13,10 +20,10 @@
   <tbody>{% for item in items %}<tr>
     <td>{{ item.problem.asset.asset_name }}<div class="small text-secondary">{{ item.problem.asset.asset_code }}{% if item.problem.asset.equipment_number %} · {{ item.problem.asset.equipment_number }}{% endif %}</div></td>
     <td>{{ item.problem.maintenance_record.completed_date|date:'Y-m-d' }}<br><a href="{% url 'maintenance:plan-detail' item.problem.maintenance_record.maintenance_plan_id %}">{{ item.problem.maintenance_record.maintenance_plan.name }}</a></td>
-    <td>{{ item.problem.description|linebreaksbr }}</td><td>{{ item.problem.owner_employee.name|default:'未分派' }}<br>{{ item.problem.target_date|date:'Y-m-d'|default:'未设期限' }}{% if item.is_overdue %}<br><span class="badge text-bg-danger">已逾期</span>{% endif %}</td>
+    <td>{{ item.problem.description|linebreaksbr }}</td><td>{% if item.problem.owner_employee %}{{ item.problem.owner_employee.name }}<span class="d-block small text-secondary">{{ item.problem.owner_employee.employee_no }}</span>{% else %}未分派{% endif %}<br>{{ item.problem.target_date|date:'Y-m-d'|default:'未设期限' }}<br><span class="badge text-bg-{{ item.timing.tone }}">{{ item.timing.label }}</span></td>
     <td><span class="badge {% if item.problem.status == 'open' %}text-bg-warning{% else %}text-bg-success{% endif %}">{{ item.problem.get_status_display }}</span>{% if item.problem.status == 'closed' %}<div class="mt-1">{{ item.problem.closure_note|linebreaksbr }}</div><small class="text-secondary">{% if item.problem.closed_by %}{{ item.problem.closed_by.display_name|default:item.problem.closed_by.username }}{% else %}历史账号{% endif %} · {{ item.problem.closed_at|date:'Y-m-d H:i' }}</small>{% endif %}</td>
-    <td><div class="d-flex flex-wrap gap-2">{% if item.can_close %}<a class="btn btn-sm btn-outline-primary" href="{% url 'maintenance:problem-assign' item.problem.pk %}">分派 / 调整期限</a><a class="btn btn-sm btn-outline-success" href="{% url 'maintenance:problem-close' item.problem.pk %}">关闭问题</a>{% endif %}<a class="btn btn-sm btn-outline-primary" href="{% url 'maintenance:record-detail' item.problem.maintenance_record_id %}">查看记录</a></div></td>
-  </tr>{% empty %}<tr><td colspan="6"><div class="app-empty-state"><strong>暂无符合条件的保养问题</strong><span>调整查询条件，或在保养记录中查看历史情况。</span></div></td></tr>{% endfor %}</tbody>
+    <td><div class="d-flex flex-wrap gap-2">{% if item.can_close %}<a class="btn btn-sm btn-outline-primary" href="{% url 'maintenance:problem-assign' item.problem.pk %}?return_to={{ request.get_full_path|urlencode }}">分派 / 调整期限</a><a class="btn btn-sm btn-outline-success" href="{% url 'maintenance:problem-close' item.problem.pk %}?return_to={{ request.get_full_path|urlencode }}">关闭问题</a>{% endif %}<a class="btn btn-sm btn-outline-primary" href="{% url 'maintenance:record-detail' item.problem.maintenance_record_id %}?return_to={{ request.get_full_path|urlencode }}">查看记录</a></div></td>
+  </tr>{% empty %}<tr><td colspan="6"><div class="app-empty-state"><strong>暂无符合条件的保养问题</strong><span>调整查询条件，或在保养记录中查看历史情况。</span><a class="btn btn-sm btn-outline-secondary" href="{% url 'maintenance:problem-list' %}">清除筛选</a></div></td></tr>{% endfor %}</tbody>
 </table></div>
 {% include "_pagination.html" %}
 {% endblock %}
