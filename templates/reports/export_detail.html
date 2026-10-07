@@ -1,16 +1,18 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block title %}导出结果 | EAM-Lite{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/export-history.css' %}?v=20261004-receipt"><script src="{% static 'js/export-result.js' %}?v=20261004" defer></script>{% endblock %}
 
 {% block content %}
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
   <div><h1 class="h3 mb-1">{{ definition.title }}导出结果</h1><p class="text-secondary mb-0">{{ export_log.get_status_display }} · {{ export_log.row_count|default_if_none:'—' }} 条明细</p></div>
-  <div class="d-flex gap-2"><a class="btn btn-outline-secondary" href="{% url 'reports:export-history' %}">全部导出记录</a><a class="btn btn-outline-secondary" href="{{ return_report_url }}">返回当前报表</a>{% if can_download %}<a class="btn btn-success" href="{% url 'reports:export-download' export_log.pk %}">下载 Excel</a>{% endif %}</div>
+  <div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-secondary" href="{{ history_return_url }}">返回导出记录</a><a class="btn btn-outline-secondary" href="{{ return_report_url }}">返回当前报表查询</a>{% if can_download %}<a class="btn btn-success" href="{% url 'reports:export-download' export_log.pk %}">下载 Excel</a>{% endif %}</div>
 </div>
 
 <section class="card shadow-sm mb-3">
   <div class="card-body">
-    {% if export_log.status == 'failed' %}<div class="alert alert-danger">{{ export_log.error_summary }}</div>{% elif export_log.status == 'expired' %}<div class="alert alert-warning">文件已过期，不能下载。</div>{% elif export_log.status == 'pending' %}<div class="alert alert-info">文件正在生成。</div>{% endif %}
+    {% if not can_download %}<div class="alert alert-{{ file_tone }}">{{ file_note }}</div>{% endif %}
     <dl class="row mb-0">
       <dt class="col-sm-3">状态</dt><dd class="col-sm-9">{{ export_log.get_status_display }}</dd>
       <dt class="col-sm-3">导出人</dt><dd class="col-sm-9">{{ export_log.requested_by.display_name|default:export_log.requested_by.username|default:'系统' }}</dd>
@@ -18,14 +20,21 @@
       <dt class="col-sm-3">生成时间</dt><dd class="col-sm-9">{{ export_log.completed_at|date:'Y-m-d H:i:s'|default:'—' }}</dd>
       <dt class="col-sm-3">数据截止时间</dt><dd class="col-sm-9">{{ export_log.data_snapshot_at|date:'Y-m-d H:i:s'|default:'—' }}</dd>
       <dt class="col-sm-3">行数</dt><dd class="col-sm-9">{{ export_log.row_count|default_if_none:'—' }}</dd>
-      {% if export_log.output_attachment %}<dt class="col-sm-3">文件名</dt><dd class="col-sm-9">{{ export_log.output_attachment.safe_filename }}</dd>{% endif %}
+      {% if filename %}<dt class="col-sm-3">文件名</dt><dd class="col-sm-9 export-filename">{{ filename }}</dd><dt class="col-sm-3">文件大小</dt><dd class="col-sm-9">{{ export_log.output_attachment.file_size|filesizeformat }}</dd>{% endif %}
+      {% if export_log.output_sha256 %}<dt class="col-sm-3">文件校验码</dt><dd class="col-sm-9"><details><summary>查看 SHA-256 校验码</summary><code class="export-record-id">{{ export_log.output_sha256 }}</code></details></dd>{% endif %}
+      <dt class="col-sm-3">记录编号</dt><dd class="col-sm-9 export-record-id">{{ export_log.pk }}</dd>
     </dl>
   </div>
 </section>
 
 <section class="card shadow-sm mb-3">
   <div class="card-header">筛选条件</div>
-  <div class="card-body"><dl class="row mb-0">{% for key, value in display_filters.items %}<dt class="col-sm-3">{{ key }}</dt><dd class="col-sm-9">{{ value }}</dd>{% empty %}<dd class="text-secondary mb-0">无附加筛选条件。</dd>{% endfor %}</dl></div>
+  <div class="card-body"><p class="small text-secondary">下载文件保留生成时的数据；重新查询会读取当前有权查看的数据。</p><dl class="row mb-0">{% for key, value in display_filters.items %}<dt class="col-sm-3">{{ key }}</dt><dd class="col-sm-9">{{ value }}</dd>{% empty %}<dd class="text-secondary mb-0">无附加筛选条件。</dd>{% endfor %}</dl></div>
+</section>
+
+<section class="card shadow-sm mb-3" aria-labelledby="export-receipt-heading" data-export-receipt-section>
+  <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2"><h2 class="h6 mb-0" id="export-receipt-heading">导出核对说明</h2><button class="btn btn-sm btn-outline-primary" type="button" data-export-copy-receipt hidden>复制核对说明</button></div>
+  <div class="card-body"><p class="small text-secondary mb-2">核对记录编号、时间与文件名，区分同名文件或说明本次导出结果。</p><details data-export-receipt-details><summary>查看或手动复制说明</summary><label class="visually-hidden" for="export-receipt-text">导出核对说明，可选择复制</label><textarea class="form-control export-receipt-text mt-2" id="export-receipt-text" rows="10" readonly spellcheck="false">{% include 'reports/_export_receipt.txt' %}</textarea></details><p class="small mt-2 mb-0" role="status" aria-live="polite" aria-atomic="true" data-export-copy-status hidden></p></div>
 </section>
 
 {% if display_totals %}

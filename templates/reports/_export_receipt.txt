@@ -1,0 +1,14 @@
+报表：{{ definition.title }}
+记录编号：{{ export_log.pk }}
+状态：{{ export_log.get_status_display }}
+导出人：{{ export_log.requested_by.display_name|default:export_log.requested_by.username|default:'系统' }}
+请求时间：{{ export_log.requested_at|date:'Y-m-d H:i:s' }}
+生成时间：{{ export_log.completed_at|date:'Y-m-d H:i:s'|default:'—' }}
+数据截止时间：{{ export_log.data_snapshot_at|date:'Y-m-d H:i:s'|default:'—' }}
+明细行数：{{ export_log.row_count|default_if_none:'—' }}
+文件名：{{ filename|default:'—' }}
+{% if filename %}文件大小：{{ export_log.output_attachment.file_size|filesizeformat }}
+{% endif %}{% if export_log.output_sha256 %}文件校验码（SHA-256）：{{ export_log.output_sha256 }}
+{% endif %}下载状态：{{ file_note }}
+筛选条件：{% for key, value in display_filters.items %}
+- {{ key }}：{{ value }}{% empty %}无附加筛选条件。{% endfor %}

@@ -1,4 +1,32 @@
-{% extends 'reports/base.html' %}{% block title %}报表导出记录{% endblock %}{% block content %}
-<header class="app-page-header"><div><h1 class="h3">报表导出记录</h1><p>查看当前权限范围内的导出状态、条件和文件。</p></div><a class="btn btn-outline-secondary" href="{% url 'reports:report-center' %}">返回报表</a></header>
-<form method="get" class="card card-body mb-3"><div class="row g-2">{% for field in form %}<div class="col-md-3">{{ field.label_tag }}{{ field }}{{ field.errors }}</div>{% endfor %}</div>{{ form.non_field_errors }}<div class="mt-2"><button type="submit" class="btn btn-primary">查询</button></div></form>
-<div class="table-responsive card"><table class="table mb-0"><thead><tr><th>报表</th><th>申请时间</th><th>申请人</th><th>状态</th><th>明细行数</th><th></th></tr></thead><tbody>{% for export in page_obj %}<tr><td>{{ export.get_export_type_display }}</td><td>{{ export.requested_at|date:'Y-m-d H:i:s' }}</td><td>{{ export.requested_by|default:'历史账号' }}</td><td>{{ export.get_status_display }}</td><td>{{ export.row_count|default_if_none:'—' }}</td><td><a href="{% url 'reports:export-detail' export.pk %}">查看条件与文件</a></td></tr>{% empty %}<tr><td colspan="6" class="py-4 text-center">没有符合条件的导出记录。</td></tr>{% endfor %}</tbody></table></div>{% include '_pagination.html' %}{% endblock %}
+{% extends 'reports/base.html' %}{% load static %}
+{% block title %}报表导出记录{% endblock %}
+{% block extra_head %}{{ block.super }}<link rel="stylesheet" href="{% static 'css/export-history.css' %}?v=20261004">{% endblock %}
+{% block content %}
+<header class="app-page-header"><div><h1 class="h3 mb-1">报表导出记录</h1><p class="text-secondary mb-0">查找已生成文件，核对申请时间、导出条件和结果。</p></div><a class="btn btn-outline-secondary" href="{% url 'reports:report-center' %}">返回报表</a></header>
+<form method="get" class="card card-body mb-3">
+  <div class="row g-3">{% for field in form %}{% if field.name != 'mine' %}<div class="col-md-4">{{ field.label_tag }}{{ field }}{{ field.errors }}</div>{% endif %}{% endfor %}</div>
+  {{ form.non_field_errors }}
+  <div class="d-flex flex-wrap align-items-center gap-3 mt-3"><div class="form-check">{{ form.mine }}{{ form.mine.label_tag }}</div><button type="submit" class="btn btn-primary">查询</button><a class="btn btn-outline-secondary" href="{% url 'reports:export-history' %}">重置条件</a></div>
+</form>
+<nav class="d-flex flex-wrap align-items-center gap-2 mb-2" aria-label="按请求日期快速查找导出"><span class="small text-secondary">请求日期：</span>{% for item in history_date_shortcuts %}<a class="btn btn-sm {% if item.selected %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ item.url }}" title="{{ item.start|date:'Y-m-d' }} 至 {{ item.end|date:'Y-m-d' }}"{% if item.selected %} aria-current="page"{% endif %}>{{ item.label }}</a>{% endfor %}</nav>
+<p class="small text-secondary mb-3">日期按请求时间查找，结束日包含在内；近 7 天含今天，本月截至今天。快捷日期保留其他有效条件。</p>
+{% if history_filter_chips %}<div class="d-flex flex-wrap align-items-center gap-2 mb-3" aria-label="已应用导出筛选"><span class="small text-secondary">已应用：</span>{% for item in history_filter_chips %}<a class="btn btn-sm btn-outline-secondary export-filter-chip" href="{{ item.url }}" aria-label="取消{{ item.label }}筛选">{{ item.label }}：{{ item.value }} <span aria-hidden="true">×</span></a>{% endfor %}</div>{% endif %}
+{% if history_valid %}
+<nav class="export-status-summary mb-3" aria-label="当前检索范围的导出状态">
+  {% for item in status_summary %}<a class="card card-body export-status-card{% if item.selected %} export-status-selected{% endif %}" href="{{ item.url }}"{% if item.selected %} aria-current="page"{% endif %}><span class="small">{{ item.label }}</span><strong class="h4 mb-0 mt-1">{{ item.count }}</strong></a>{% endfor %}
+</nav>
+<p class="small text-secondary">以上数量按当前文件、导出人、报表、日期和本人条件统计，仅包含当前有权查看的记录。切换状态会保留这些条件。</p>
+{% endif %}
+<div class="table-responsive card"><table class="table align-middle mb-0 export-history-table">
+  <thead><tr><th scope="col">报表 / 文件</th><th scope="col">申请时间</th><th scope="col">申请人</th><th scope="col">结果</th><th scope="col">明细行数</th><th scope="col">操作</th></tr></thead>
+  <tbody>{% for export in page_obj %}<tr>
+    <td><strong>{{ export.get_export_type_display }}</strong>{% if export.file_context.filename %}<div class="small text-secondary export-filename mt-1">{{ export.file_context.filename }}</div>{% endif %}<details class="small mt-1"><summary class="text-secondary">记录编号</summary><span class="export-record-id">{{ export.pk }}</span></details></td>
+    <td class="text-nowrap">{{ export.requested_at|date:'Y-m-d H:i:s' }}{% if export.data_snapshot_at %}<div class="small text-secondary mt-1">数据截止：{{ export.data_snapshot_at|date:'m-d H:i' }}</div>{% endif %}</td>
+    <td>{{ export.requested_by|default:'历史账号' }}</td>
+    <td><span class="badge text-bg-{{ export.file_context.file_tone }}">{{ export.get_status_display }}</span><div class="small mt-1 export-result-note text-{{ export.file_context.file_tone }}-emphasis">{{ export.file_context.file_note }}</div></td>
+    <td>{{ export.row_count|default_if_none:'—' }}</td>
+    <td><div class="d-flex flex-wrap gap-2 export-history-actions">{% if export.file_context.can_download %}<a class="btn btn-sm btn-success" href="{% url 'reports:export-download' export.pk %}">下载 Excel</a>{% endif %}<a class="btn btn-sm btn-outline-secondary" href="{% url 'reports:export-detail' export.pk %}{% if history_query %}?history_query={{ history_query|urlencode }}{% endif %}">查看条件</a><a class="btn btn-sm btn-outline-secondary" href="{{ export.source_url }}">重新查询</a></div></td>
+  </tr>{% empty %}<tr><td colspan="6" class="py-4 text-center"><p class="mb-1">{% if not history_valid %}请修正查询条件后重试。{% elif history_has_filters %}没有符合当前条件的导出记录。{% else %}当前权限范围内暂无导出记录。{% endif %}</p>{% if history_has_filters %}<a href="{% url 'reports:export-history' %}">清除条件，查看全部记录</a>{% elif history_valid %}<a href="{% url 'reports:report-center' %}">前往报表查询并导出</a>{% endif %}</td></tr>{% endfor %}</tbody>
+</table></div>
+{% include '_pagination.html' %}
+{% endblock %}

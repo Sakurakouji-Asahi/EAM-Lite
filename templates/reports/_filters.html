@@ -1,8 +1,10 @@
 <section class="card mb-3 app-filter-card" aria-labelledby="report-filter-heading">
   <div class="card-body">
     <h2 class="h6 mb-3" id="report-filter-heading">查询条件</h2>
-    <form method="get" class="row g-3" data-report-filters novalidate>
+    <form method="get" data-report-filters data-mobile-filters data-preset-errors="{{ form.errors|yesno:'true,false' }}" novalidate>
+      <div class="row g-3">
       <input type="hidden" name="page_size" value="{{ page_size|default:50 }}">
+      {% include 'reports/_origin_fields.html' %}
       {% if form.errors %}<div class="col-12"><div class="alert alert-danger mb-0" role="alert">请检查查询条件。{{ form.non_field_errors }}</div></div>{% endif %}
       {% for field in form.hidden_fields %}{{ field }}{% endfor %}
       {% for field in basic_filters %}{% include 'reports/_filter_field.html' %}{% endfor %}
@@ -13,7 +15,8 @@
         <a class="btn btn-outline-secondary" href="{{ reset_url }}">重置条件</a>
         {% if report_scope_note %}<span class="small text-secondary report-scope-note">{{ report_scope_note }}</span>{% endif %}
       </div>
-      {% if dataset %}<div class="col-12" data-report-filter-notice hidden><p class="alert alert-warning small mb-0" role="status">筛选条件已修改，请先点击“查询报表”，再保存常用查询或导出。</p></div>{% endif %}
+      {% if dataset %}<div class="col-12" data-report-filter-notice hidden><div class="alert alert-warning small mb-0 d-flex flex-wrap align-items-center gap-2" role="status"><span class="flex-grow-1">筛选条件已修改，请先点击“查询报表”，再保存常用查询或导出。</span><button type="button" class="btn btn-sm btn-outline-secondary" data-report-filter-undo>撤销修改</button></div></div>{% endif %}
+      </div>
     </form>
   </div>
 </section>
