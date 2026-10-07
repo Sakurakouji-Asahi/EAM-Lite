@@ -1,14 +1,17 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}导入批次 - EAM-Lite{% endblock %}
+{% block extra_head %}<link rel="stylesheet" href="{% static 'css/import-workspace.css' %}?v=20261004">{% endblock %}
 {% block content %}
-{% if error_row_count %}<div class="mb-3"><a class="btn btn-outline-primary" href="{% url 'imports:error-rows' batch.pk %}">下载 {{ error_row_count }} 条错误行</a><span class="small text-secondary ms-2">保留标准模板；纠正后可作为新批次上传，原批次仍保留。</span></div>{% endif %}
-<h1 class="h3 mb-3">{{ definition.label }}导入{% if batch.status == "confirmed" or batch.status == "reversed" %}记录{% else %}预览{% endif %} <small class="text-secondary">#{{ batch.pk }}</small></h1>
+<header class="app-page-header"><div><h1 class="h3 mb-1">{{ definition.label }}导入{% if batch.status == "confirmed" or batch.status == "reversed" %}记录{% else %}预览{% endif %} <small class="text-secondary">#{{ batch.pk }}</small></h1><p class="text-secondary small mb-0 import-source-name">{{ batch.file_attachment.original_filename }} · 上传 {{ batch.uploaded_at|date:"Y-m-d H:i" }} / {{ batch.uploaded_by|default:"—" }}{% if batch.confirmed_at %} · 确认 {{ batch.confirmed_at|date:"Y-m-d H:i" }} / {{ batch.confirmed_by|default:"—" }}{% endif %}</p></div><a class="btn btn-outline-secondary" href="{{ history_return_url }}">返回导入记录{% if history_query %}（保留筛选）{% endif %}</a></header>
+{% if error_row_count %}<div class="d-flex flex-wrap align-items-center gap-2 mb-3">{% if can_download_error_rows %}<a class="btn btn-outline-primary" href="{% url 'imports:error-rows' batch.pk %}">下载 {{ error_row_count }} 条错误行</a><span class="small text-secondary">保留标准模板；纠正后可作为新批次上传，原批次仍保留。</span>{% else %}<span class="small text-warning-emphasis">本批包含文件结构错误，请下载原文件修正表头或格式后重新上传。</span>{% endif %}<a class="btn btn-outline-secondary" href="{% url 'imports:upload' batch.import_type %}">修正后上传新批次</a></div>{% endif %}
+{% if created_results_directory %}<section class="card card-body mb-3"><h2 class="h6">导入后继续办理</h2><p class="small text-secondary">下方创建结果可直接打开当前可查看的档案。</p><div><a class="btn btn-outline-primary" href="{{ created_results_directory.url }}">{{ created_results_directory.label }}</a></div></section>{% endif %}
 {% if is_asset_initialization and batch.status == 'confirmed' %}
 <section class="card mb-3"><div class="card-body"><h2 class="h6">本批办理进度</h2><div class="d-flex flex-wrap gap-4 mb-3"><span>已导入 <strong>{{ batch.total_rows }}</strong> 项</span><span>待建档 <strong>{{ import_progress.drafts }}</strong> 项</span><span>已建档 <strong>{{ import_progress.registered }}</strong> 项</span>{% if show_import_finance %}<span>待财务确认 <strong>{{ import_progress.finance_pending }}</strong> 项</span><span>财务已确认 <strong>{{ import_progress.finance_done }}</strong> 项</span>{% endif %}</div><div class="d-flex flex-wrap gap-2">{% if import_progress.drafts %}<a class="btn btn-primary" href="{% url 'assets:bulk-registration' %}?import_batch={{ batch.pk }}">核对本批资产并批量建档</a>{% endif %}{% if import_progress.can_confirm_finance and import_progress.finance_pending %}<a class="btn btn-primary" href="{% url 'finance:pending-list' %}?import_batch={{ batch.pk }}">核对本批资产并批量财务确认</a>{% endif %}<a class="btn btn-outline-secondary" href="{% url 'assets:asset-list' %}">查看资产台账</a></div></div></section>
 {% endif %}
 <div class="d-flex flex-wrap align-items-center gap-3 mb-3 small">
 <span>状态：<strong>{% if batch.status == 'confirmed' %}已导入{% else %}{{ batch.get_status_display }}{% endif %}</strong></span>
-<span>共 {{ batch.total_rows }} 条 · <a href="?row_view=errors#import-rows">错误 {{ batch.error_rows }}</a> · <a href="?row_view=warnings#import-rows">提示 {{ batch.warning_rows }}</a></span>
+<span>共 {{ batch.total_rows|default_if_none:"—" }} 条 · 整批错误 {{ batch.error_rows|default_if_none:"—" }} · 整批提示 {{ batch.warning_rows|default_if_none:"—" }}</span>
 <a href="{% url 'imports:source' batch.pk %}">下载原文件</a>
 <details><summary>模板信息</summary>{{ batch.template_version }}</details>
 </div>
@@ -42,8 +45,9 @@
 {% else %}
 <div class="alert alert-warning">确认后将整批新增 {{ batch.valid_rows }} 条记录；任何写入失败都会整批回滚。</div>
 {% endif %}
-<form method="post" action="{% url 'imports:confirm' batch.pk %}">
+<form method="post" action="{{ import_confirm_url }}">
   {% csrf_token %}
+  <input type="hidden" name="history_query" value="{{ history_query }}">
   <div class="form-check mb-3">
     <input class="form-check-input" type="checkbox" name="confirm" value="1" id="confirm-import" required>
     <label class="form-check-label" for="confirm-import">{% if is_asset_initialization %}我已核对错误、警告和理论差异；确认本次只创建草稿，不生成正式编号或二维码。{% elif is_item_master %}我确认整批新增物品档案，不创建任何库存或保管数据。{% elif is_opening_stock %}我确认按仓库生成期初入库草稿，且本次不会自动过账。{% elif is_opening_custody %}我确认直接建立期初保管和不可变流水，且确认后不能破坏性回滚。{% else %}我确认整批写入；本导入只新增，不覆盖现有记录。{% endif %}</label>
@@ -59,8 +63,8 @@
 {% elif batch.status == 'reversed' %}
 <div class="alert alert-secondary">本批导入已撤销，原文件和明细作为操作记录保留。需要重新导入时，请重新上传文件。</div>
 {% endif %}
-{% if batch.status != 'confirmed' and batch.status != 'cancelled' and batch.status != 'reversed' %}<form method="post" action="{% url 'imports:cancel' batch.pk %}" class="card card-body mt-3">{% csrf_token %}<label class="form-label" for="cancel-reason">取消原因</label><textarea class="form-control mb-2" id="cancel-reason" name="reason" required></textarea><button class="btn btn-outline-danger align-self-start" type="submit">取消本批次</button></form>{% endif %}
-<section class="mt-4" id="import-rows" aria-label="导入明细查询"><h2 class="h5">核对明细</h2><p class="small text-secondary">筛选仅影响明细显示，确认仍处理整个批次。源表行号沿用 Excel 原行号。</p>{% include '_list_filters.html' %}<p class="small text-secondary">符合条件 {{ page_obj.paginator.count }} 条 / 本批共 {{ batch.total_rows }} 条。</p></section>
+{% if batch.status != 'confirmed' and batch.status != 'cancelled' and batch.status != 'reversed' %}<form method="post" action="{{ import_cancel_url }}" class="card card-body mt-3">{% csrf_token %}<input type="hidden" name="history_query" value="{{ history_query }}"><label class="form-label" for="cancel-reason">取消原因</label><textarea class="form-control mb-2" id="cancel-reason" name="reason" required></textarea><button class="btn btn-outline-danger align-self-start" type="submit">取消本批次</button></form>{% endif %}
+<section class="mt-4" id="import-rows" aria-label="导入明细查询"><h2 class="h5">核对明细</h2><p class="small text-secondary">筛选仅影响明细显示，确认仍处理整个批次。源表行号沿用 Excel 原行号。</p>{% include 'imports/_row_filters.html' %}{% include 'imports/_filter_summary.html' %}{% if row_status_cards %}<nav class="d-flex flex-wrap gap-2 mb-2" aria-label="按明细校验情况查找">{% for card in row_status_cards %}<a class="btn btn-sm {% if card.active %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ card.url }}"{% if card.active %} aria-current="page"{% endif %}>{{ card.label }} {{ card.count }}</a>{% endfor %}</nav><p class="small text-secondary">数量沿用当前源表行号条件；错误和提示可能出现在同一行。</p>{% endif %}{% if error_navigation %}<nav class="d-flex flex-wrap align-items-center gap-2 mb-3" aria-label="整批错误行快捷定位"><span class="small text-secondary">整批错误行：</span>{% for target in error_navigation %}<a class="btn btn-sm btn-outline-danger" href="{{ target.url }}">{{ target.label }} · 第 {{ target.row_number }} 行</a>{% endfor %}</nav>{% endif %}<p class="small text-secondary">符合条件 {{ page_obj.paginator.count }} 条 / 本批共 {{ batch.total_rows }} 条。</p></section>
 {% if is_asset_initialization %}
 <div class="table-responsive app-work-table mt-4" role="region" aria-label="资产导入核对明细" tabindex="0"><table class="table align-middle mb-0"><thead><tr><th>源表行</th><th>资产名称 / 分类</th><th>部门 / 责任人</th><th>位置</th>{% if show_import_finance %}<th>原值</th>{% endif %}<th>校验情况</th><th>当前结果</th></tr></thead><tbody>{% for row in rows %}<tr><td>{{ row.row_number }}</td><td><strong>{{ row.asset_preview.name }}</strong><br><small class="text-secondary">{{ row.asset_preview.category }}</small><details class="small mt-1"><summary>查看原行</summary><dl class="app-source-fields">{% for key,value in row.raw_data_json.items %}<dt>{{ key }}</dt><dd>{{ value|default_if_none:"" }}</dd>{% endfor %}</dl></details></td><td>{{ row.asset_preview.department|default:"未填写" }}<br><small>{{ row.asset_preview.employee|default:"未填写" }}</small></td><td>{{ row.asset_preview.location|default:"未填写" }}</td>{% if show_import_finance %}<td class="app-money">{{ row.asset_preview.cost|default_if_none:"—" }}</td>{% endif %}<td>{% if row.errors_json %}{% for error in row.errors_json %}<div class="text-danger">{{ error.field }}：{{ error.reason }}</div>{% endfor %}{% elif row.validation_status == 'pending' %}待校验{% else %}<span class="text-success">校验通过</span>{% endif %}{% if row.warnings_json %}<details class="mt-1"><summary>提示 {{ row.warnings_json|length }} 项</summary>{% for warning in row.warnings_json %}<div class="small mt-1">{{ warning.field }}：{{ warning.reason }}</div>{% endfor %}</details>{% endif %}</td><td>{% if batch.status == 'reversed' %}已撤销{% elif row.asset_preview.asset %}<a class="text-nowrap" href="{% url 'assets:asset-detail' row.asset_preview.asset.pk %}">{{ row.asset_preview.asset.asset_code|default:row.asset_preview.asset.draft_number }}</a><br><small>{{ row.asset_preview.asset.get_asset_status_display }}</small>{% else %}{{ row.get_validation_status_display }}{% endif %}</td></tr>{% empty %}<tr><td colspan="7" class="text-secondary text-center">没有符合条件的明细。</td></tr>{% endfor %}</tbody></table></div>
 {% else %}
@@ -70,12 +74,12 @@
   <tbody>
   {% for row in rows %}
     <tr class="{% if row.validation_status == 'invalid' %}table-danger{% elif row.warnings_json %}table-warning{% endif %}">
-      <td>{{ row.row_number }}</td><td>{{ row.get_validation_status_display }}</td>
-      <td><dl>{% for key, value in row.raw_data_json.items %}<dt>{{ key }}</dt><dd>{{ value|default_if_none:"" }}</dd>{% endfor %}</dl></td>
+      <td><a href="{{ row.workspace_focus_url }}" aria-label="只查看源表第 {{ row.row_number }} 行">{{ row.row_number }}</a></td><td>{{ row.get_validation_status_display }}</td>
+      <td><details><summary>查看原行</summary><dl class="app-source-fields">{% for key, value in row.raw_data_json.items %}<dt>{{ key }}</dt><dd>{{ value|default_if_none:"" }}</dd>{% endfor %}</dl></details></td>
       <td><dl>{% for key, value in row.normalized_data_json.items %}<dt>{{ key }}</dt><dd>{{ value|default_if_none:"" }}</dd>{% empty %}<span class="text-secondary">无</span>{% endfor %}</dl></td>
       <td>{% for error in row.errors_json %}<div><strong>{{ error.field }}</strong>：{{ error.value|default_if_none:"" }} — {{ error.reason }}</div>{% empty %}无{% endfor %}</td>
       <td>{% for warning in row.warnings_json %}<div><strong>{{ warning.field }}</strong>：{{ warning.value|default_if_none:"" }} — {{ warning.reason }}</div>{% empty %}无{% endfor %}</td>
-      <td>{% if row.created_document %}<a href="{% url 'supplies:document-detail' row.created_document.pk %}">{{ row.created_document.document_no }}</a><div>{{ row.created_document.get_status_display }}</div>{% elif row.created_object_id %}{{ row.created_object_type }} #{{ row.created_object_id }}{% else %}—{% endif %}</td>
+      <td>{% if row.created_document %}<a href="{% url 'supplies:document-detail' row.created_document.pk %}">{{ row.created_document.document_no }}</a><div>{{ row.created_document.get_status_display }}</div>{% elif row.created_result %}<a href="{{ row.created_result.url }}">{{ row.created_result.label }}</a>{% elif row.created_object_id %}{{ row.created_object_type }} #{{ row.created_object_id }}{% else %}—{% endif %}</td>
     </tr>
   {% empty %}<tr><td colspan="7" class="text-secondary text-center">没有符合条件的明细。</td></tr>{% endfor %}
   </tbody>
@@ -86,18 +90,18 @@
 <nav aria-label="导入预览分页">
   <ul class="pagination justify-content-center">
     {% if page_obj.has_previous %}
-    <li class="page-item"><a class="page-link" href="?{{ pagination_query }}&amp;page={{ page_obj.previous_page_number }}">上一页</a></li>
+    <li class="page-item"><a class="page-link" href="?{{ pagination_query }}&amp;page={{ page_obj.previous_page_number }}#import-rows">上一页</a></li>
     {% else %}
     <li class="page-item disabled"><span class="page-link">上一页</span></li>
     {% endif %}
     <li class="page-item disabled"><span class="page-link">第 {{ page_obj.number }} / {{ page_obj.paginator.num_pages }} 页</span></li>
     {% if page_obj.has_next %}
-    <li class="page-item"><a class="page-link" href="?{{ pagination_query }}&amp;page={{ page_obj.next_page_number }}">下一页</a></li>
+    <li class="page-item"><a class="page-link" href="?{{ pagination_query }}&amp;page={{ page_obj.next_page_number }}#import-rows">下一页</a></li>
     {% else %}
     <li class="page-item disabled"><span class="page-link">下一页</span></li>
     {% endif %}
   </ul>
 </nav>
 {% endif %}
-<a class="btn btn-link" href="{% url 'imports:home' %}">返回导入中心</a>
+<a class="btn btn-link" href="{{ history_return_url }}">返回导入中心{% if history_query %}（保留筛选）{% endif %}</a>
 {% endblock %}
