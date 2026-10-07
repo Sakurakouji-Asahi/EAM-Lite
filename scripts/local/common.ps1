@@ -168,10 +168,25 @@ function Initialize-EamState {
 
 function Get-EamDockerExecutable {
     $command = Get-Command docker.exe -ErrorAction SilentlyContinue
-    if (-not $command) {
-        throw "未找到 Docker。请先安装 Docker Desktop，然后重新运行。"
+    if ($command) {
+        return $command.Source
     }
-    return $command.Source
+    $installLocations = @(
+        @{ Root = $env:LOCALAPPDATA; Relative = "Programs\DockerDesktop\resources\bin\docker.exe" },
+        @{ Root = $env:ProgramFiles; Relative = "Docker\Docker\resources\bin\docker.exe" },
+        @{ Root = ${env:ProgramFiles(x86)}; Relative = "Docker\Docker\resources\bin\docker.exe" },
+        @{ Root = $env:LOCALAPPDATA; Relative = "Docker\resources\bin\docker.exe" }
+    )
+    foreach ($location in $installLocations) {
+        if ([string]::IsNullOrWhiteSpace($location.Root)) { continue }
+        $candidate = Join-Path $location.Root $location.Relative
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            $dockerExe = [System.IO.Path]::GetFullPath($candidate)
+            $env:PATH = (Split-Path -Parent $dockerExe) + ";" + $env:PATH
+            return $dockerExe
+        }
+    }
+    throw "未找到 Docker。请先安装 Docker Desktop，然后重新运行。"
 }
 
 function Test-EamDockerReady {
@@ -321,12 +336,14 @@ function Repair-EamDockerStaleSockets {
 
 function Start-EamDockerDesktop {
     $candidates = @(
+        (Join-Path $env:LOCALAPPDATA "Programs\DockerDesktop\Docker Desktop.exe"),
         (Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"),
-        (Join-Path ${env:ProgramFiles(x86)} "Docker\Docker\Docker Desktop.exe")
+        (Join-Path ${env:ProgramFiles(x86)} "Docker\Docker\Docker Desktop.exe"),
+        (Join-Path $env:LOCALAPPDATA "Docker\Docker Desktop.exe")
     ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
     $desktop = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
     if (-not $desktop) {
-        throw "Docker Desktop 尚未运行，也未在默认位置找到。请手动启动 Docker Desktop。"
+        throw "Docker Engine 尚未就绪，且未找到 Docker Desktop 程序。请从开始菜单打开 Docker Desktop，等待引擎就绪后重试。"
     }
     Write-Host "正在启动 Docker Desktop，请稍候……" -ForegroundColor Cyan
     Start-Process -FilePath $desktop -WindowStyle Hidden | Out-Null
@@ -1118,7 +1135,13 @@ function Set-EamTemporaryComposeValue {
 
     $lines = Get-Content -LiteralPath $State.EnvFile -Encoding UTF8
     $prefix = $Name + "="
-    $replacement = $Name + "=`"" + (ConvertTo-EamComposePath $Value) + "`""
+    $composeValue = if ($Name -in @('EAM_APP_IMAGE', 'EAM_DEV_IMAGE')) {
+        $Value
+    }
+    else {
+        ConvertTo-EamComposePath $Value
+    }
+    $replacement = $Name + "=`"" + $composeValue + "`""
     $found = $false
     $updated = foreach ($line in $lines) {
         if ($line.StartsWith($prefix, [StringComparison]::Ordinal)) {
