@@ -1,6 +1,7 @@
 {% extends "base.html" %}
-{% load workflow_navigation %}
+{% load workflow_navigation static %}
 {% block title %}{{ resource_config.label }}详情 - EAM-Lite{% endblock %}
+{% block extra_head %}{% if employee_directory %}<link rel="stylesheet" href="{% static 'css/employee-directory.css' %}?v=20261004">{% endif %}{% if department_business %}<link rel="stylesheet" href="{% static 'css/department-workspace.css' %}?v=20261004">{% endif %}{% endblock %}
 {% block content %}
   <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
     <div>
@@ -11,22 +12,25 @@
     </div>
     <div class="d-flex flex-wrap gap-2">
       <a class="btn btn-outline-secondary" href="{{ back_url }}">返回列表</a>
+      {% if location_branch_url %}<a class="btn btn-outline-primary" href="{{ location_branch_url }}">查看此位置及下级</a>{% endif %}
       {% if technical_link_url %}<a class="btn btn-outline-primary" href="{{ technical_link_url }}?{% workflow_query %}">关联登录账号</a>{% endif %}
       {% if clearance_url %}<a class="btn btn-outline-warning" href="{{ clearance_url }}">{{ clearance_label }}</a>{% endif %}
       {% if can_manage %}
-        <a class="btn btn-primary" href="{{ edit_url }}?{% workflow_query %}">编辑</a>
+        <a class="btn btn-primary" href="{{ edit_url }}">编辑</a>
         {% if can_change_status %}<button class="btn btn-{% if object.is_active %}outline-danger{% else %}outline-success{% endif %}" type="button" data-bs-toggle="modal" data-bs-target="#status-confirm">
           {% if object.is_active %}停用{% else %}启用{% endif %}
         </button>{% endif %}
       {% endif %}
     </div>
   </div>
+  {% if employee_directory %}{% include 'masterdata/_employee_directory_profile.html' %}{% endif %}
+  {% if department_business %}{% include 'masterdata/_department_business.html' %}{% endif %}
   <div class="card shadow-sm">
     <div class="card-body">
       <dl class="row mb-0">
         {% for label, value in rows %}
           <dt class="col-sm-4 col-lg-3 text-secondary">{{ label }}</dt>
-          <dd class="col-sm-8 col-lg-9">{{ value }}</dd>
+          <dd class="col-sm-8 col-lg-9">{% if resource == 'employee' and label == '备注' %}{{ value|linebreaksbr }}{% else %}{{ value }}{% endif %}</dd>
         {% endfor %}
       </dl>
     </div>

@@ -1,0 +1,5 @@
+<section class="card card-body shadow-sm mb-3" aria-labelledby="employee-directory-heading">
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3"><h2 class="h5 mb-0" id="employee-directory-heading">联系与岗位资料</h2>{% if employee_directory.department_url %}<a class="btn btn-sm btn-outline-secondary" href="{{ employee_directory.department_url }}">查看本部门可见人员</a>{% endif %}</div>
+  <dl class="employee-profile-fields mb-0"><div><dt class="small text-secondary">岗位</dt><dd>{{ employee_directory.position|default:'未填写' }}{% if employee_directory.position_url %}<a class="small d-block mt-1" href="{{ employee_directory.position_url }}">查找同岗位人员</a>{% endif %}</dd></div><div><dt class="small text-secondary">人员标记</dt><dd>{{ employee_directory.source_mark|default:'未填写' }}{% if employee_directory.source_url %}<a class="small d-block mt-1" href="{{ employee_directory.source_url }}">查找同标记人员</a>{% endif %}</dd></div><div><dt class="small text-secondary">手机号码</dt><dd>{{ employee_directory.mobile|default:'未填写' }}</dd></div></dl>
+  <p class="small text-secondary mb-0">岗位和人员标记从现有备注读取，备注原文保留在下方。</p>
+</section>

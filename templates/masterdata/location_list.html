@@ -1,9 +1,34 @@
 {% extends "base.html" %}
 {% block title %}位置 - EAM-Lite{% endblock %}
 {% block content %}
-  <header class="app-page-header"><div><h1 class="h3 mb-1">位置</h1><p class="text-secondary mb-0">树结构支持超过三层，资产只保存一个当前位置节点。</p></div>{% if can_manage %}<a class="btn btn-primary" href="{% url 'masterdata:location-create' %}">新增位置</a>{% endif %}</header>
-  {% include "masterdata/_filters.html" %}
-  <div class="table-responsive card shadow-sm"><table class="table table-hover align-middle mb-0"><thead><tr><th>层级与位置</th><th>编码</th><th>层级</th><th>状态</th><th>操作</th></tr></thead><tbody>
-    {% for row in rows %}{% with object=row.object %}<tr><td><span class="d-inline-block ps-{{ row.depth }}">{% if row.depth %}↳ {% endif %}{{ object.name }}</span>{% if row.ancestor_path %}<div class="small text-secondary">{{ row.ancestor_path }}</div>{% endif %}</td><td>{{ object.code }}</td><td>{{ object.level }}</td><td>{% if object.is_active %}<span class="badge text-bg-success">启用</span>{% else %}<span class="badge text-bg-secondary">停用</span>{% endif %}</td><td><a href="{% url 'masterdata:location-detail' object.pk %}?return_to={{ request.get_full_path|urlencode }}">查看</a></td></tr>{% endwith %}{% empty %}<tr><td colspan="5" class="text-center text-secondary py-4">暂无位置资料</td></tr>{% endfor %}
-  </tbody></table></div>
+<header class="app-page-header">
+  <div><h1 class="h3 mb-1">位置</h1><p class="text-secondary mb-0">选择区域查看该位置及所有下级；完整路径可区分不同楼栋内的同名房间。</p></div>
+  {% if can_manage %}<a class="btn btn-primary" href="{% url 'masterdata:location-create' %}?return_to={{ request.get_full_path|urlencode }}{% if selected_branch %}&amp;parent={{ selected_branch|urlencode }}{% endif %}">新增位置</a>{% endif %}
+</header>
+{% if filter_errors %}<div class="alert alert-warning" role="alert">{{ filter_errors|join:'；' }}</div>{% endif %}
+<form method="get" class="card card-body shadow-sm app-filter-card mb-3" role="search" data-mobile-filters data-query-presets data-preset-company="{{ current_company.pk }}" data-preset-errors="{{ filter_errors|yesno:'true,false' }}">
+  <div class="row g-2 align-items-end">
+    <div class="col-12 col-lg-4"><label class="form-label" for="location-search">搜索位置</label><input id="location-search" class="form-control" type="search" name="q" value="{{ q }}" placeholder="位置编码或名称"></div>
+    <div class="col-12 col-lg-4"><label class="form-label" for="location-branch">所在区域（含下级）</label><select id="location-branch" class="form-select" name="branch"><option value="">全部位置</option>{% for option in branch_options %}<option value="{{ option.pk }}"{% if selected_branch == option.pk|stringformat:'s' %} selected{% endif %}>{{ option.path_label }}（{{ option.code }}）{% if not option.is_active %} · 停用{% endif %}</option>{% endfor %}</select></div>
+    <div class="col-6 col-lg-2"><label class="form-label" for="location-status">启用状态</label><select id="location-status" class="form-select" name="status"><option value="active"{% if status == 'active' %} selected{% endif %}>启用</option><option value="inactive"{% if status == 'inactive' %} selected{% endif %}>停用</option><option value="all"{% if status == 'all' %} selected{% endif %}>全部</option></select></div>
+    <div class="col-6 col-lg-2 d-flex gap-2"><button class="btn btn-primary" type="submit">筛选</button><a class="btn btn-outline-secondary text-nowrap" href="{% url 'masterdata:location-list' %}">清空</a></div>
+  </div>
+  {% include '_query_presets.html' with preset_errors=filter_errors query_action='筛选' %}
+</form>
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <p class="text-secondary small mb-0">共 {{ rows|length }} 个位置{% if branch_path %} · 当前区域：<strong>{{ branch_path }}</strong>{% endif %}</p>
+  {% if selected_branch %}<a class="btn btn-sm btn-outline-secondary" href="{{ clear_branch_url }}">查看全部区域</a>{% endif %}
+</div>
+<div class="table-responsive card shadow-sm" data-scroll-table role="region" aria-label="位置清单">
+  <table class="table table-hover align-middle mb-0">
+    <thead><tr><th scope="col">层级与位置</th><th scope="col">编码</th><th scope="col">层级</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead>
+    <tbody>
+      {% for row in rows %}{% with object=row.object %}<tr>
+        <td><span class="d-inline-block ps-{{ row.depth }}">{% if row.depth %}↳ {% endif %}{{ object.name }}</span>{% if row.ancestor_path %}<div class="small text-secondary">{{ row.ancestor_path }}</div>{% endif %}</td>
+        <td>{{ object.code }}</td><td>{{ object.level }}</td><td>{% if object.is_active %}<span class="badge text-bg-success">启用</span>{% else %}<span class="badge text-bg-secondary">停用</span>{% endif %}</td>
+        <td><div class="d-flex flex-wrap gap-2"><a href="{% url 'masterdata:location-detail' object.pk %}?return_to={{ request.get_full_path|urlencode }}">查看</a>{% if row.has_children %}<a href="{{ row.branch_url }}" aria-label="查看 {{ object.name }} 及所有下级位置">查看下级</a>{% endif %}</div></td>
+      </tr>{% endwith %}{% empty %}<tr><td colspan="5"><div class="app-empty-state"><strong>没有符合条件的位置</strong><span>可清除搜索、区域或启用状态后重新查看。</span><a class="btn btn-sm btn-outline-secondary" href="{% url 'masterdata:location-list' %}">清除筛选</a>{% if can_manage %}<a class="btn btn-sm btn-primary" href="{% url 'masterdata:location-create' %}">新增位置</a>{% endif %}</div></td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
 {% endblock %}

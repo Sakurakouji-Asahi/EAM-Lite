@@ -1,0 +1,12 @@
+<section class="card card-body shadow-sm mb-3" aria-labelledby="department-business-heading">
+  <h2 class="h6 mb-2" id="department-business-heading">相关业务查阅</h2>
+  <p class="small fw-semibold text-break mb-2">{{ object.code }} · {{ object.name }}</p>
+  <p class="small text-secondary mb-3">仅统计当前账号有权查看的记录。各入口沿用现有清单范围，请核对下方范围说明。</p>
+  <div class="department-business-grid">
+    {% for card in department_business.cards %}<article class="border rounded p-3" data-department-business="{{ card.key }}">
+      <h3 class="h6 mb-2">{{ card.label }}</h3><p class="h4 mb-2">{{ card.count }} <small class="fs-6 fw-normal text-secondary">{{ card.unit }}</small></p>
+      <p class="small text-secondary mb-3">{{ card.scope }}</p>
+      {% if card.url %}<a class="btn btn-sm btn-outline-primary" href="{{ card.url }}">{{ card.action }}</a>{% else %}<p class="small text-secondary mb-0">当前范围内暂无可查阅档案。</p>{% endif %}
+    </article>{% endfor %}
+  </div>
+</section>
