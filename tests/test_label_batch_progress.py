@@ -79,7 +79,7 @@ def test_progress_filters_validate_and_list_return_stays_in_authorized_route(con
     asset = make_asset(context, 1)
     batch = generate_print_batch(actor=context["finance"], assets=[asset], idempotency_key="progress-access")
     foreign = AssetLabelPrintBatch.objects.create(company=make_company("PROGRESS-OTHER", active=False), batch_code="foreign-batch",
-        template_version="a4-v1", status="generated", created_by=context["finance"], idempotency_key="foreign-batch")
+        template_version="a4-v1", status="draft", created_by=context["finance"], idempotency_key="foreign-batch")
     client.force_login(context["finance"])
     url = reverse("assets:label-batch-list")
     assert foreign.pk not in [row.pk for row in client.get(url).context["batches"]]

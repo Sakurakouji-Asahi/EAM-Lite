@@ -1,6 +1,7 @@
 import os
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -124,7 +125,7 @@ def test_production_settings_fail_closed_and_valid_secure_configuration_loads(tm
     env = _production_settings_env(tmp_path)
     valid = subprocess.run(
         [
-            str(Path(".venv/Scripts/python.exe")),
+            sys.executable,
             "-c",
             (
                 "import config.settings as s; "
@@ -140,7 +141,7 @@ def test_production_settings_fail_closed_and_valid_secure_configuration_loads(tm
     assert valid.returncode == 0, valid.stderr
     env["SECURE_HSTS_SECONDS"] = "0"
     invalid = subprocess.run(
-        [str(Path(".venv/Scripts/python.exe")), "-c", "import config.settings"],
+        [sys.executable, "-c", "import config.settings"],
         cwd=Path.cwd(),
         env=env,
         capture_output=True,
@@ -169,7 +170,7 @@ def test_local_settings_are_postgresql_debug_false_and_exact_loopback(tmp_path):
     )
     valid = subprocess.run(
         [
-            str(Path(".venv/Scripts/python.exe")),
+            sys.executable,
             "-c",
             (
                 "import config.settings as s; "
@@ -194,7 +195,7 @@ def test_local_settings_are_postgresql_debug_false_and_exact_loopback(tmp_path):
         invalid_env = env.copy()
         invalid_env[key] = value
         result = subprocess.run(
-            [str(Path(".venv/Scripts/python.exe")), "-c", "import config.settings"],
+            [sys.executable, "-c", "import config.settings"],
             cwd=Path.cwd(),
             env=invalid_env,
             capture_output=True,
@@ -227,7 +228,7 @@ def test_production_settings_reject_insecure_proxy_and_wildcard_origins(
     env = _production_settings_env(tmp_path)
     env[setting] = value
     result = subprocess.run(
-        [str(Path(".venv/Scripts/python.exe")), "-c", "import config.settings"],
+        [sys.executable, "-c", "import config.settings"],
         cwd=Path.cwd(),
         env=env,
         capture_output=True,
@@ -273,7 +274,7 @@ def test_production_qr_origin_rejects_machine_bound_or_mismatched_configuration(
     )
 
     result = subprocess.run(
-        [str(Path(".venv/Scripts/python.exe")), "-c", "import config.settings"],
+        [sys.executable, "-c", "import config.settings"],
         cwd=Path.cwd(),
         env=env,
         capture_output=True,

@@ -9,6 +9,7 @@ from django.urls import reverse
 from apps.audit.models import AuditLog
 from apps.finance.models import AssetDepreciationProfile, DepreciationEntry, DepreciationSchedule
 from apps.finance.profile_history import PARAMETERS
+from apps.finance.services import _set_controlled_profile_status_mutation
 from tests.test_sprint3_support import complete_initialization, make_company, make_user
 from tests.test_sprint4_services import _profile_context
 
@@ -19,6 +20,8 @@ def _next_profile(old, **overrides):
     values = {field: getattr(old, field) for field, _label in PARAMETERS}
     old.status = "completed"
     old.effective_to = date(2024, 1, 31)
+    # PostgreSQL guards accept status changes only from controlled finance services.
+    _set_controlled_profile_status_mutation()
     old.save(update_fields=["status", "effective_to"])
     values.update(company=old.company, asset=old.asset, version=old.version + 1,
                   effective_from=date(2024, 2, 1), status="active", created_by=old.created_by,

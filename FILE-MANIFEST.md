@@ -42,6 +42,7 @@
 
 ## 操作、状态与历史验证
 
+- [项目审核与优化记录（2026-10-08）](docs/Project-Review-2026-10-08.md)
 - [实物类型移除与迁移记录（2026-09-14）](docs/Remove-Physical-Type-2026-09-14.md)
 - [项目检查与改进建议（2026-09-12）](docs/Project-Review-2026-09-12.md)
 - [六项项目改进、验证与开发更新记录（2026-09-12）](docs/Project-Improvements-2026-09-12.md)

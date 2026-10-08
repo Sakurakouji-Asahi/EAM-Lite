@@ -21,6 +21,7 @@ from django.utils.encoding import escape_uri_path
 from apps.audit.services import request_audit_context, write_business_audit_log
 from apps.assets.lifecycle_permissions import can_lifecycle_action
 from apps.assets.models import Asset, AttachmentLink
+from apps.masterdata.location_tree import LocationTree
 from apps.masterdata.models import Attachment, InitializationSetting
 from apps.masterdata.permissions import (
     current_company,
@@ -385,6 +386,7 @@ def clearance_detail(request, pk):
             attachments_by_item.setdefault(row["link"].clearance_item_id, []).append(row)
         else:
             clearance_attachments.append(row)
+    locations = LocationTree(clearance.company)
     item_rows = []
     for item in items:
         loan = _active_loan(item)
@@ -448,7 +450,7 @@ def clearance_detail(request, pk):
                 "original_status_label": _ASSET_STATUS_LABELS.get(
                     item.original_status, item.original_status
                 ),
-                "current_location_path": _location_path(item.asset.location),
+                "current_location_path": locations.path(item.asset.location_id) or "—",
             }
         )
     supply_query = EmployeeSupplyClearanceItem.objects.filter(clearance=clearance).select_related(

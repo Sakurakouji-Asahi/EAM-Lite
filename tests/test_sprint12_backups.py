@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import uuid
 
 import pytest
@@ -414,7 +415,7 @@ def test_real_encrypted_backup_restores_to_fresh_database_and_reconciles(
         ):
             completed = subprocess.run(
                 [
-                    str(Path(".venv/Scripts/python.exe")),
+                    sys.executable,
                     "manage.py",
                     *command,
                 ],

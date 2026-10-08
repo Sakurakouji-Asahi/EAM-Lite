@@ -3,6 +3,7 @@
 from django.db.utils import OperationalError, ProgrammingError
 
 from apps.masterdata.permissions import (
+    company_initialized,
     current_company,
     resolve_department_ids,
     role_names_for,
@@ -15,14 +16,7 @@ def inventory_navigation(request):
         return {}
     try:
         company = current_company()
-        if company is None:
-            initialized = False
-        else:
-            from apps.masterdata.models import InitializationSetting
-
-            initialized = InitializationSetting.objects.filter(
-                company=company, initialization_completed=True
-            ).exists()
+        initialized = company_initialized(company)
     except (OperationalError, ProgrammingError):
         company = None
         initialized = False

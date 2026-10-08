@@ -9,6 +9,7 @@ from apps.masterdata.permissions import (
     can_access_setup,
     can_manage_masterdata,
     can_view_masterdata,
+    company_initialized,
     current_company,
     resolve_department_ids,
     role_names_for,
@@ -166,14 +167,7 @@ _PAGE_LABELS = {
 
 
 def _initialized(company) -> bool:
-    if company is None:
-        return False
-    from apps.masterdata.models import InitializationSetting
-
-    return InitializationSetting.objects.filter(
-        company=company,
-        initialization_completed=True,
-    ).exists()
+    return company_initialized(company)
 
 
 def _active_section(view_name: str, namespace: str) -> str:

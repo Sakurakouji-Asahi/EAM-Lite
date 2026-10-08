@@ -8,7 +8,7 @@ from django.core.exceptions import PermissionDenied
 from django.db.models import Q
 
 from apps.accounts.roles import ROLE_NAMES
-from apps.accounts.role_cache import load_role_names
+from apps.accounts.role_cache import load_request_value, load_role_names
 
 
 GLOBAL_DEPARTMENT_ROLES = frozenset(
@@ -118,13 +118,38 @@ def require_manage_masterdata(user, resource: str) -> None:
 
 
 def current_company(*, include_inactive=False):
-    """Return the V1 company without implying that company switching exists."""
+    """Return the V1 company without implying that company switching exists.
+
+    Read-only requests reuse the lookup because navigation for every module
+    asks for the same company while rendering one page.
+    """
+    return load_request_value(
+        ("current_company", include_inactive),
+        lambda: _load_current_company(include_inactive=include_inactive),
+    )
+
+
+def _load_current_company(*, include_inactive):
     from apps.masterdata.models import Company
 
     active = Company.objects.filter(is_active=True).order_by("created_at").first()
     if active is not None or not include_inactive:
         return active
     return Company.objects.order_by("created_at").first()
+
+
+def company_initialized(company) -> bool:
+    """Whether ``company`` finished initialization; reused per read-only request."""
+    if company is None:
+        return False
+    from apps.masterdata.models import InitializationSetting
+
+    return load_request_value(
+        ("company_initialized", company.pk),
+        lambda: InitializationSetting.objects.filter(
+            company=company, initialization_completed=True
+        ).exists(),
+    )
 
 
 def resolve_department_ids(user, company, *, require_action_role=True) -> set:

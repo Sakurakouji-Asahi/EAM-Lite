@@ -84,11 +84,12 @@ def test_origin_is_fixed_route_and_historical_employee_department_conflict_has_n
     assert response.context["report_return_url"].startswith(reverse("reports:supply-report-detail", args=["supply_department_issue"]))
     assert "evil.invalid" not in response.context["report_return_url"]
     assert "token" not in response.context["report_return_url"]
+    # The employee with open custody cannot leave its department in PostgreSQL;
+    # a summary row naming another current department is the same conflict.
     moved_department = make_department(context["company"], "MOVED")
-    context["employee"].department = moved_department
-    context["employee"].save(update_fields=["department"])
+    moved_employee = make_employee(context["company"], moved_department, "MOVEDEMP")
     form = SupplyReportFilterForm({}, actor=context["warehouse_user"], company=context["company"], report_key="supply_employee_issue")
     assert form.is_valid()
-    row = {"item_code":"S18PAPER", "_summary_identity":{"department":context["department"].pk, "employee":context["employee"].pk}}
+    row = {"item_code":"S18PAPER", "_summary_identity":{"department":context["department"].pk, "employee":moved_employee.pk}}
     assert issue_detail_links(actor=context["warehouse_user"], report_key="supply_employee_issue", rows=[row],
         form=form, query=QueryDict(""), page_number=1) == [None]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -20,6 +21,7 @@ from django.db.models import (
 )
 from django.utils import timezone
 from apps.finance.readiness import pending_finance_assets
+from apps.masterdata.location_tree import LocationTree
 from apps.assets.status_display import asset_status_display, with_identity_display
 
 from apps.finance.reporting import (
@@ -89,12 +91,22 @@ def _frozen_rows(rows):
     return tuple(MappingProxyType(dict(row)) for row in rows)
 
 
-def _begin_consistent_read():
-    if connection.vendor == "postgresql":
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
-            )
+@contextmanager
+def _consistent_read():
+    """Read one report snapshot inside a single transaction.
+
+    PostgreSQL only accepts ``SET TRANSACTION`` as the first statement of the
+    outermost transaction. When the caller already owns a transaction, its
+    boundary is the snapshot; changing the isolation level there would fail.
+    """
+    already_atomic = connection.in_atomic_block
+    with transaction.atomic():
+        if connection.vendor == "postgresql" and not already_atomic:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+                )
+        yield
 
 
 def _business_boundary(company, business_date):
@@ -104,16 +116,14 @@ def _business_boundary(company, business_date):
     )
 
 
-def _location_path(location):
-    if location is None:
-        return ""
-    names, seen = [], set()
-    node = location
-    while node is not None and node.pk not in seen:
-        seen.add(node.pk)
-        names.append(node.name)
-        node = node.parent
-    return " / ".join(reversed(names))
+def _location_path_resolver(company):
+    """Resolve full location paths from one company-wide location read.
+
+    Report rows can reach any depth of the location tree; walking ``parent``
+    on each row would issue one query per row beyond the selected levels.
+    """
+    tree = LocationTree(company)
+    return lambda location: tree.path(getattr(location, "pk", None))
 
 
 def _display(instance, field):
@@ -363,6 +373,7 @@ def _asset_rows(*, actor, company, report_key, filters):
     balances = balances_by_asset(
         company=company, asset_ids=[a.pk for a in assets], boundary=as_of + timedelta(days=1)
     ) if report_key == "fixed_asset_detail" else {}
+    location_path = _location_path_resolver(company)
     rows = []
     for asset in assets:
         at = attribution[asset.pk]
@@ -374,7 +385,7 @@ def _asset_rows(*, actor, company, report_key, filters):
             "model": asset.model,
             "department": getattr(at["department"], "name", ""),
             "responsible_employee": getattr(at["responsible_employee"], "name", ""),
-            "location": _location_path(at["location"]),
+            "location": location_path(at["location"]),
             "asset_status": asset_status_display(asset, at["asset_status"], as_of=as_of),
             "quantity": asset.quantity,
             "acquisition_date": asset.acquisition_date,
@@ -658,8 +669,7 @@ def build_report_dataset(*, actor, company, report_key, filters=None):
         )
     if definition.tplus:
         raise ReportValidationError(("请使用 T+ 专用查询接口。",))
-    with transaction.atomic():
-        _begin_consistent_read()
+    with _consistent_read():
         snapshot_at = timezone.now()
         clean = _validated_filters(actor=actor, company=company, filters=filters)
         if "asset_list_filters" in clean:
@@ -758,8 +768,7 @@ def build_tplus_dataset(*, actor, company, period_start, period_end, filters=Non
     require_tplus_export(actor)
     if not isinstance(period_start, date) or not isinstance(period_end, date) or period_end <= period_start:
         raise ReportValidationError(("T+ 期间必须是有效半开日期区间。",))
-    with transaction.atomic():
-        _begin_consistent_read()
+    with _consistent_read():
         snapshot_at = timezone.now()
         clean = _validated_filters(
             actor=actor, company=company,
@@ -843,6 +852,7 @@ def build_tplus_dataset(*, actor, company, period_start, period_end, filters=Non
             )
         }
         attribution = _historical_attribution(assets, _business_boundary(company, period_end))
+        location_path = _location_path_resolver(company)
         rows = []
         for asset in assets:
             finance = asset.finance
@@ -867,7 +877,7 @@ def build_tplus_dataset(*, actor, company, period_start, period_end, filters=Non
                 "fixed_asset_category": finance.fixed_asset_category.name,
                 "department": getattr(at["department"], "name", ""),
                 "responsible_employee": getattr(at["responsible_employee"], "name", ""),
-                "location": _location_path(at["location"]),
+                "location": location_path(at["location"]),
                 "asset_status": dict(asset.AssetStatus.choices).get(at["asset_status"], at["asset_status"]),
                 "commissioning_date": asset.commissioning_date,
                 "capitalization_date": finance.capitalization_date,
@@ -944,8 +954,7 @@ def build_dashboard(*, actor, company, filters=None):
     roles = role_names_for(actor)
     if not roles:
         raise PermissionDenied("您没有查看 Dashboard 的权限。")
-    with transaction.atomic():
-        _begin_consistent_read()
+    with _consistent_read():
         snapshot_at = timezone.now()
         clean = _validated_filters(actor=actor, company=company, filters=filters)
         if roles == {"hr"}:

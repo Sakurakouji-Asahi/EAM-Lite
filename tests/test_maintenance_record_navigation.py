@@ -8,6 +8,7 @@ from django.urls import reverse
 
 from apps.maintenance.models import MaintenanceRecord
 from apps.maintenance.record_navigation import record_navigation_context
+from apps.maintenance.services import _enable_capability
 from tests.test_asset_list_return_navigation import Links
 from tests.test_sprint3_support import make_user
 from tests.test_sprint9_support import maintenance_context
@@ -23,7 +24,10 @@ def history(ctx, count=1):
         completed_by=ctx["responsible"], content_snapshot="清洁风扇并紧固螺丝",
         result="normal", remark="复查通过", idempotency_key=f"record-navigation-{index}",
     ) for index in range(count)]
-    MaintenanceRecord.objects.bulk_create(rows)
+    # PostgreSQL record triggers accept one controlled insert per enabled flag.
+    for row in rows:
+        _enable_capability("controlled_maintenance_record_insert")
+        row.save(force_insert=True)
     return rows
 
 
